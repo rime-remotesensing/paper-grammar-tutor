@@ -1,0 +1,3242 @@
+[
+  {
+    "id": "sv-01",
+    "text": "The temperature increased gradually.",
+    "schemaValid": true,
+    "regenerated": false,
+    "elapsedMs": 6278.8213000000005,
+    "parseError": null,
+    "fieldMatches": {
+      "subject": false,
+      "verb": true,
+      "object": true,
+      "complement": true,
+      "pattern": false
+    },
+    "analysis": {
+      "sentenceCore": {
+        "subject": null,
+        "subjectHead": null,
+        "verb": {
+          "text": "increased",
+          "start": 16,
+          "end": 25
+        },
+        "object": null,
+        "complement": null,
+        "pattern": "SVO"
+      },
+      "chunks": [
+        {
+          "span": {
+            "text": "The temperature increased gradually.",
+            "start": 0,
+            "end": 36
+          },
+          "order": 0
+        }
+      ],
+      "modifiers": [],
+      "clauses": [
+        {
+          "span": {
+            "text": "The temperature",
+            "start": 0,
+            "end": 15
+          },
+          "kind": "nounClause",
+          "role": "S"
+        },
+        {
+          "span": {
+            "text": "gradually.",
+            "start": 26,
+            "end": 36
+          },
+          "kind": "adverbClause",
+          "role": "O"
+        }
+      ],
+      "phrases": [],
+      "vocabulary": [
+        {
+          "word": "increased",
+          "contextualMeaning": "変化する、増える"
+        },
+        {
+          "word": "temperature",
+          "contextualMeaning": "気温"
+        },
+        {
+          "word": "gradually",
+          "contextualMeaning": "徐々に"
+        }
+      ],
+      "readingHint": [
+        "温度が徐々に上昇した。"
+      ],
+      "confidence": 1,
+      "uncertainties": [
+        "「The temperature」の部分が主語であるかどうかを明確にする余地がある。"
+      ],
+      "needsMoreContext": false,
+      "referenceTranslation": null,
+      "originalText": "The temperature increased gradually.",
+      "normalizedText": "The temperature increased gradually."
+    }
+  },
+  {
+    "id": "svo-01",
+    "text": "The researchers collected data from three regions.",
+    "schemaValid": true,
+    "regenerated": false,
+    "elapsedMs": 3859.660499999999,
+    "parseError": null,
+    "fieldMatches": {
+      "subject": false,
+      "verb": true,
+      "object": true,
+      "complement": false,
+      "pattern": false
+    },
+    "analysis": {
+      "sentenceCore": {
+        "subject": null,
+        "subjectHead": null,
+        "verb": {
+          "text": "collected",
+          "start": 16,
+          "end": 25
+        },
+        "object": {
+          "text": "data",
+          "start": 26,
+          "end": 30
+        },
+        "complement": {
+          "text": "from three regions",
+          "start": 31,
+          "end": 49
+        },
+        "pattern": "SVOC"
+      },
+      "chunks": [
+        {
+          "span": {
+            "text": "The researchers",
+            "start": 0,
+            "end": 15
+          },
+          "order": 1
+        }
+      ],
+      "modifiers": [],
+      "clauses": [
+        {
+          "span": {
+            "text": "collected data from three regions",
+            "start": 16,
+            "end": 49
+          },
+          "kind": "adverbClause",
+          "role": "complement"
+        }
+      ],
+      "phrases": [],
+      "vocabulary": [
+        {
+          "word": "collected",
+          "contextualMeaning": "データを収集する"
+        },
+        {
+          "word": "data",
+          "contextualMeaning": "情報を指す一般的な表現"
+        },
+        {
+          "word": "from",
+          "contextualMeaning": "地域から"
+        },
+        {
+          "word": "three",
+          "contextualMeaning": "3つ"
+        },
+        {
+          "word": "regions",
+          "contextualMeaning": "地域"
+        }
+      ],
+      "readingHint": [
+        "動詞(collected)が主語の役割を果たしています。"
+      ],
+      "confidence": 1,
+      "uncertainties": [
+        "前後の文脈がないため、主語が明示的に述べられているかどうかは不明です。"
+      ],
+      "needsMoreContext": true,
+      "referenceTranslation": null,
+      "originalText": "The researchers collected data from three regions.",
+      "normalizedText": "The researchers collected data from three regions."
+    }
+  },
+  {
+    "id": "svc-01",
+    "text": "The results are consistent with previous studies.",
+    "schemaValid": true,
+    "regenerated": false,
+    "elapsedMs": 3582.088899999999,
+    "parseError": null,
+    "fieldMatches": {
+      "subject": false,
+      "verb": true,
+      "object": false,
+      "complement": false,
+      "pattern": false
+    },
+    "analysis": {
+      "sentenceCore": {
+        "subject": null,
+        "subjectHead": null,
+        "verb": {
+          "text": "are",
+          "start": 12,
+          "end": 15
+        },
+        "object": {
+          "text": "consistent with previous studies",
+          "start": 16,
+          "end": 48
+        },
+        "complement": null,
+        "pattern": "SVO"
+      },
+      "chunks": [
+        {
+          "span": {
+            "text": "The results are",
+            "start": 0,
+            "end": 15
+          },
+          "order": 1
+        }
+      ],
+      "modifiers": [],
+      "clauses": [
+        {
+          "span": {
+            "text": "consistent with previous studies",
+            "start": 16,
+            "end": 48
+          },
+          "kind": "adverbClause",
+          "role": "complement"
+        }
+      ],
+      "phrases": [],
+      "vocabulary": [
+        {
+          "word": "results",
+          "contextualMeaning": "結果"
+        },
+        {
+          "word": "are",
+          "contextualMeaning": "～である"
+        },
+        {
+          "word": "consistent",
+          "contextualMeaning": "一致している"
+        },
+        {
+          "word": "with",
+          "contextualMeaning": "～に従う"
+        },
+        {
+          "word": "previous",
+          "contextualMeaning": "前回の"
+        },
+        {
+          "word": "studies",
+          "contextualMeaning": "研究"
+        }
+      ],
+      "readingHint": [
+        "結果は、前回の研究と一致しています。"
+      ],
+      "confidence": 1,
+      "uncertainties": [],
+      "needsMoreContext": false,
+      "referenceTranslation": null,
+      "originalText": "The results are consistent with previous studies.",
+      "normalizedText": "The results are consistent with previous studies."
+    }
+  },
+  {
+    "id": "svoo-01",
+    "text": "The system gives users immediate feedback.",
+    "schemaValid": true,
+    "regenerated": false,
+    "elapsedMs": 2798.465799999998,
+    "parseError": null,
+    "fieldMatches": {
+      "subject": false,
+      "verb": true,
+      "object": true,
+      "complement": true,
+      "pattern": false
+    },
+    "analysis": {
+      "sentenceCore": {
+        "subject": null,
+        "subjectHead": null,
+        "verb": {
+          "text": "gives",
+          "start": 11,
+          "end": 16
+        },
+        "object": {
+          "text": "users immediate feedback",
+          "start": 17,
+          "end": 41
+        },
+        "complement": null,
+        "pattern": "SVO"
+      },
+      "chunks": [
+        {
+          "span": {
+            "text": "The system",
+            "start": 0,
+            "end": 10
+          },
+          "order": 0
+        }
+      ],
+      "modifiers": [],
+      "clauses": [],
+      "phrases": [],
+      "vocabulary": [
+        {
+          "word": "system",
+          "contextualMeaning": "システム"
+        },
+        {
+          "word": "users",
+          "contextualMeaning": "ユーザー"
+        },
+        {
+          "word": "feedback",
+          "contextualMeaning": "フィードバック"
+        }
+      ],
+      "readingHint": [
+        "動詞 'gives' の位置が明確で、文法的な主語は省略されています。"
+      ],
+      "confidence": 1,
+      "uncertainties": [
+        "動詞の使用についての詳細な解釈が必要です。"
+      ],
+      "needsMoreContext": false,
+      "referenceTranslation": null,
+      "originalText": "The system gives users immediate feedback.",
+      "normalizedText": "The system gives users immediate feedback."
+    }
+  },
+  {
+    "id": "svoc-01",
+    "text": "The committee found the proposal convincing.",
+    "schemaValid": true,
+    "regenerated": false,
+    "elapsedMs": 3934.3089,
+    "parseError": null,
+    "fieldMatches": {
+      "subject": false,
+      "verb": true,
+      "object": true,
+      "complement": false,
+      "pattern": false
+    },
+    "analysis": {
+      "sentenceCore": {
+        "subject": null,
+        "subjectHead": null,
+        "verb": {
+          "text": "found",
+          "start": 14,
+          "end": 19
+        },
+        "object": {
+          "text": "the proposal convincing",
+          "start": 20,
+          "end": 43
+        },
+        "complement": null,
+        "pattern": "SVO"
+      },
+      "chunks": [
+        {
+          "span": {
+            "text": "The committee found the proposal convincing.",
+            "start": 0,
+            "end": 44
+          },
+          "order": 0
+        }
+      ],
+      "modifiers": [],
+      "clauses": [
+        {
+          "span": {
+            "text": "The committee",
+            "start": 0,
+            "end": 13
+          },
+          "kind": "nounClause",
+          "role": "agent"
+        },
+        {
+          "span": {
+            "text": "the proposal convincing.",
+            "start": 20,
+            "end": 44
+          },
+          "kind": "adjectiveClause",
+          "role": "complement"
+        }
+      ],
+      "phrases": [],
+      "vocabulary": [
+        {
+          "word": "committee",
+          "contextualMeaning": "組織の一部または特定のグループ"
+        },
+        {
+          "word": "found",
+          "contextualMeaning": "確認する、証明する"
+        },
+        {
+          "word": "proposal",
+          "contextualMeaning": "提案、案"
+        },
+        {
+          "word": "convincing",
+          "contextualMeaning": "説得力のある、納得できる"
+        }
+      ],
+      "readingHint": [
+        "動詞 'found' の前に形容詞 'convincing' を使用しています。"
+      ],
+      "confidence": 1,
+      "uncertainties": [
+        "動詞 'found' の役割が明確であるかどうかについての曖昧さがあります。"
+      ],
+      "needsMoreContext": false,
+      "referenceTranslation": null,
+      "originalText": "The committee found the proposal convincing.",
+      "normalizedText": "The committee found the proposal convincing."
+    }
+  },
+  {
+    "id": "passive-01",
+    "text": "The samples were analyzed using a spectrometer.",
+    "schemaValid": true,
+    "regenerated": false,
+    "elapsedMs": 4305.8469000000005,
+    "parseError": null,
+    "fieldMatches": {
+      "subject": false,
+      "verb": true,
+      "object": false,
+      "complement": true,
+      "pattern": false
+    },
+    "analysis": {
+      "sentenceCore": {
+        "subject": null,
+        "subjectHead": null,
+        "verb": {
+          "text": "were analyzed",
+          "start": 12,
+          "end": 25
+        },
+        "object": {
+          "text": "samples",
+          "start": 4,
+          "end": 11
+        },
+        "complement": null,
+        "pattern": "SVO"
+      },
+      "chunks": [
+        {
+          "span": {
+            "text": "The samples were analyzed using a spectrometer.",
+            "start": 0,
+            "end": 47
+          },
+          "order": 0
+        }
+      ],
+      "modifiers": [],
+      "clauses": [
+        {
+          "span": {
+            "text": "The samples",
+            "start": 0,
+            "end": 11
+          },
+          "kind": "nounClause",
+          "role": "subject"
+        },
+        {
+          "span": {
+            "text": "using a spectrometer.",
+            "start": 26,
+            "end": 47
+          },
+          "kind": "adverbClause",
+          "role": "methodOfAnalysis"
+        }
+      ],
+      "phrases": [],
+      "vocabulary": [
+        {
+          "word": "samples",
+          "contextualMeaning": "試料、サンプル"
+        },
+        {
+          "word": "analyzed",
+          "contextualMeaning": "分析された"
+        },
+        {
+          "word": "using",
+          "contextualMeaning": "使用して"
+        },
+        {
+          "word": "a",
+          "contextualMeaning": "一つの、"
+        },
+        {
+          "word": "spectrometer",
+          "contextualMeaning": "スペクトロメーター"
+        }
+      ],
+      "readingHint": [
+        "助詞や接続詞が少ないため、文法的構造を理解することが重要です。",
+        "主語は直接明示されていませんが、文の流れから推測できます。"
+      ],
+      "confidence": 1,
+      "uncertainties": [
+        "助詞や接続詞が少ないので、文の意味を完全に把握するためには、文章全体の理解が必要かもしれません。",
+        "主語が直接明示されていないため、その存在を推測する必要があります。"
+      ],
+      "needsMoreContext": false,
+      "referenceTranslation": null,
+      "originalText": "The samples were analyzed using a spectrometer.",
+      "normalizedText": "The samples were analyzed using a spectrometer."
+    }
+  },
+  {
+    "id": "relative-restrictive-01",
+    "text": "The method that we proposed improved accuracy significantly.",
+    "schemaValid": true,
+    "regenerated": false,
+    "elapsedMs": 5603.3944999999985,
+    "parseError": null,
+    "fieldMatches": {
+      "subject": false,
+      "verb": false,
+      "object": false,
+      "complement": true,
+      "pattern": true
+    },
+    "analysis": {
+      "sentenceCore": {
+        "subject": null,
+        "subjectHead": null,
+        "verb": null,
+        "object": null,
+        "complement": null,
+        "pattern": "SVO"
+      },
+      "chunks": [
+        {
+          "span": {
+            "text": "The method",
+            "start": 0,
+            "end": 10
+          },
+          "order": 1
+        },
+        {
+          "span": {
+            "text": "that we proposed",
+            "start": 11,
+            "end": 27
+          },
+          "order": 2
+        },
+        {
+          "span": {
+            "text": "improved accuracy significantly",
+            "start": 28,
+            "end": 59
+          },
+          "order": 3
+        }
+      ],
+      "modifiers": [
+        {
+          "phrase": {
+            "text": "that we proposed",
+            "start": 11,
+            "end": 27
+          },
+          "kind": "relativeClause",
+          "target": {
+            "text": "method",
+            "start": 4,
+            "end": 10
+          },
+          "explanation": "この文は、先行する主語である 'method' を補足する相対化句で構成されています。"
+        }
+      ],
+      "clauses": [
+        {
+          "span": {
+            "text": "The method that we proposed",
+            "start": 0,
+            "end": 27
+          },
+          "kind": "nounClause",
+          "role": "subject"
+        },
+        {
+          "span": {
+            "text": "improved accuracy significantly",
+            "start": 28,
+            "end": 59
+          },
+          "kind": "adverbClause",
+          "role": "complement"
+        }
+      ],
+      "phrases": [
+        {
+          "span": {
+            "text": "that we proposed",
+            "start": 11,
+            "end": 27
+          },
+          "meaning": "私たちが提案した"
+        },
+        {
+          "span": {
+            "text": "improved accuracy significantly",
+            "start": 28,
+            "end": 59
+          },
+          "meaning": "精度を大幅に向上させた"
+        }
+      ],
+      "vocabulary": [
+        {
+          "word": "method",
+          "contextualMeaning": "方法、手法"
+        },
+        {
+          "word": "proposed",
+          "contextualMeaning": "提案した"
+        },
+        {
+          "word": "accuracy",
+          "contextualMeaning": "正確さ、精度"
+        },
+        {
+          "word": "significantly",
+          "contextualMeaning": "大幅に"
+        }
+      ],
+      "readingHint": [
+        "文の主語である 'method' を補足する相対化句が存在します。"
+      ],
+      "confidence": 1,
+      "uncertainties": [
+        "文の全体構造や、verbとcomplementの関係について、完全に明確な解釈が困難です。"
+      ],
+      "needsMoreContext": false,
+      "referenceTranslation": "私たちが提案した方法は精度を大幅に向上させました。",
+      "originalText": "The method that we proposed improved accuracy significantly.",
+      "normalizedText": "The method that we proposed improved accuracy significantly."
+    }
+  },
+  {
+    "id": "relative-nonrestrictive-01",
+    "text": "The algorithm, which was developed in 2020, outperforms earlier baselines.",
+    "schemaValid": true,
+    "regenerated": false,
+    "elapsedMs": 5653.590000000004,
+    "parseError": null,
+    "fieldMatches": {
+      "subject": false,
+      "verb": false,
+      "object": false,
+      "complement": true,
+      "pattern": false
+    },
+    "analysis": {
+      "sentenceCore": {
+        "subject": null,
+        "subjectHead": null,
+        "verb": null,
+        "object": null,
+        "complement": null,
+        "pattern": "SVOO"
+      },
+      "chunks": [
+        {
+          "span": {
+            "text": "The algorithm",
+            "start": 0,
+            "end": 13
+          },
+          "order": 1
+        },
+        {
+          "span": {
+            "text": "which was developed in 2020",
+            "start": 15,
+            "end": 42
+          },
+          "order": 2
+        },
+        {
+          "span": {
+            "text": "outperforms earlier baselines",
+            "start": 44,
+            "end": 73
+          },
+          "order": 3
+        }
+      ],
+      "modifiers": [
+        {
+          "phrase": {
+            "text": "which was developed in 2020",
+            "start": 15,
+            "end": 42
+          },
+          "kind": "relativeClause",
+          "target": {
+            "text": "algorithm",
+            "start": 4,
+            "end": 13
+          },
+          "explanation": "このアルゴリズムは2020年に開発されたため、"
+        }
+      ],
+      "clauses": [
+        {
+          "span": {
+            "text": "The algorithm which was developed in 2020",
+            "start": -1,
+            "end": -1
+          },
+          "kind": "adverbClause",
+          "role": "modifyingSubject"
+        },
+        {
+          "span": {
+            "text": "outperforms earlier baselines",
+            "start": 44,
+            "end": 73
+          },
+          "kind": "adverbClause",
+          "role": "modifyingPredicate"
+        }
+      ],
+      "phrases": [
+        {
+          "span": {
+            "text": "which was developed in 2020",
+            "start": 15,
+            "end": 42
+          },
+          "meaning": "2020年に開発されたアルゴリズム"
+        },
+        {
+          "span": {
+            "text": "outperforms earlier baselines",
+            "start": 44,
+            "end": 73
+          },
+          "meaning": "以前の基準を上回る"
+        }
+      ],
+      "vocabulary": [
+        {
+          "word": "algorithm",
+          "contextualMeaning": "アルゴリズム"
+        },
+        {
+          "word": "outperforms",
+          "contextualMeaning": "上回る、優れている"
+        },
+        {
+          "word": "baseline",
+          "contextualMeaning": "基準"
+        }
+      ],
+      "readingHint": [
+        "アルゴリズムは2020年に開発されたため、"
+      ],
+      "confidence": 1,
+      "uncertainties": [
+        "「which was developed in 2020」が関連する部分の位置を正確に特定できない。",
+        "節「The algorithm which was developed in 2020」が原文中に見つかりませんでした。"
+      ],
+      "needsMoreContext": false,
+      "referenceTranslation": "アルゴリズムは2020年に開発されたため、以前の基準を上回る。",
+      "originalText": "The algorithm, which was developed in 2020, outperforms earlier baselines.",
+      "normalizedText": "The algorithm, which was developed in 2020, outperforms earlier baselines."
+    }
+  },
+  {
+    "id": "participle-postmod-01",
+    "text": "The results obtained in the previous experiment indicate that the proposed method is effective.",
+    "schemaValid": true,
+    "regenerated": false,
+    "elapsedMs": 5474.392200000002,
+    "parseError": null,
+    "fieldMatches": {
+      "subject": false,
+      "verb": false,
+      "object": false,
+      "complement": true,
+      "pattern": false
+    },
+    "analysis": {
+      "sentenceCore": {
+        "subject": null,
+        "subjectHead": null,
+        "verb": null,
+        "object": null,
+        "complement": null,
+        "pattern": "SVOO"
+      },
+      "chunks": [
+        {
+          "span": {
+            "text": "The results",
+            "start": 0,
+            "end": 11
+          },
+          "order": 1
+        },
+        {
+          "span": {
+            "text": "obtained",
+            "start": 12,
+            "end": 20
+          },
+          "order": 2
+        },
+        {
+          "span": {
+            "text": "in the previous experiment",
+            "start": 21,
+            "end": 47
+          },
+          "order": 3
+        },
+        {
+          "span": {
+            "text": "indicate",
+            "start": 48,
+            "end": 56
+          },
+          "order": 4
+        },
+        {
+          "span": {
+            "text": "that",
+            "start": 57,
+            "end": 61
+          },
+          "order": 5
+        },
+        {
+          "span": {
+            "text": "the proposed method is effective",
+            "start": 62,
+            "end": 94
+          },
+          "order": 6
+        }
+      ],
+      "modifiers": [
+        {
+          "phrase": {
+            "text": "The results",
+            "start": 0,
+            "end": 11
+          },
+          "kind": "appositive",
+          "target": null,
+          "explanation": "補足情報としての役割を持つ"
+        }
+      ],
+      "clauses": [
+        {
+          "span": {
+            "text": "obtained in the previous experiment indicate that the proposed method is effective.",
+            "start": 12,
+            "end": 95
+          },
+          "kind": "adverbClause",
+          "role": "complement of main clause"
+        }
+      ],
+      "phrases": [],
+      "vocabulary": [
+        {
+          "word": "obtained",
+          "contextualMeaning": "得られた"
+        },
+        {
+          "word": "indicate",
+          "contextualMeaning": "示す、示唆する"
+        },
+        {
+          "word": "that",
+          "contextualMeaning": "…であるという"
+        },
+        {
+          "word": "proposed",
+          "contextualMeaning": "提案された"
+        },
+        {
+          "word": "method",
+          "contextualMeaning": "方法"
+        },
+        {
+          "word": "is",
+          "contextualMeaning": "である"
+        },
+        {
+          "word": "effective",
+          "contextualMeaning": "有効な"
+        }
+      ],
+      "readingHint": [
+        "主語は存在しないので、結果が得られたことを示す補足情報としての役割を持つ。",
+        "指示子句（thatから始まる部分）は、主句を補完する役割をする。"
+      ],
+      "confidence": 0.95,
+      "uncertainties": [
+        "前回の実験で得られた結果が示唆している内容について、具体的な情報がないため、指示子句の詳細な意味を特定できない可能性がある。"
+      ],
+      "needsMoreContext": false,
+      "referenceTranslation": null,
+      "originalText": "The results obtained in the previous experiment indicate that the proposed method is effective.",
+      "normalizedText": "The results obtained in the previous experiment indicate that the proposed method is effective."
+    }
+  },
+  {
+    "id": "participle-postmod-02",
+    "text": "Researchers studying climate change often rely on satellite data.",
+    "schemaValid": true,
+    "regenerated": false,
+    "elapsedMs": 6923.955600000001,
+    "parseError": null,
+    "fieldMatches": {
+      "subject": false,
+      "verb": false,
+      "object": false,
+      "complement": true,
+      "pattern": true
+    },
+    "analysis": {
+      "sentenceCore": {
+        "subject": null,
+        "subjectHead": null,
+        "verb": null,
+        "object": null,
+        "complement": null,
+        "pattern": "SVO"
+      },
+      "chunks": [
+        {
+          "span": {
+            "text": "Researchers",
+            "start": 0,
+            "end": 11
+          },
+          "order": 1
+        },
+        {
+          "span": {
+            "text": "studying",
+            "start": 12,
+            "end": 20
+          },
+          "order": 2
+        },
+        {
+          "span": {
+            "text": "climate",
+            "start": 21,
+            "end": 28
+          },
+          "order": 3
+        },
+        {
+          "span": {
+            "text": "change",
+            "start": 29,
+            "end": 35
+          },
+          "order": 4
+        },
+        {
+          "span": {
+            "text": "often",
+            "start": 36,
+            "end": 41
+          },
+          "order": 5
+        },
+        {
+          "span": {
+            "text": "rely",
+            "start": 42,
+            "end": 46
+          },
+          "order": 6
+        },
+        {
+          "span": {
+            "text": "on",
+            "start": 47,
+            "end": 49
+          },
+          "order": 7
+        },
+        {
+          "span": {
+            "text": "satellite",
+            "start": 50,
+            "end": 59
+          },
+          "order": 8
+        },
+        {
+          "span": {
+            "text": "data",
+            "start": 60,
+            "end": 64
+          },
+          "order": 9
+        }
+      ],
+      "modifiers": [
+        {
+          "phrase": {
+            "text": "studying climate change",
+            "start": 12,
+            "end": 35
+          },
+          "kind": "participlePhrase",
+          "target": null,
+          "explanation": "研究している気候変動"
+        }
+      ],
+      "clauses": [
+        {
+          "span": {
+            "text": "Researchers studying climate change",
+            "start": 0,
+            "end": 35
+          },
+          "kind": "adverbClause",
+          "role": "modifying the verb 'rely'"
+        },
+        {
+          "span": {
+            "text": "often rely on satellite data",
+            "start": 36,
+            "end": 64
+          },
+          "kind": "adverbClause",
+          "role": "describing how researchers use satellite data"
+        }
+      ],
+      "phrases": [
+        {
+          "span": {
+            "text": "studying climate change",
+            "start": 12,
+            "end": 35
+          },
+          "meaning": "気候変動について研究している"
+        },
+        {
+          "span": {
+            "text": "often rely on satellite data",
+            "start": 36,
+            "end": 64
+          },
+          "meaning": "衛星データに頼ることがよくある"
+        }
+      ],
+      "vocabulary": [
+        {
+          "word": "Researchers",
+          "contextualMeaning": "研究者たち"
+        },
+        {
+          "word": "studying",
+          "contextualMeaning": "調査している"
+        },
+        {
+          "word": "climate change",
+          "contextualMeaning": "気候変動"
+        },
+        {
+          "word": "often",
+          "contextualMeaning": "よく"
+        },
+        {
+          "word": "rely on",
+          "contextualMeaning": "頼る"
+        },
+        {
+          "word": "satellite data",
+          "contextualMeaning": "衛星データ"
+        }
+      ],
+      "readingHint": [
+        "研究者は気候変動について調査していることが多いです。彼らは衛星データに頼ることがあります。",
+        "研究者が気候変動について調査しているとき、よく衛星データを頼っています。"
+      ],
+      "confidence": 1,
+      "uncertainties": [
+        "助詞の位置が正確かどうか不確実です。"
+      ],
+      "needsMoreContext": false,
+      "referenceTranslation": null,
+      "originalText": "Researchers studying climate change often rely on satellite data.",
+      "normalizedText": "Researchers studying climate change often rely on satellite data."
+    }
+  },
+  {
+    "id": "participle-construction-01",
+    "text": "Having collected sufficient data, the team began the analysis.",
+    "schemaValid": true,
+    "regenerated": false,
+    "elapsedMs": 4542.809100000006,
+    "parseError": null,
+    "fieldMatches": {
+      "subject": false,
+      "verb": false,
+      "object": false,
+      "complement": true,
+      "pattern": true
+    },
+    "analysis": {
+      "sentenceCore": {
+        "subject": null,
+        "subjectHead": null,
+        "verb": null,
+        "object": null,
+        "complement": null,
+        "pattern": "SVO"
+      },
+      "chunks": [
+        {
+          "span": {
+            "text": "Having collected sufficient data",
+            "start": 0,
+            "end": 32
+          },
+          "order": 1
+        },
+        {
+          "span": {
+            "text": "the team began the analysis",
+            "start": 34,
+            "end": 61
+          },
+          "order": 2
+        }
+      ],
+      "modifiers": [
+        {
+          "phrase": {
+            "text": "Having collected sufficient data",
+            "start": 0,
+            "end": 32
+          },
+          "kind": "adverbialPhrase",
+          "target": null,
+          "explanation": "この文では、主語がないため、動詞の前に位置する副詞句です。"
+        }
+      ],
+      "clauses": [
+        {
+          "span": {
+            "text": "the team began the analysis",
+            "start": 34,
+            "end": 61
+          },
+          "kind": "adverbClause",
+          "role": "resultOf"
+        }
+      ],
+      "phrases": [],
+      "vocabulary": [
+        {
+          "word": "collected",
+          "contextualMeaning": "データを収集した"
+        },
+        {
+          "word": "sufficient",
+          "contextualMeaning": "十分な"
+        },
+        {
+          "word": "data",
+          "contextualMeaning": "データ"
+        },
+        {
+          "word": "began",
+          "contextualMeaning": "始めました"
+        },
+        {
+          "word": "analysis",
+          "contextualMeaning": "分析"
+        }
+      ],
+      "readingHint": [
+        "副詞句は主語の前に位置します。"
+      ],
+      "confidence": 1,
+      "uncertainties": [
+        "前後の文脈が不明なため、副詞句の正確な役割について完全に自信を持てない。"
+      ],
+      "needsMoreContext": true,
+      "referenceTranslation": "データを十分に収集した後、チームは分析を始めました。",
+      "originalText": "Having collected sufficient data, the team began the analysis.",
+      "normalizedText": "Having collected sufficient data, the team began the analysis."
+    }
+  },
+  {
+    "id": "infinitive-adverbial-01",
+    "text": "Researchers conducted additional trials to verify the results.",
+    "schemaValid": true,
+    "regenerated": false,
+    "elapsedMs": 4217.3848,
+    "parseError": null,
+    "fieldMatches": {
+      "subject": false,
+      "verb": true,
+      "object": true,
+      "complement": false,
+      "pattern": false
+    },
+    "analysis": {
+      "sentenceCore": {
+        "subject": null,
+        "subjectHead": null,
+        "verb": {
+          "text": "conducted",
+          "start": 12,
+          "end": 21
+        },
+        "object": {
+          "text": "additional trials",
+          "start": 22,
+          "end": 39
+        },
+        "complement": {
+          "text": "to verify the results",
+          "start": 40,
+          "end": 61
+        },
+        "pattern": "SVOO"
+      },
+      "chunks": [
+        {
+          "span": {
+            "text": "Researchers conducted additional trials to verify the results.",
+            "start": 0,
+            "end": 62
+          },
+          "order": 1
+        }
+      ],
+      "modifiers": [],
+      "clauses": [
+        {
+          "span": {
+            "text": "Researchers conducted additional trials",
+            "start": 0,
+            "end": 39
+          },
+          "kind": "adverbClause",
+          "role": "time"
+        }
+      ],
+      "phrases": [],
+      "vocabulary": [
+        {
+          "word": "researchers",
+          "contextualMeaning": "研究者"
+        },
+        {
+          "word": "conducted",
+          "contextualMeaning": "実施する"
+        },
+        {
+          "word": "additional",
+          "contextualMeaning": "追加の"
+        },
+        {
+          "word": "trials",
+          "contextualMeaning": "試験"
+        },
+        {
+          "word": "to",
+          "contextualMeaning": "ために"
+        },
+        {
+          "word": "verify",
+          "contextualMeaning": "確認する"
+        },
+        {
+          "word": "the",
+          "contextualMeaning": "結果"
+        },
+        {
+          "word": "results",
+          "contextualMeaning": "結果"
+        }
+      ],
+      "readingHint": [
+        "試験を実施した研究者は、結果を確認するために追加の試験を行った。",
+        "研究者が追加の試験を行い、結果を確認するため"
+      ],
+      "confidence": 1,
+      "uncertainties": [],
+      "needsMoreContext": false,
+      "referenceTranslation": null,
+      "originalText": "Researchers conducted additional trials to verify the results.",
+      "normalizedText": "Researchers conducted additional trials to verify the results."
+    }
+  },
+  {
+    "id": "infinitive-noun-01",
+    "text": "To understand the mechanism requires careful experimentation.",
+    "schemaValid": true,
+    "regenerated": false,
+    "elapsedMs": 3745.4720000000016,
+    "parseError": null,
+    "fieldMatches": {
+      "subject": false,
+      "verb": true,
+      "object": true,
+      "complement": true,
+      "pattern": true
+    },
+    "analysis": {
+      "sentenceCore": {
+        "subject": null,
+        "subjectHead": null,
+        "verb": {
+          "text": "requires",
+          "start": 28,
+          "end": 36
+        },
+        "object": {
+          "text": "careful experimentation",
+          "start": 37,
+          "end": 60
+        },
+        "complement": null,
+        "pattern": "SVO"
+      },
+      "chunks": [
+        {
+          "span": {
+            "text": "To understand the mechanism requires careful experimentation.",
+            "start": 0,
+            "end": 61
+          },
+          "order": 0
+        }
+      ],
+      "modifiers": [],
+      "clauses": [
+        {
+          "span": {
+            "text": "To understand the mechanism",
+            "start": 0,
+            "end": 27
+          },
+          "kind": "adverbClause",
+          "role": "目的状況子句"
+        }
+      ],
+      "phrases": [],
+      "vocabulary": [
+        {
+          "word": "understand",
+          "contextualMeaning": "理解する"
+        },
+        {
+          "word": "mechanism",
+          "contextualMeaning": "メカニズム"
+        },
+        {
+          "word": "requires",
+          "contextualMeaning": "必要とする"
+        },
+        {
+          "word": "careful",
+          "contextualMeaning": "慎重な"
+        },
+        {
+          "word": "experimentation",
+          "contextualMeaning": "実験"
+        }
+      ],
+      "readingHint": [
+        "理解するためには、慎重な実験が必要です。"
+      ],
+      "confidence": 1,
+      "uncertainties": [],
+      "needsMoreContext": false,
+      "referenceTranslation": null,
+      "originalText": "To understand the mechanism requires careful experimentation.",
+      "normalizedText": "To understand the mechanism requires careful experimentation."
+    }
+  },
+  {
+    "id": "gerund-01",
+    "text": "Reducing measurement error remains a major challenge in this field.",
+    "schemaValid": true,
+    "regenerated": false,
+    "elapsedMs": 3186.2194000000018,
+    "parseError": null,
+    "fieldMatches": {
+      "subject": false,
+      "verb": false,
+      "object": false,
+      "complement": false,
+      "pattern": false
+    },
+    "analysis": {
+      "sentenceCore": {
+        "subject": null,
+        "subjectHead": null,
+        "verb": {
+          "text": "reducing",
+          "start": -1,
+          "end": -1
+        },
+        "object": {
+          "text": "measurement error",
+          "start": 9,
+          "end": 26
+        },
+        "complement": null,
+        "pattern": "SVO"
+      },
+      "chunks": [
+        {
+          "span": {
+            "text": "Reducing measurement error",
+            "start": 0,
+            "end": 26
+          },
+          "order": 0
+        }
+      ],
+      "modifiers": [],
+      "clauses": [],
+      "phrases": [],
+      "vocabulary": [
+        {
+          "word": "reducing",
+          "contextualMeaning": "動詞の連用形として使われる。"
+        },
+        {
+          "word": "measurement",
+          "contextualMeaning": "測定、計測を意味する抽象的な概念。"
+        },
+        {
+          "word": "error",
+          "contextualMeaning": "誤り、偏差を指す抽象的な概念。"
+        }
+      ],
+      "readingHint": [
+        "動詞の連用形は文脈によって異なる意味を持つことがあります。"
+      ],
+      "confidence": 1,
+      "uncertainties": [
+        "文脈が不明なため、verbとobject間の関係性について完全に自信を持てない。",
+        "主動詞「reducing」が原文中に見つかりませんでした。"
+      ],
+      "needsMoreContext": false,
+      "referenceTranslation": null,
+      "originalText": "Reducing measurement error remains a major challenge in this field.",
+      "normalizedText": "Reducing measurement error remains a major challenge in this field."
+    }
+  },
+  {
+    "id": "noun-clause-subject-01",
+    "text": "Whether the effect persists over time remains unclear.",
+    "schemaValid": true,
+    "regenerated": false,
+    "elapsedMs": 5988.137499999997,
+    "parseError": null,
+    "fieldMatches": {
+      "subject": false,
+      "verb": false,
+      "object": true,
+      "complement": false,
+      "pattern": false
+    },
+    "analysis": {
+      "sentenceCore": {
+        "subject": null,
+        "subjectHead": null,
+        "verb": null,
+        "object": null,
+        "complement": null,
+        "pattern": "SVO"
+      },
+      "chunks": [
+        {
+          "span": {
+            "text": "Whether",
+            "start": 0,
+            "end": 7
+          },
+          "order": 1
+        },
+        {
+          "span": {
+            "text": "the effect persists over time",
+            "start": 8,
+            "end": 37
+          },
+          "order": 2
+        },
+        {
+          "span": {
+            "text": "remains unclear",
+            "start": 38,
+            "end": 53
+          },
+          "order": 3
+        }
+      ],
+      "modifiers": [
+        {
+          "phrase": {
+            "text": "Whether",
+            "start": 0,
+            "end": 7
+          },
+          "kind": "relativeClause",
+          "target": null,
+          "explanation": "この文は疑問文で、先行文と補足文の関係があります。先行文は「Whether the effect persists over time」です。"
+        }
+      ],
+      "clauses": [
+        {
+          "span": {
+            "text": "the effect persists over time",
+            "start": 8,
+            "end": 37
+          },
+          "kind": "adverbClause",
+          "role": "complementOfMainClause"
+        },
+        {
+          "span": {
+            "text": "remains unclear",
+            "start": 38,
+            "end": 53
+          },
+          "kind": "adjectiveClause",
+          "role": "complementOfMainClause"
+        }
+      ],
+      "phrases": [
+        {
+          "span": {
+            "text": "Whether the effect persists over time",
+            "start": 0,
+            "end": 37
+          },
+          "meaning": "先行文（疑問文）の部分です。"
+        },
+        {
+          "span": {
+            "text": "remains unclear",
+            "start": 38,
+            "end": 53
+          },
+          "meaning": "補足文（形容詞節）の部分です。"
+        }
+      ],
+      "vocabulary": [
+        {
+          "word": "Whether",
+          "contextualMeaning": "疑問を含む前置詞句"
+        },
+        {
+          "word": "effect",
+          "contextualMeaning": "影響や結果"
+        },
+        {
+          "word": "persistence",
+          "contextualMeaning": "持続性"
+        },
+        {
+          "word": "over time",
+          "contextualMeaning": "時間経過中"
+        },
+        {
+          "word": "remains",
+          "contextualMeaning": "残っている"
+        },
+        {
+          "word": "unclear",
+          "contextualMeaning": "曖昧で不明確な状態"
+        }
+      ],
+      "readingHint": [
+        "この文は疑問文で、先行文と補足文の関係があります。先行文は「Whether the effect persists over time」です。",
+        "補足文（形容詞節）は「remains unclear」となります。"
+      ],
+      "confidence": 1,
+      "uncertainties": [
+        "先行文と補足文の間の関係が完全に明確であるかどうかについて、自信はありません。"
+      ],
+      "needsMoreContext": false,
+      "referenceTranslation": null,
+      "originalText": "Whether the effect persists over time remains unclear.",
+      "normalizedText": "Whether the effect persists over time remains unclear."
+    }
+  },
+  {
+    "id": "adverb-clause-01",
+    "text": "Although the sample size was small, the effect was statistically significant.",
+    "schemaValid": true,
+    "regenerated": false,
+    "elapsedMs": 6073.292699999991,
+    "parseError": null,
+    "fieldMatches": {
+      "subject": false,
+      "verb": false,
+      "object": true,
+      "complement": false,
+      "pattern": false
+    },
+    "analysis": {
+      "sentenceCore": {
+        "subject": null,
+        "subjectHead": null,
+        "verb": null,
+        "object": null,
+        "complement": null,
+        "pattern": "SVO"
+      },
+      "chunks": [
+        {
+          "span": {
+            "text": "Although",
+            "start": 0,
+            "end": 8
+          },
+          "order": 1
+        },
+        {
+          "span": {
+            "text": "the sample size was small",
+            "start": 9,
+            "end": 34
+          },
+          "order": 2
+        },
+        {
+          "span": {
+            "text": ",",
+            "start": 34,
+            "end": 35
+          },
+          "order": 3
+        },
+        {
+          "span": {
+            "text": "the effect was statistically significant",
+            "start": 36,
+            "end": 76
+          },
+          "order": 4
+        }
+      ],
+      "modifiers": [
+        {
+          "phrase": {
+            "text": "Although",
+            "start": 0,
+            "end": 8
+          },
+          "kind": "relativeClause",
+          "target": null,
+          "explanation": "補助的な文の役割を果たす"
+        }
+      ],
+      "clauses": [
+        {
+          "span": {
+            "text": "the sample size was small",
+            "start": 9,
+            "end": 34
+          },
+          "kind": "adverbClause",
+          "role": "complementOfVerb"
+        },
+        {
+          "span": {
+            "text": "the effect was statistically significant",
+            "start": 36,
+            "end": 76
+          },
+          "kind": "adverbClause",
+          "role": "complementOfVerb"
+        }
+      ],
+      "phrases": [
+        {
+          "span": {
+            "text": "Although the sample size was small",
+            "start": 0,
+            "end": 34
+          },
+          "meaning": "補助的な文の役割を果たす"
+        },
+        {
+          "span": {
+            "text": "the effect was statistically significant",
+            "start": 36,
+            "end": 76
+          },
+          "meaning": "補助的な文の役割を果たす"
+        }
+      ],
+      "vocabulary": [
+        {
+          "word": "Although",
+          "contextualMeaning": "補助的な文の役割を果たす"
+        },
+        {
+          "word": "sample",
+          "contextualMeaning": "サンプル"
+        },
+        {
+          "word": "size",
+          "contextualMeaning": "サイズ"
+        },
+        {
+          "word": "was",
+          "contextualMeaning": "過去形の動詞の一部を表す"
+        },
+        {
+          "word": "effect",
+          "contextualMeaning": "効果"
+        },
+        {
+          "word": "statistically",
+          "contextualMeaning": "統計的に"
+        },
+        {
+          "word": "significant",
+          "contextualMeaning": "重要である、影響がある"
+        }
+      ],
+      "readingHint": [
+        "補助的な文の役割を果たす"
+      ],
+      "confidence": 1,
+      "uncertainties": [
+        "前後の文と関連する部分が不明確なため、完全に正確には判断できない。"
+      ],
+      "needsMoreContext": false,
+      "referenceTranslation": null,
+      "originalText": "Although the sample size was small, the effect was statistically significant.",
+      "normalizedText": "Although the sample size was small, the effect was statistically significant."
+    }
+  },
+  {
+    "id": "apposition-01",
+    "text": "The hypothesis that temperature affects reaction rate was confirmed.",
+    "schemaValid": true,
+    "regenerated": false,
+    "elapsedMs": 5054.1963000000105,
+    "parseError": null,
+    "fieldMatches": {
+      "subject": false,
+      "verb": false,
+      "object": true,
+      "complement": true,
+      "pattern": false
+    },
+    "analysis": {
+      "sentenceCore": {
+        "subject": null,
+        "subjectHead": null,
+        "verb": null,
+        "object": null,
+        "complement": null,
+        "pattern": "SVOO"
+      },
+      "chunks": [
+        {
+          "span": {
+            "text": "The hypothesis",
+            "start": 0,
+            "end": 14
+          },
+          "order": 1
+        },
+        {
+          "span": {
+            "text": "that temperature affects reaction rate",
+            "start": 15,
+            "end": 53
+          },
+          "order": 2
+        },
+        {
+          "span": {
+            "text": "was confirmed",
+            "start": 54,
+            "end": 67
+          },
+          "order": 3
+        }
+      ],
+      "modifiers": [
+        {
+          "phrase": {
+            "text": "that temperature affects reaction rate",
+            "start": 15,
+            "end": 53
+          },
+          "kind": "relativeClause",
+          "target": null,
+          "explanation": "この文は仮説として温度が反応速度に影響を与えることを示すものである。"
+        }
+      ],
+      "clauses": [
+        {
+          "span": {
+            "text": "The hypothesis",
+            "start": 0,
+            "end": 14
+          },
+          "kind": "nounClause",
+          "role": "subject"
+        },
+        {
+          "span": {
+            "text": "that temperature affects reaction rate",
+            "start": 15,
+            "end": 53
+          },
+          "kind": "nounClause",
+          "role": "relativeClause"
+        }
+      ],
+      "phrases": [
+        {
+          "span": {
+            "text": "was confirmed",
+            "start": 54,
+            "end": 67
+          },
+          "meaning": "確認された"
+        }
+      ],
+      "vocabulary": [
+        {
+          "word": "hypothesis",
+          "contextualMeaning": "仮説"
+        },
+        {
+          "word": "that",
+          "contextualMeaning": "その"
+        },
+        {
+          "word": "temperature",
+          "contextualMeaning": "温度"
+        },
+        {
+          "word": "affects",
+          "contextualMeaning": "影響を与える"
+        },
+        {
+          "word": "reaction rate",
+          "contextualMeaning": "反応速度"
+        }
+      ],
+      "readingHint": [
+        "仮説として温度が反応速度に影響を与えることを示すものである。"
+      ],
+      "confidence": 1,
+      "uncertainties": [
+        "relativeClauseの文脈が完全には理解できていないため、より具体的な説明が必要かもしれない。"
+      ],
+      "needsMoreContext": false,
+      "referenceTranslation": null,
+      "originalText": "The hypothesis that temperature affects reaction rate was confirmed.",
+      "normalizedText": "The hypothesis that temperature affects reaction rate was confirmed."
+    }
+  },
+  {
+    "id": "insertion-01",
+    "text": "The result, however, was not statistically significant.",
+    "schemaValid": true,
+    "regenerated": false,
+    "elapsedMs": 4016.0244999999995,
+    "parseError": null,
+    "fieldMatches": {
+      "subject": false,
+      "verb": true,
+      "object": false,
+      "complement": false,
+      "pattern": false
+    },
+    "analysis": {
+      "sentenceCore": {
+        "subject": null,
+        "subjectHead": null,
+        "verb": {
+          "text": "was",
+          "start": 21,
+          "end": 24
+        },
+        "object": {
+          "text": "not statistically significant",
+          "start": 25,
+          "end": 54
+        },
+        "complement": {
+          "text": "The result, however",
+          "start": 0,
+          "end": 19
+        },
+        "pattern": "SVO"
+      },
+      "chunks": [
+        {
+          "span": {
+            "text": "The result, however",
+            "start": 0,
+            "end": 19
+          },
+          "order": 1
+        }
+      ],
+      "modifiers": [],
+      "clauses": [
+        {
+          "span": {
+            "text": "The result, however",
+            "start": 0,
+            "end": 19
+          },
+          "kind": "adverbClause",
+          "role": "complement"
+        }
+      ],
+      "phrases": [],
+      "vocabulary": [
+        {
+          "word": "result",
+          "contextualMeaning": "結果"
+        },
+        {
+          "word": "however",
+          "contextualMeaning": "ただし"
+        },
+        {
+          "word": "was",
+          "contextualMeaning": "～である"
+        },
+        {
+          "word": "not",
+          "contextualMeaning": "ない"
+        },
+        {
+          "word": "statistically",
+          "contextualMeaning": "統計的に"
+        },
+        {
+          "word": "significant",
+          "contextualMeaning": "有意義な"
+        }
+      ],
+      "readingHint": [
+        "wasは文の主語ではなく、補助的な役割を果たしています。"
+      ],
+      "confidence": 1,
+      "uncertainties": [
+        "複雑な文法構造が存在するため、完全に正確な分析を行うのは難しいです。"
+      ],
+      "needsMoreContext": false,
+      "referenceTranslation": null,
+      "originalText": "The result, however, was not statistically significant.",
+      "normalizedText": "The result, however, was not statistically significant."
+    }
+  },
+  {
+    "id": "comparison-01",
+    "text": "The new algorithm is more efficient than the previous one.",
+    "schemaValid": true,
+    "regenerated": false,
+    "elapsedMs": 5862.785099999994,
+    "parseError": null,
+    "fieldMatches": {
+      "subject": false,
+      "verb": false,
+      "object": true,
+      "complement": false,
+      "pattern": false
+    },
+    "analysis": {
+      "sentenceCore": {
+        "subject": null,
+        "subjectHead": null,
+        "verb": null,
+        "object": null,
+        "complement": null,
+        "pattern": "SVO"
+      },
+      "chunks": [
+        {
+          "span": {
+            "text": "The new algorithm",
+            "start": 0,
+            "end": 17
+          },
+          "order": 1
+        },
+        {
+          "span": {
+            "text": "is more efficient",
+            "start": 18,
+            "end": 35
+          },
+          "order": 2
+        },
+        {
+          "span": {
+            "text": "than the previous one",
+            "start": 36,
+            "end": 57
+          },
+          "order": 3
+        }
+      ],
+      "modifiers": [
+        {
+          "phrase": {
+            "text": "the new",
+            "start": -1,
+            "end": -1
+          },
+          "kind": "adverbialPhrase",
+          "target": null,
+          "explanation": "新しいのを表す副詞句"
+        },
+        {
+          "phrase": {
+            "text": "more efficient",
+            "start": 21,
+            "end": 35
+          },
+          "kind": "adverbialPhrase",
+          "target": null,
+          "explanation": "より効率的であることを表す副詞句"
+        }
+      ],
+      "clauses": [
+        {
+          "span": {
+            "text": "The new algorithm is more efficient",
+            "start": 0,
+            "end": 35
+          },
+          "kind": "adverbClause",
+          "role": "mainClause"
+        },
+        {
+          "span": {
+            "text": "than the previous one",
+            "start": 36,
+            "end": 57
+          },
+          "kind": "adverbClause",
+          "role": "comparativeClause"
+        }
+      ],
+      "phrases": [
+        {
+          "span": {
+            "text": "the new algorithm",
+            "start": -1,
+            "end": -1
+          },
+          "meaning": "新しいアルゴリズム"
+        },
+        {
+          "span": {
+            "text": "is more efficient",
+            "start": 18,
+            "end": 35
+          },
+          "meaning": "より効率的である"
+        },
+        {
+          "span": {
+            "text": "than the previous one",
+            "start": 36,
+            "end": 57
+          },
+          "meaning": "前のものよりも"
+        }
+      ],
+      "vocabulary": [
+        {
+          "word": "new",
+          "contextualMeaning": "新しい"
+        },
+        {
+          "word": "algorithm",
+          "contextualMeaning": "アルゴリズム"
+        },
+        {
+          "word": "efficient",
+          "contextualMeaning": "効率的"
+        },
+        {
+          "word": "than",
+          "contextualMeaning": "より"
+        }
+      ],
+      "readingHint": [
+        "新しいアルゴリズムは、前のものよりも効率的である。"
+      ],
+      "confidence": 1,
+      "uncertainties": [
+        "修飾句「the new」が原文中に見つかりませんでした。",
+        "熟語・定型表現「the new algorithm」が原文中に見つかりませんでした。"
+      ],
+      "needsMoreContext": false,
+      "referenceTranslation": null,
+      "originalText": "The new algorithm is more efficient than the previous one.",
+      "normalizedText": "The new algorithm is more efficient than the previous one."
+    }
+  },
+  {
+    "id": "comparison-02",
+    "text": "This is the most reliable method available today.",
+    "schemaValid": true,
+    "regenerated": false,
+    "elapsedMs": 3696.040599999993,
+    "parseError": null,
+    "fieldMatches": {
+      "subject": false,
+      "verb": true,
+      "object": false,
+      "complement": false,
+      "pattern": false
+    },
+    "analysis": {
+      "sentenceCore": {
+        "subject": null,
+        "subjectHead": null,
+        "verb": {
+          "text": "is",
+          "start": 2,
+          "end": 4
+        },
+        "object": {
+          "text": "the most reliable method available today",
+          "start": 8,
+          "end": 48
+        },
+        "complement": null,
+        "pattern": "SVO"
+      },
+      "chunks": [
+        {
+          "span": {
+            "text": "This is the most reliable method available today.",
+            "start": 0,
+            "end": 49
+          },
+          "order": 0
+        }
+      ],
+      "modifiers": [],
+      "clauses": [],
+      "phrases": [
+        {
+          "span": {
+            "text": "the most reliable method",
+            "start": 8,
+            "end": 32
+          },
+          "meaning": "最も信頼性が高い方法"
+        }
+      ],
+      "vocabulary": [
+        {
+          "word": "is",
+          "contextualMeaning": "現在の最良の方法である"
+        },
+        {
+          "word": "the",
+          "contextualMeaning": "最も"
+        },
+        {
+          "word": "reliable",
+          "contextualMeaning": "信頼性が高い"
+        },
+        {
+          "word": "method",
+          "contextualMeaning": "方法"
+        },
+        {
+          "word": "available",
+          "contextualMeaning": "利用可能な"
+        },
+        {
+          "word": "today",
+          "contextualMeaning": "現在"
+        }
+      ],
+      "readingHint": [
+        "is: 現在の最良の方法である"
+      ],
+      "confidence": 1,
+      "uncertainties": [],
+      "needsMoreContext": false,
+      "referenceTranslation": null,
+      "originalText": "This is the most reliable method available today.",
+      "normalizedText": "This is the most reliable method available today."
+    }
+  },
+  {
+    "id": "inversion-01",
+    "text": "Not only did the temperature rise, but the pressure also increased.",
+    "schemaValid": true,
+    "regenerated": false,
+    "elapsedMs": 4149.380400000009,
+    "parseError": null,
+    "fieldMatches": {
+      "subject": false,
+      "verb": true,
+      "object": false,
+      "complement": true,
+      "pattern": false
+    },
+    "analysis": {
+      "sentenceCore": {
+        "subject": null,
+        "subjectHead": null,
+        "verb": {
+          "text": "did",
+          "start": 9,
+          "end": 12
+        },
+        "object": {
+          "text": "the temperature rise",
+          "start": 13,
+          "end": 33
+        },
+        "complement": null,
+        "pattern": "SVO"
+      },
+      "chunks": [
+        {
+          "span": {
+            "text": "Not only did the temperature rise, but",
+            "start": 0,
+            "end": 38
+          },
+          "order": 1
+        }
+      ],
+      "modifiers": [],
+      "clauses": [
+        {
+          "span": {
+            "text": "the temperature rise",
+            "start": 13,
+            "end": 33
+          },
+          "kind": "adverbClause",
+          "role": "complement"
+        }
+      ],
+      "phrases": [],
+      "vocabulary": [
+        {
+          "word": "Not only",
+          "contextualMeaning": "To emphasize that something else happened in addition to the main point."
+        },
+        {
+          "word": "did",
+          "contextualMeaning": "Used with auxiliary verbs like 'do' or 'does' to form a question or negative statement."
+        },
+        {
+          "word": "the temperature rise",
+          "contextualMeaning": "The increase in temperature."
+        }
+      ],
+      "readingHint": [
+        "This sentence uses 'Not only... but...' to connect two independent clauses.",
+        "The first clause describes the rise in temperature, and the second describes the increase in pressure."
+      ],
+      "confidence": 1,
+      "uncertainties": [
+        "There is no clear subject for this sentence. The main verbs are 'did' which indicates a past tense action."
+      ],
+      "needsMoreContext": true,
+      "referenceTranslation": null,
+      "originalText": "Not only did the temperature rise, but the pressure also increased.",
+      "normalizedText": "Not only did the temperature rise, but the pressure also increased."
+    }
+  },
+  {
+    "id": "ellipsis-01",
+    "text": "The control group received a placebo, and the treatment group, the drug.",
+    "schemaValid": true,
+    "regenerated": false,
+    "elapsedMs": 7229.732700000008,
+    "parseError": null,
+    "fieldMatches": {
+      "subject": false,
+      "verb": false,
+      "object": false,
+      "complement": true,
+      "pattern": false
+    },
+    "analysis": {
+      "sentenceCore": {
+        "subject": null,
+        "subjectHead": null,
+        "verb": null,
+        "object": null,
+        "complement": null,
+        "pattern": "SVOO"
+      },
+      "chunks": [
+        {
+          "span": {
+            "text": "The control group",
+            "start": 0,
+            "end": 17
+          },
+          "order": 1
+        },
+        {
+          "span": {
+            "text": "received a placebo",
+            "start": 18,
+            "end": 36
+          },
+          "order": 2
+        },
+        {
+          "span": {
+            "text": "and the treatment group",
+            "start": 38,
+            "end": 61
+          },
+          "order": 3
+        },
+        {
+          "span": {
+            "text": "the drug.",
+            "start": 63,
+            "end": 72
+          },
+          "order": 4
+        }
+      ],
+      "modifiers": [
+        {
+          "phrase": {
+            "text": "The control group",
+            "start": 0,
+            "end": 17
+          },
+          "kind": "relativeClause",
+          "target": null,
+          "explanation": "補足子句"
+        },
+        {
+          "phrase": {
+            "text": "received a placebo",
+            "start": 18,
+            "end": 36
+          },
+          "kind": "infinitivePhrase",
+          "target": null,
+          "explanation": "不定詞の文"
+        },
+        {
+          "phrase": {
+            "text": "the treatment group",
+            "start": 42,
+            "end": 61
+          },
+          "kind": "relativeClause",
+          "target": null,
+          "explanation": "補足子句"
+        },
+        {
+          "phrase": {
+            "text": "the drug.",
+            "start": 63,
+            "end": 72
+          },
+          "kind": "infinitivePhrase",
+          "target": null,
+          "explanation": "不定詞の文"
+        }
+      ],
+      "clauses": [
+        {
+          "span": {
+            "text": "The control group received a placebo",
+            "start": 0,
+            "end": 36
+          },
+          "kind": "adverbClause",
+          "role": "主語補足子句"
+        },
+        {
+          "span": {
+            "text": "the treatment group the drug.",
+            "start": -1,
+            "end": -1
+          },
+          "kind": "adverbClause",
+          "role": "主語補足子句"
+        }
+      ],
+      "phrases": [
+        {
+          "span": {
+            "text": "and",
+            "start": 38,
+            "end": 41
+          },
+          "meaning": "そして、"
+        },
+        {
+          "span": {
+            "text": ".",
+            "start": 71,
+            "end": 72
+          },
+          "meaning": "。"
+        }
+      ],
+      "vocabulary": [
+        {
+          "word": "control",
+          "contextualMeaning": "コントロール群"
+        },
+        {
+          "word": "group",
+          "contextualMeaning": "グループ"
+        },
+        {
+          "word": "received",
+          "contextualMeaning": "受けた"
+        },
+        {
+          "word": "a",
+          "contextualMeaning": "一つの"
+        },
+        {
+          "word": "placebo",
+          "contextualMeaning": "プラセボ"
+        },
+        {
+          "word": "and",
+          "contextualMeaning": "そして、"
+        },
+        {
+          "word": "the",
+          "contextualMeaning": "その"
+        },
+        {
+          "word": "drug.",
+          "contextualMeaning": "薬。"
+        }
+      ],
+      "readingHint": [
+        "各部分を丁寧に読むと、文の意味が理解できます。",
+        "特に、補足子句は主語や目的語として使われることが多いです。"
+      ],
+      "confidence": 1,
+      "uncertainties": [
+        "文全体の構造について完全な把握が難しい場合があります。",
+        "節「the treatment group the drug.」が原文中に見つかりませんでした。"
+      ],
+      "needsMoreContext": false,
+      "referenceTranslation": null,
+      "originalText": "The control group received a placebo, and the treatment group, the drug.",
+      "normalizedText": "The control group received a placebo, and the treatment group, the drug."
+    }
+  },
+  {
+    "id": "long-pp-01",
+    "text": "In the context of increasing global temperatures over the past several decades, researchers have focused on adaptive strategies.",
+    "schemaValid": true,
+    "regenerated": false,
+    "elapsedMs": 5979.330600000001,
+    "parseError": null,
+    "fieldMatches": {
+      "subject": false,
+      "verb": false,
+      "object": false,
+      "complement": true,
+      "pattern": false
+    },
+    "analysis": {
+      "sentenceCore": {
+        "subject": null,
+        "subjectHead": null,
+        "verb": null,
+        "object": null,
+        "complement": null,
+        "pattern": "SVOO"
+      },
+      "chunks": [
+        {
+          "span": {
+            "text": "In the context of increasing global temperatures over the past several decades,",
+            "start": 0,
+            "end": 79
+          },
+          "order": 1
+        },
+        {
+          "span": {
+            "text": "researchers have focused on adaptive strategies.",
+            "start": 80,
+            "end": 128
+          },
+          "order": 2
+        }
+      ],
+      "modifiers": [
+        {
+          "phrase": {
+            "text": "the context of increasing global temperatures over the past several decades",
+            "start": 3,
+            "end": 78
+          },
+          "kind": "prepositionalPhrase",
+          "target": null,
+          "explanation": "この文では、前後の文脈を形成する部分です。"
+        }
+      ],
+      "clauses": [
+        {
+          "span": {
+            "text": "researchers have focused on adaptive strategies.",
+            "start": 80,
+            "end": 128
+          },
+          "kind": "adverbClause",
+          "role": "resultOfPrepositionalPhrase"
+        }
+      ],
+      "phrases": [],
+      "vocabulary": [
+        {
+          "word": "context",
+          "contextualMeaning": "文脈、状況"
+        },
+        {
+          "word": "increasing",
+          "contextualMeaning": "増加する、増大する"
+        },
+        {
+          "word": "global",
+          "contextualMeaning": "世界的な、国際的な"
+        },
+        {
+          "word": "temperatures",
+          "contextualMeaning": "気温"
+        },
+        {
+          "word": "over",
+          "contextualMeaning": "過去の、数十年間"
+        },
+        {
+          "word": "several",
+          "contextualMeaning": "いくつかの、複数の"
+        },
+        {
+          "word": "decades",
+          "contextualMeaning": "年代"
+        },
+        {
+          "word": "researchers",
+          "contextualMeaning": "研究者たち"
+        },
+        {
+          "word": "have focused on",
+          "contextualMeaning": "注力している、重点的に取り組んでいる"
+        },
+        {
+          "word": "adaptive",
+          "contextualMeaning": "適応的な、対応可能な"
+        },
+        {
+          "word": "strategies",
+          "contextualMeaning": "戦略"
+        }
+      ],
+      "readingHint": [
+        "「In the context of」は、文脈を形成する部分です。ここでは、「過去の数十年間の」という意味になります。",
+        "「have focused on」は、現在進行形で使用され、研究者たちが注力していることを示しています。"
+      ],
+      "confidence": 0.95,
+      "uncertainties": [
+        "「several decades」の表現について、確実な解釈が必要です。",
+        "文脈を形成する部分である「the context of」の位置付けが完全に明確ではありません。"
+      ],
+      "needsMoreContext": true,
+      "referenceTranslation": null,
+      "originalText": "In the context of increasing global temperatures over the past several decades, researchers have focused on adaptive strategies.",
+      "normalizedText": "In the context of increasing global temperatures over the past several decades, researchers have focused on adaptive strategies."
+    }
+  },
+  {
+    "id": "multi-modifier-01",
+    "text": "The data collected from the sensors installed across the region during the summer months revealed unexpected patterns.",
+    "schemaValid": true,
+    "regenerated": false,
+    "elapsedMs": 5389.647699999987,
+    "parseError": null,
+    "fieldMatches": {
+      "subject": false,
+      "verb": false,
+      "object": false,
+      "complement": true,
+      "pattern": false
+    },
+    "analysis": {
+      "sentenceCore": {
+        "subject": null,
+        "subjectHead": null,
+        "verb": null,
+        "object": null,
+        "complement": null,
+        "pattern": "SVOO"
+      },
+      "chunks": [
+        {
+          "span": {
+            "text": "The data",
+            "start": 0,
+            "end": 8
+          },
+          "order": 1
+        },
+        {
+          "span": {
+            "text": "collected from the sensors installed across the region during the summer months",
+            "start": 9,
+            "end": 88
+          },
+          "order": 2
+        },
+        {
+          "span": {
+            "text": "revealed unexpected patterns",
+            "start": 89,
+            "end": 117
+          },
+          "order": 3
+        }
+      ],
+      "modifiers": [
+        {
+          "phrase": {
+            "text": "during the summer months",
+            "start": 64,
+            "end": 88
+          },
+          "kind": "prepositionalPhrase",
+          "target": null,
+          "explanation": "期間"
+        }
+      ],
+      "clauses": [
+        {
+          "span": {
+            "text": "The data collected from the sensors installed across the region",
+            "start": 0,
+            "end": 63
+          },
+          "kind": "adverbClause",
+          "role": "sufferer"
+        },
+        {
+          "span": {
+            "text": "revealed unexpected patterns",
+            "start": 89,
+            "end": 117
+          },
+          "kind": "adverbClause",
+          "role": "causer"
+        }
+      ],
+      "phrases": [
+        {
+          "span": {
+            "text": "collected from the sensors installed across the region during the summer months",
+            "start": 9,
+            "end": 88
+          },
+          "meaning": "データの収集"
+        },
+        {
+          "span": {
+            "text": "revealed unexpected patterns",
+            "start": 89,
+            "end": 117
+          },
+          "meaning": "不思議なパターンを明らかにした"
+        }
+      ],
+      "vocabulary": [
+        {
+          "word": "collected",
+          "contextualMeaning": "収集"
+        },
+        {
+          "word": "unexpected",
+          "contextualMeaning": "予想外の"
+        },
+        {
+          "word": "patterns",
+          "contextualMeaning": "パターン"
+        }
+      ],
+      "readingHint": [
+        "データは、地域全体に設置されたセンサから収集され、夏季期間中に不思議なパターンを明らかにしました。"
+      ],
+      "confidence": 0.95,
+      "uncertainties": [
+        "複雑な文法構造の理解が必要です"
+      ],
+      "needsMoreContext": false,
+      "referenceTranslation": null,
+      "originalText": "The data collected from the sensors installed across the region during the summer months revealed unexpected patterns.",
+      "normalizedText": "The data collected from the sensors installed across the region during the summer months revealed unexpected patterns."
+    }
+  },
+  {
+    "id": "ambiguous-modifier-01",
+    "text": "The scientist observed the reaction of the compound with a magnifying glass.",
+    "schemaValid": true,
+    "regenerated": false,
+    "elapsedMs": 5244.75009999999,
+    "parseError": null,
+    "fieldMatches": {
+      "subject": false,
+      "verb": true,
+      "object": true,
+      "complement": true,
+      "pattern": true
+    },
+    "analysis": {
+      "sentenceCore": {
+        "subject": null,
+        "subjectHead": null,
+        "verb": {
+          "text": "observed",
+          "start": 14,
+          "end": 22
+        },
+        "object": {
+          "text": "the reaction of the compound with a magnifying glass",
+          "start": 23,
+          "end": 75
+        },
+        "complement": null,
+        "pattern": "SVO"
+      },
+      "chunks": [
+        {
+          "span": {
+            "text": "The scientist",
+            "start": 0,
+            "end": 13
+          },
+          "order": 1
+        },
+        {
+          "span": {
+            "text": "the reaction of the compound with a magnifying glass",
+            "start": 23,
+            "end": 75
+          },
+          "order": 2
+        }
+      ],
+      "modifiers": [
+        {
+          "phrase": {
+            "text": "with a magnifying glass",
+            "start": 52,
+            "end": 75
+          },
+          "kind": "prepositionalPhrase",
+          "target": {
+            "text": "the reaction of the compound",
+            "start": 23,
+            "end": 51
+          },
+          "explanation": "補助動詞の後に付く前置詞句"
+        }
+      ],
+      "clauses": [
+        {
+          "span": {
+            "text": "The scientist observed the reaction of the compound with a magnifying glass",
+            "start": 0,
+            "end": 75
+          },
+          "kind": "adverbClause",
+          "role": "定容動詞の補足"
+        }
+      ],
+      "phrases": [
+        {
+          "span": {
+            "text": "the reaction of the compound with a magnifying glass",
+            "start": 23,
+            "end": 75
+          },
+          "meaning": "化合物とマグネトグラスで観察する反応"
+        }
+      ],
+      "vocabulary": [
+        {
+          "word": "observed",
+          "contextualMeaning": "観察する"
+        },
+        {
+          "word": "reaction",
+          "contextualMeaning": "反応"
+        },
+        {
+          "word": "compound",
+          "contextualMeaning": "化合物"
+        },
+        {
+          "word": "magnifying glass",
+          "contextualMeaning": "マグネトグラス"
+        }
+      ],
+      "readingHint": [
+        "動詞の前に前置詞句が付く場合があります。"
+      ],
+      "confidence": 1,
+      "uncertainties": [
+        "前後の文脈がないため、補助動詞の後に付く前置詞句が付くかどうかを正確に判断できない可能性があります。"
+      ],
+      "needsMoreContext": false,
+      "referenceTranslation": null,
+      "originalText": "The scientist observed the reaction of the compound with a magnifying glass.",
+      "normalizedText": "The scientist observed the reaction of the compound with a magnifying glass."
+    }
+  },
+  {
+    "id": "multi-interpretation-01",
+    "text": "Visiting professors can be interesting.",
+    "schemaValid": true,
+    "regenerated": false,
+    "elapsedMs": 4302.676400000011,
+    "parseError": null,
+    "fieldMatches": {
+      "subject": false,
+      "verb": false,
+      "object": true,
+      "complement": false,
+      "pattern": false
+    },
+    "analysis": {
+      "sentenceCore": {
+        "subject": null,
+        "subjectHead": null,
+        "verb": null,
+        "object": null,
+        "complement": null,
+        "pattern": "SVO"
+      },
+      "chunks": [
+        {
+          "span": {
+            "text": "Visiting professors",
+            "start": 0,
+            "end": 19
+          },
+          "order": 1
+        },
+        {
+          "span": {
+            "text": "can be interesting",
+            "start": 20,
+            "end": 38
+          },
+          "order": 2
+        }
+      ],
+      "modifiers": [
+        {
+          "phrase": {
+            "text": "Visiting",
+            "start": 0,
+            "end": 8
+          },
+          "kind": "adverbialPhrase",
+          "target": null,
+          "explanation": "名詞の前置接続語"
+        },
+        {
+          "phrase": {
+            "text": "interesting",
+            "start": 27,
+            "end": 38
+          },
+          "kind": "adverbialPhrase",
+          "target": null,
+          "explanation": "形容詞"
+        }
+      ],
+      "clauses": [
+        {
+          "span": {
+            "text": "Visiting professors can be interesting",
+            "start": 0,
+            "end": 38
+          },
+          "kind": "adverbClause",
+          "role": "mainClause"
+        }
+      ],
+      "phrases": [],
+      "vocabulary": [
+        {
+          "word": "professors",
+          "contextualMeaning": "教授"
+        },
+        {
+          "word": "can be interesting",
+          "contextualMeaning": "興味深いことができる"
+        }
+      ],
+      "readingHint": [
+        "教授は訪問者として来ると面白いことができる"
+      ],
+      "confidence": 1,
+      "uncertainties": [
+        "動詞の位置が不明確であるため、主語と述語の区別が難しくなる可能性がある。"
+      ],
+      "needsMoreContext": false,
+      "referenceTranslation": null,
+      "originalText": "Visiting professors can be interesting.",
+      "normalizedText": "Visiting professors can be interesting."
+    }
+  },
+  {
+    "id": "long-academic-01",
+    "text": "Although the mechanism underlying this phenomenon remains poorly understood, the results obtained across multiple independent trials, which were conducted under strictly controlled conditions, strongly suggest that the observed effect is not attributable to experimental artifacts.",
+    "schemaValid": true,
+    "regenerated": false,
+    "elapsedMs": 6561.3531000000075,
+    "parseError": null,
+    "fieldMatches": {
+      "subject": false,
+      "verb": false,
+      "object": false,
+      "complement": true,
+      "pattern": false
+    },
+    "analysis": {
+      "sentenceCore": {
+        "subject": null,
+        "subjectHead": null,
+        "verb": null,
+        "object": null,
+        "complement": null,
+        "pattern": "SVOO"
+      },
+      "chunks": [
+        {
+          "span": {
+            "text": "Although the mechanism underlying this phenomenon remains poorly understood",
+            "start": 0,
+            "end": 75
+          },
+          "order": 1
+        },
+        {
+          "span": {
+            "text": "the results obtained across multiple independent trials",
+            "start": 77,
+            "end": 132
+          },
+          "order": 2
+        },
+        {
+          "span": {
+            "text": "which were conducted under strictly controlled conditions",
+            "start": 134,
+            "end": 191
+          },
+          "order": 3
+        },
+        {
+          "span": {
+            "text": "strongly suggest that the observed effect is not attributable to experimental artifacts",
+            "start": 193,
+            "end": 280
+          },
+          "order": 4
+        }
+      ],
+      "modifiers": [
+        {
+          "phrase": {
+            "text": "Although",
+            "start": 0,
+            "end": 8
+          },
+          "kind": "adverbialPhrase",
+          "target": null,
+          "explanation": "条件付き副詞"
+        },
+        {
+          "phrase": {
+            "text": "the mechanism underlying this phenomenon remains poorly understood",
+            "start": 9,
+            "end": 75
+          },
+          "kind": "relativeClause",
+          "target": null,
+          "explanation": "補足主語の節"
+        },
+        {
+          "phrase": {
+            "text": "which were conducted under strictly controlled conditions",
+            "start": 134,
+            "end": 191
+          },
+          "kind": "relativeClause",
+          "target": null,
+          "explanation": "補足主語の節"
+        }
+      ],
+      "clauses": [
+        {
+          "span": {
+            "text": "Although the mechanism underlying this phenomenon remains poorly understood",
+            "start": 0,
+            "end": 75
+          },
+          "kind": "adverbClause",
+          "role": "条件付き副句"
+        },
+        {
+          "span": {
+            "text": "the results obtained across multiple independent trials which were conducted under strictly controlled conditions",
+            "start": -1,
+            "end": -1
+          },
+          "kind": "nounClause",
+          "role": "主語の節"
+        }
+      ],
+      "phrases": [
+        {
+          "span": {
+            "text": "strongly suggest that the observed effect is not attributable to experimental artifacts",
+            "start": 193,
+            "end": 280
+          },
+          "meaning": "推測する表現"
+        }
+      ],
+      "vocabulary": [
+        {
+          "word": "underlying",
+          "contextualMeaning": "基礎的な、根本的な"
+        },
+        {
+          "word": "poorly",
+          "contextualMeaning": "不完全な、不明確な"
+        },
+        {
+          "word": "controlled",
+          "contextualMeaning": "厳密に管理された"
+        }
+      ],
+      "readingHint": [
+        "副詞節は主句の前に位置しています。複雑な文法構造を理解するためには、各部分がどのようにつながっているかを確認することが重要です。",
+        "補足主語の節は、主句と関連性のある情報を提供します。"
+      ],
+      "confidence": 0.95,
+      "uncertainties": [
+        "複雑な文法構造について完全に理解するためには、文章全体を考慮することが必要です。",
+        "補足主語の節がどのように主句と関連しているかは明確ではありません。",
+        "節「the results obtained across multiple independent trials which were conducted under strictly controlled conditions」が原文中に見つかりませんでした。"
+      ],
+      "needsMoreContext": false,
+      "referenceTranslation": null,
+      "originalText": "Although the mechanism underlying this phenomenon remains poorly understood, the results obtained across multiple independent trials, which were conducted under strictly controlled conditions, strongly suggest that the observed effect is not attributable to experimental artifacts.",
+      "normalizedText": "Although the mechanism underlying this phenomenon remains poorly understood, the results obtained across multiple independent trials, which were conducted under strictly controlled conditions, strongly suggest that the observed effect is not attributable to experimental artifacts."
+    }
+  },
+  {
+    "id": "technical-01",
+    "text": "The convolutional neural network was fine-tuned on a domain-specific corpus to improve classification accuracy.",
+    "schemaValid": true,
+    "regenerated": false,
+    "elapsedMs": 4552.270799999998,
+    "parseError": null,
+    "fieldMatches": {
+      "subject": false,
+      "verb": false,
+      "object": true,
+      "complement": true,
+      "pattern": false
+    },
+    "analysis": {
+      "sentenceCore": {
+        "subject": null,
+        "subjectHead": null,
+        "verb": null,
+        "object": null,
+        "complement": null,
+        "pattern": "SVOO"
+      },
+      "chunks": [
+        {
+          "span": {
+            "text": "The convolutional neural network",
+            "start": 0,
+            "end": 32
+          },
+          "order": 1
+        },
+        {
+          "span": {
+            "text": "was fine-tuned",
+            "start": 33,
+            "end": 47
+          },
+          "order": 2
+        },
+        {
+          "span": {
+            "text": "on a domain-specific corpus",
+            "start": 48,
+            "end": 75
+          },
+          "order": 3
+        },
+        {
+          "span": {
+            "text": "to improve classification accuracy.",
+            "start": 76,
+            "end": 111
+          },
+          "order": 4
+        }
+      ],
+      "modifiers": [
+        {
+          "phrase": {
+            "text": "The convolutional neural network",
+            "start": 0,
+            "end": 32
+          },
+          "kind": "appositive",
+          "target": null,
+          "explanation": "補足説明"
+        }
+      ],
+      "clauses": [
+        {
+          "span": {
+            "text": "was fine-tuned on a domain-specific corpus to improve classification accuracy.",
+            "start": 33,
+            "end": 111
+          },
+          "kind": "adverbClause",
+          "role": "purpose"
+        }
+      ],
+      "phrases": [],
+      "vocabulary": [
+        {
+          "word": "convolutional neural network",
+          "contextualMeaning": "コンvolutional neural network"
+        },
+        {
+          "word": "fine-tuned",
+          "contextualMeaning": "微調整された"
+        },
+        {
+          "word": "domain-specific corpus",
+          "contextualMeaning": "専門用語集"
+        },
+        {
+          "word": "to improve",
+          "contextualMeaning": "精度を向上させるために"
+        },
+        {
+          "word": "classification accuracy",
+          "contextualMeaning": "分類の正確性"
+        }
+      ],
+      "readingHint": [
+        "この文は、コンvolutional neural networkが専門用語集を使って分類の正確性を向上させられたという事実を説明しています。"
+      ],
+      "confidence": 1,
+      "uncertainties": [],
+      "needsMoreContext": false,
+      "referenceTranslation": null,
+      "originalText": "The convolutional neural network was fine-tuned on a domain-specific corpus to improve classification accuracy.",
+      "normalizedText": "The convolutional neural network was fine-tuned on a domain-specific corpus to improve classification accuracy."
+    }
+  }
+]

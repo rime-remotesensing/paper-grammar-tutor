@@ -1,0 +1,165 @@
+# Paper Grammar Tutor
+
+英語論文を読む日本語話者向けの、英文構造読解支援ツール。**翻訳ツールではない**。
+目的は、利用者が英文の主語・動詞・修飾関係・節構造などを理解し、最終的に翻訳に頼らず
+論文を読めるようになること。全文訳は初期状態では表示されず、折りたたみを開いたときのみ見える。
+
+ローカルのPDF論文をブラウザで開き、PDF上で英文を選択し、その場でローカルOllamaによる
+文法構造解析を確認できる（Prototype 1）。PDF本文・選択英文はOllama以外のどこへも送信しない。
+
+## アーキテクチャ
+
+```
+UI (React)
+  -> GrammarAnalyzer (src/features/grammar/domain)     … プロンプト構築・検証・repairを orchestrate
+  -> LLMProvider interface (src/llm/types.ts)           … Ollama固有の型を知らない境界
+       -> OllamaProvider (src/llm/providers/ollama)     … Ollamaの/api/chat, /api/tagsだけを知る実装
+```
+
+- **アプリとLLMを分離**: UI/ドメインロジックは `LLMProvider` インターフェースにのみ依存する。
+  将来 Ollama 以外のバックエンドを追加する場合、`OllamaProvider` と同じ形の新しい実装を
+  `src/llm/providers/` に追加するだけでよく、`GrammarAnalyzer` やコンポーネントは変更不要。
+- **LLM出力を信用しない**: `GrammarAnalyzer.analyzeSentence` は
+  「JSON parse → zod validation → 1回だけrepair → span検証・補正 → normalize」を必ず通す。
+  検証に失敗してもアプリは落とさず、`needsMoreContext: true` の空の解析結果を返す
+  (`src/features/grammar/domain/fallbackAnalysis.ts`)。
+- **文字位置(start/end)はLLMを信用しない**: LLMが返す span の `text` を原文へ照合し直し、
+  ずれていれば座標を補正、見つからなければ `uncertainties` に記録する
+  (`src/utils/spanMatch.ts`, `src/features/grammar/domain/resolveAnalysisSpans.ts`)。
+- **ローカル処理**: PDFファイルはブラウザ内で読み込むだけで、外部サーバーへアップロードしない。
+  選択英文の解析対象送信先はローカルOllamaのみ。解析履歴・アノテーションの永続保存はまだ実装していない。
+  Ollama の接続先は既定で `http://localhost:11434`。
+- **PDF統合はGrammarAnalyzerを変更しない**: `src/features/pdf` はPDF.jsでの表示・テキストレイヤーからの
+  選択・最小限の正規化のみを担当し、選択後の文字列を既存の`analyzeSentence`にそのまま渡す。
+  PDF統合のためだけに文法解析ロジック（schema/prompt/derivePattern等）を変更していない。
+
+## ディレクトリ構成
+
+```
+src/
+  components/            アプリ全体で使う小さめのUI (接続状態, モデル選択)
+  features/grammar/
+    components/          文入力・解析結果表示のUI
+    domain/               GrammarAnalyzer, span解決, フォールバック生成, derivePattern, モデルサイズ注意文
+    schemas/               zodスキーマ（正）と、Ollamaのformatへ渡すJSON Schema（手書き・要同期）
+  features/pdf/
+    components/PdfViewer.tsx  PDF.js統合本体（読み込み・描画・ページ送り・zoom・text layer・選択）
+    domain/                    scanned-PDF判定, viewer state reset, 選択文字列の構造化
+    utils/pdfTextNormalize.ts  改行結合・ハイフネーション補正・空白正規化（最小限、section 9準拠）
+  llm/
+    types.ts              LLMProvider インターフェース（アプリ全体が依存する境界）
+    providers/ollama/      Ollama固有の実装
+    prompts/                プロンプト文言を一元管理
+  config/settings.ts       Ollama URL / temperature / timeout / PDF zoom・scanned判定閾値などの定数
+  utils/                   文字正規化, span照合, JSON抽出
+
+tests/                    vitest（ロジックのみ。UIコンポーネントテストは未実装）
+  fixtures/pdf/            自作のサンプルPDF（1段組み/2段組み、動作確認用。機密PDFは含めない）
+benchmark/
+  sentences/
+    development.json      prompt/schema調整に使ってきた28文（development set。もはやholdoutではない）
+    holdout.json           prompt/schema調整に一切使っていない57文（holdout set。goldはモデル出力を見る前に確定）
+  run.ts                   development/holdoutを指定して複数モデルを比較実行するCLI
+  baselines/prototype-0/   Prototype 0時点のベンチマーク結果（比較用に凍結、上書きしない）
+  results/                 実行結果の出力先（gitignore対象、.gitkeepのみ追跡）
+docs/design-notes.md       重要な設計判断の記録
+```
+
+## 必要環境
+
+- Node.js 20+ (開発時は 24.19.0 で確認)
+- [Ollama](https://ollama.com/) がローカルで起動していること
+- 日本語文法説明・JSON構造化に使うモデル（例: `qwen2.5:3b-instruct`, `qwen2.5:7b-instruct`）
+
+```bash
+# Ollama側の準備（初回のみ）
+ollama pull qwen2.5:7b-instruct    # 推奨（Prototype 0.2 holdout評価: constituent平均93%）
+ollama pull qwen2.5:14b-instruct   # 任意。7Bより一貫して良いわけではない（docs/design-notes.md参照）
+ollama pull qwen2.5:3b-instruct    # 任意・実験用。sentenceCore抽出が実質機能しないため通常は非推奨
+```
+
+推奨モデル: **7B級**。3B級はモデル選択時にUI上へ簡潔な注意を表示する（詳細は下記「既知の限界」）。
+Ollama はデフォルトで `http://localhost:11434` で待ち受ける。アプリ画面右上の「Ollama URL」欄で変更可能。
+
+## セットアップと起動
+
+```bash
+npm install
+npm run dev
+```
+
+表示されたURL（既定 `http://localhost:5173`）を開く。画面上部でOllamaの接続状態とモデル一覧を確認し、
+モデルを選ぶ。「ファイルの選択」からローカルのPDF（テキストレイヤー付き、スキャンPDF不可）を開き、
+PDF上で英文をドラッグして選択すると右側の入力欄へ自動で入る（自動解析はしない）。内容を確認・修正して
+から「解析」を押す。PDFを使わず、右側のテキスト欄に直接入力・「評価文から選択」
+（`benchmark/sentences/development.json`）でも従来どおり解析できる。
+
+## 検証コマンド
+
+```bash
+npm run typecheck   # tsc -b
+npm run lint        # oxlint
+npm run test        # vitest run
+npm run build        # tsc -b && vite build
+```
+
+## モデル比較ベンチマーク
+
+`--dataset` で development（prompt/schema調整に使ってきた28文）か holdout（未使用の57文）を選び、
+指定したモデルすべてに対してアプリと同じ`GrammarAnalyzer`で解析する。既定は`development`。
+
+```bash
+npm run benchmark -- qwen2.5:7b-instruct,qwen2.5:14b-instruct --dataset development
+npm run benchmark -- qwen2.5:7b-instruct,qwen2.5:14b-instruct --dataset holdout
+npm run benchmark -- qwen2.5:3b-instruct --dataset holdout --base-url http://localhost:11434
+```
+
+集計する指標: 構造化出力の成功率・repair発生率・処理時間、subject/subjectHead/verb/indirectObject/object
+の一致率、complementはsubject complement（SVC相当）とobject complement（SVOC相当）に分けて集計、
+pattern(derived)はアプリが導出した値とgoldの一致率。一致率判定はgoldテキストとの正規化後の完全一致/
+部分一致による簡易評価であり、精緻な自動採点ではない。
+
+patternはLLMではなくアプリが `derivePattern.ts` で導出するため「pattern engine accuracy」とは呼ばない。
+patternが不一致だった場合、原因となったconstituentフィールド(verb/indirectObject/object/complement)を
+summary.mdに集計する。
+
+**節(clauses)の種類・役割・修飾語の attachment 先は自動採点していない**（安全に自動採点できないと判断
+したため）。各文のJSON出力にgoldとモデル解析結果を並べて出力するので、人間によるレビューを想定している。
+`ambiguous: true` の文についても、単一の正解を強制せず、モデルが不確実性（needsMoreContext/confidence/
+uncertainties）を示せたかを`ambiguityAwareness`として記録するのみで、正誤判定はしていない。
+
+結果は `benchmark/results/<timestamp>-<dataset>/` に、モデルごとのJSON（全項目・生の解析結果込み）と
+`summary.md`（比較表）として出力される。
+
+## PDF機能について
+
+- 対応: ローカルPDFファイルの読み込み・ページ表示・前後ページ移動・zoom in/out・テキストレイヤーからの
+  選択。選択は自動解析を開始しない（誤選択で無駄にLLMを実行しないため）。選択された文字列は
+  改行結合・行末ハイフネーション補正・空白正規化のみ行った上で右側のテキスト欄に表示し、解析前に
+  手動編集できる（PDF抽出には不要な改行やハイフネーションの乱れがあるため）。
+- 非対応: スキャンPDF/OCR（テキストレイヤーがないPDFはエラー表示）、複数カラムのreading-order自動復元
+  （選択範囲をそのまま解析対象にする。カラムをまたいだ不自然な選択でもアプリは落ちない）、前後文の
+  自動取得、解析履歴・注釈の永続保存。
+- 別のPDFを開くと、選択中の英文・解析結果は破棄される（異なる論文の解析結果が残り続けないように）。
+
+## 既知の限界
+
+Prototype 0.2のholdout評価（未使用の57文、詳細は`docs/design-notes.md`）で判明した、現時点の
+文法解析エンジンの既知の限界:
+
+1. **SVOOとto/for句の区別を誤る場合がある**（例: "gives feedback to the students"の"to the students"を
+   誤って`indirectObject`として扱う、または"gives the students feedback"の二重目的語を1つの`object`に
+   結合してしまう）。
+2. **complementを見落とす場合がある**（本来SVC/SVOCの補語があるべき場面で`complement`をnullのまま返す）。
+3. **曖昧なmodifier attachmentを単一解釈として断定する場合がある**（意図的に複数解釈可能な文でも、
+   不確実性を示さず1つの読みだけを高い確信度で返すことがある）。
+4. AIによる文法解析であり、常に正しいとは限らない。重要な判断には利用者自身の読解と併用すること。
+
+これらはPrototype 1の実装を妨げるものとは扱っていない（既知の制約として記録し、精度改善は別フェーズで
+行う）。UI下部にも簡潔な注意文を常時表示している。
+
+## Prototype 1 の範囲外
+
+OCR・Zotero連携・Anki連携・クラウドLLM・RAG・vector DB・論文要約・論文QA・PDF全文翻訳・
+複数PDF同時利用・注釈の永続保存・ユーザーアカウント・バックエンドサーバー・DB・dependency parser等の
+NLPパーサー併用・デスクトップアプリ化・解析/PDF履歴機能は、この段階では未実装。

@@ -1,0 +1,63 @@
+:root {
+  --text: #2b2b33;
+  --text-muted: #6b6375;
+  --bg: #fff;
+  --bg-subtle: #f7f6f9;
+  --border: #e0dfe4;
+  --accent: #7a3bff;
+  --warning-bg: #fff4e5;
+  --warning-border: #f0b429;
+
+  font: 16px/1.55 system-ui, 'Segoe UI', 'Hiragino Sans', 'Yu Gothic', Roboto, sans-serif;
+  color-scheme: light dark;
+  color: var(--text);
+  background: var(--bg);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --text: #e6e5ea;
+    --text-muted: #a9a6b2;
+    --bg: #17161c;
+    --bg-subtle: #201f27;
+    --border: #35333d;
+    --accent: #b98cff;
+    --warning-bg: #3a2c12;
+    --warning-border: #caa23a;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+h1,
+h2 {
+  font-weight: 600;
+}
+
+h1 {
+  font-size: 1.4rem;
+  margin: 0;
+}
+
+h2 {
+  font-size: 1rem;
+  margin: 0 0 0.5rem;
+  color: var(--accent);
+}
+
+textarea,
+input,
+select,
+button {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}

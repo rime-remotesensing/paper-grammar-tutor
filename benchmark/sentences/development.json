@@ -1,0 +1,371 @@
+{
+  "setRole": "development",
+  "description": "Prototype 0 evaluation sentences. Self-authored, not copied from any published paper. gold fields are plain-text expectations for a human reviewer to compare against model output; they are intentionally partial, not a full GrammarAnalysis. As of Prototype 0.2, this set has been used to drive prompt/schema decisions (Prototype 0 and 0.1) and must NOT be treated as a held-out test set — see benchmark/sentences/holdout.json for sentences never used in tuning.",
+  "sentences": [
+    {
+      "id": "sv-01",
+      "text": "The temperature increased gradually.",
+      "tags": ["basic-pattern", "SV"],
+      "gold": {
+        "subject": "The temperature",
+        "verb": "increased",
+        "object": null,
+        "complement": null,
+        "pattern": "SV",
+        "notes": "Simple intransitive sentence with an adverb."
+      }
+    },
+    {
+      "id": "svo-01",
+      "text": "The researchers collected data from three regions.",
+      "tags": ["basic-pattern", "SVO", "prepositional-phrase"],
+      "gold": {
+        "subject": "The researchers",
+        "verb": "collected",
+        "object": "data from three regions",
+        "complement": null,
+        "pattern": "SVO",
+        "notes": "\"from three regions\" is a prepositional phrase modifying \"data\"."
+      }
+    },
+    {
+      "id": "svc-01",
+      "text": "The results are consistent with previous studies.",
+      "tags": ["basic-pattern", "SVC"],
+      "gold": {
+        "subject": "The results",
+        "verb": "are",
+        "object": null,
+        "complement": "consistent with previous studies",
+        "pattern": "SVC",
+        "notes": "Adjective complement with its own prepositional phrase."
+      }
+    },
+    {
+      "id": "svoo-01",
+      "text": "The system gives users immediate feedback.",
+      "tags": ["basic-pattern", "SVOO"],
+      "gold": {
+        "subject": "The system",
+        "verb": "gives",
+        "indirectObject": "users",
+        "object": "immediate feedback",
+        "complement": null,
+        "pattern": "SVOO",
+        "notes": "Indirect object \"users\" and direct object \"immediate feedback\". (Prototype 0.1: gold split into indirectObject/object to match the schema's new indirectObject field; the sentence, subject, verb, and pattern are unchanged from Prototype 0.)"
+      }
+    },
+    {
+      "id": "svoc-01",
+      "text": "The committee found the proposal convincing.",
+      "tags": ["basic-pattern", "SVOC"],
+      "gold": {
+        "subject": "The committee",
+        "verb": "found",
+        "object": "the proposal",
+        "complement": "convincing",
+        "pattern": "SVOC",
+        "notes": "\"convincing\" is an object complement describing \"the proposal\"."
+      }
+    },
+    {
+      "id": "passive-01",
+      "text": "The samples were analyzed using a spectrometer.",
+      "tags": ["passive-voice", "participle-construction"],
+      "gold": {
+        "subject": "The samples",
+        "verb": "were analyzed",
+        "object": null,
+        "complement": null,
+        "pattern": "SV",
+        "notes": "Passive voice; \"using a spectrometer\" is a participial phrase (means), not a separate clause with its own subject."
+      }
+    },
+    {
+      "id": "relative-restrictive-01",
+      "text": "The method that we proposed improved accuracy significantly.",
+      "tags": ["relative-clause-restrictive"],
+      "gold": {
+        "subject": "The method that we proposed",
+        "verb": "improved",
+        "object": "accuracy",
+        "complement": null,
+        "pattern": "SVO",
+        "notes": "\"that we proposed\" is a restrictive relative clause modifying \"The method\"; subjectHead should be \"The method\"."
+      }
+    },
+    {
+      "id": "relative-nonrestrictive-01",
+      "text": "The algorithm, which was developed in 2020, outperforms earlier baselines.",
+      "tags": ["relative-clause-nonrestrictive"],
+      "gold": {
+        "subject": "The algorithm",
+        "verb": "outperforms",
+        "object": "earlier baselines",
+        "complement": null,
+        "pattern": "SVO",
+        "notes": "\", which was developed in 2020,\" is a non-restrictive relative clause; the sentence's core S/V/O should ignore it."
+      }
+    },
+    {
+      "id": "participle-postmod-01",
+      "text": "The results obtained in the previous experiment indicate that the proposed method is effective.",
+      "tags": ["participle-postmodifier", "noun-clause"],
+      "gold": {
+        "subject": "The results obtained in the previous experiment",
+        "verb": "indicate",
+        "object": "that the proposed method is effective",
+        "complement": null,
+        "pattern": "SVO",
+        "notes": "Spec's own worked example. subjectHead \"The results\"; \"obtained in the previous experiment\" is a past-participle postmodifier; the object is a noun (that-) clause."
+      }
+    },
+    {
+      "id": "participle-postmod-02",
+      "text": "Researchers studying climate change often rely on satellite data.",
+      "tags": ["participle-postmodifier"],
+      "gold": {
+        "subject": "Researchers studying climate change",
+        "verb": "rely",
+        "object": "on satellite data",
+        "complement": null,
+        "pattern": "SVO",
+        "notes": "subjectHead \"Researchers\"; \"studying climate change\" is a present-participle postmodifier."
+      }
+    },
+    {
+      "id": "participle-construction-01",
+      "text": "Having collected sufficient data, the team began the analysis.",
+      "tags": ["participial-construction"],
+      "gold": {
+        "subject": "the team",
+        "verb": "began",
+        "object": "the analysis",
+        "complement": null,
+        "pattern": "SVO",
+        "notes": "\"Having collected sufficient data\" is a perfect participial (adverbial) construction sharing the subject \"the team\"."
+      }
+    },
+    {
+      "id": "infinitive-adverbial-01",
+      "text": "Researchers conducted additional trials to verify the results.",
+      "tags": ["infinitive-adverbial"],
+      "gold": {
+        "subject": "Researchers",
+        "verb": "conducted",
+        "object": "additional trials",
+        "complement": null,
+        "pattern": "SVO",
+        "notes": "\"to verify the results\" is an infinitive phrase of purpose modifying the verb."
+      }
+    },
+    {
+      "id": "infinitive-noun-01",
+      "text": "To understand the mechanism requires careful experimentation.",
+      "tags": ["infinitive-noun-subject"],
+      "gold": {
+        "subject": "To understand the mechanism",
+        "verb": "requires",
+        "object": "careful experimentation",
+        "complement": null,
+        "pattern": "SVO",
+        "notes": "Infinitive phrase used as the subject of the sentence."
+      }
+    },
+    {
+      "id": "gerund-01",
+      "text": "Reducing measurement error remains a major challenge in this field.",
+      "tags": ["gerund-subject"],
+      "gold": {
+        "subject": "Reducing measurement error",
+        "verb": "remains",
+        "object": null,
+        "complement": "a major challenge in this field",
+        "pattern": "SVC",
+        "notes": "Gerund phrase as subject."
+      }
+    },
+    {
+      "id": "noun-clause-subject-01",
+      "text": "Whether the effect persists over time remains unclear.",
+      "tags": ["noun-clause-subject"],
+      "gold": {
+        "subject": "Whether the effect persists over time",
+        "verb": "remains",
+        "object": null,
+        "complement": "unclear",
+        "pattern": "SVC",
+        "notes": "\"Whether...\" noun clause functions as the sentence subject."
+      }
+    },
+    {
+      "id": "adverb-clause-01",
+      "text": "Although the sample size was small, the effect was statistically significant.",
+      "tags": ["adverb-clause"],
+      "gold": {
+        "subject": "the effect",
+        "verb": "was",
+        "object": null,
+        "complement": "statistically significant",
+        "pattern": "SVC",
+        "notes": "\"Although the sample size was small\" is a subordinate adverb clause of concession attached to the main clause."
+      }
+    },
+    {
+      "id": "apposition-01",
+      "text": "The hypothesis that temperature affects reaction rate was confirmed.",
+      "tags": ["apposition-noun-clause"],
+      "gold": {
+        "subject": "The hypothesis that temperature affects reaction rate",
+        "verb": "was confirmed",
+        "object": null,
+        "complement": null,
+        "pattern": "SV",
+        "notes": "\"that temperature affects reaction rate\" is an appositive noun clause explaining \"hypothesis\" (not a relative clause, since \"that\" has no grammatical role inside it)."
+      }
+    },
+    {
+      "id": "insertion-01",
+      "text": "The result, however, was not statistically significant.",
+      "tags": ["parenthetical-insertion"],
+      "gold": {
+        "subject": "The result",
+        "verb": "was",
+        "object": null,
+        "complement": "not statistically significant",
+        "pattern": "SVC",
+        "notes": "\", however,\" is a parenthetical adverb inserted between subject and verb."
+      }
+    },
+    {
+      "id": "comparison-01",
+      "text": "The new algorithm is more efficient than the previous one.",
+      "tags": ["comparison"],
+      "gold": {
+        "subject": "The new algorithm",
+        "verb": "is",
+        "object": null,
+        "complement": "more efficient than the previous one",
+        "pattern": "SVC",
+        "notes": "Comparative construction \"more ... than ...\"."
+      }
+    },
+    {
+      "id": "comparison-02",
+      "text": "This is the most reliable method available today.",
+      "tags": ["comparison-superlative", "postmodifier"],
+      "gold": {
+        "subject": "This",
+        "verb": "is",
+        "object": null,
+        "complement": "the most reliable method available today",
+        "pattern": "SVC",
+        "notes": "Superlative complement; \"available today\" postmodifies \"method\"."
+      }
+    },
+    {
+      "id": "inversion-01",
+      "text": "Not only did the temperature rise, but the pressure also increased.",
+      "tags": ["inversion"],
+      "gold": {
+        "subject": "the temperature",
+        "verb": "did rise",
+        "object": null,
+        "complement": null,
+        "pattern": "SV",
+        "notes": "Negative-adverb fronting (\"Not only\") triggers subject-auxiliary inversion in the first clause; a second coordinated clause follows."
+      }
+    },
+    {
+      "id": "ellipsis-01",
+      "text": "The control group received a placebo, and the treatment group, the drug.",
+      "tags": ["ellipsis"],
+      "gold": {
+        "subject": "The control group",
+        "verb": "received",
+        "object": "a placebo",
+        "complement": null,
+        "pattern": "SVO",
+        "notes": "The verb \"received\" is elided in the second clause: \"the treatment group[,] the drug\" = \"the treatment group received the drug\"."
+      }
+    },
+    {
+      "id": "long-pp-01",
+      "text": "In the context of increasing global temperatures over the past several decades, researchers have focused on adaptive strategies.",
+      "tags": ["long-prepositional-phrase"],
+      "gold": {
+        "subject": "researchers",
+        "verb": "have focused",
+        "object": "on adaptive strategies",
+        "complement": null,
+        "pattern": "SVO",
+        "notes": "Long introductory prepositional phrase before the main clause."
+      }
+    },
+    {
+      "id": "multi-modifier-01",
+      "text": "The data collected from the sensors installed across the region during the summer months revealed unexpected patterns.",
+      "tags": ["multiple-modifiers", "participle-postmodifier"],
+      "gold": {
+        "subject": "The data collected from the sensors installed across the region during the summer months",
+        "verb": "revealed",
+        "object": "unexpected patterns",
+        "complement": null,
+        "pattern": "SVO",
+        "notes": "Nested modification: \"collected from the sensors...\" modifies \"data\"; \"installed across the region during the summer months\" modifies \"sensors\"."
+      }
+    },
+    {
+      "id": "ambiguous-modifier-01",
+      "text": "The scientist observed the reaction of the compound with a magnifying glass.",
+      "tags": ["ambiguous-attachment"],
+      "gold": {
+        "subject": "The scientist",
+        "verb": "observed",
+        "object": "the reaction of the compound",
+        "complement": null,
+        "pattern": "SVO",
+        "notes": "Genuinely ambiguous: \"with a magnifying glass\" can attach to \"observed\" (instrument) or to \"the compound\" (unlikely but possible). A good analysis should flag this ambiguity rather than silently pick one reading."
+      }
+    },
+    {
+      "id": "multi-interpretation-01",
+      "text": "Visiting professors can be interesting.",
+      "tags": ["multiple-interpretation"],
+      "gold": {
+        "subject": "Visiting professors",
+        "verb": "can be",
+        "object": null,
+        "complement": "interesting",
+        "pattern": "SVC",
+        "notes": "Classic structural ambiguity: \"Visiting professors\" as (a) professors who are visiting [noun phrase] or (b) the act of visiting professors [gerund phrase]. A good analysis should mention both readings rather than assert one."
+      }
+    },
+    {
+      "id": "long-academic-01",
+      "text": "Although the mechanism underlying this phenomenon remains poorly understood, the results obtained across multiple independent trials, which were conducted under strictly controlled conditions, strongly suggest that the observed effect is not attributable to experimental artifacts.",
+      "tags": ["long-academic-sentence", "adverb-clause", "participle-postmodifier", "relative-clause-nonrestrictive", "noun-clause"],
+      "gold": {
+        "subject": "the results obtained across multiple independent trials, which were conducted under strictly controlled conditions",
+        "verb": "strongly suggest",
+        "object": "that the observed effect is not attributable to experimental artifacts",
+        "complement": null,
+        "pattern": "SVO",
+        "notes": "Combines a leading adverb clause of concession, a participle postmodifier on the subject, an inserted non-restrictive relative clause, and a that- noun clause as object. Good stress test for a small model."
+      }
+    },
+    {
+      "id": "technical-01",
+      "text": "The convolutional neural network was fine-tuned on a domain-specific corpus to improve classification accuracy.",
+      "tags": ["technical-vocabulary", "passive-voice", "infinitive-adverbial"],
+      "gold": {
+        "subject": "The convolutional neural network",
+        "verb": "was fine-tuned",
+        "object": null,
+        "complement": null,
+        "pattern": "SV",
+        "notes": "Passive voice with domain jargon; \"to improve classification accuracy\" is a purpose infinitive."
+      }
+    }
+  ]
+}
