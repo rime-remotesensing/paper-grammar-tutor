@@ -314,6 +314,7 @@
 .textLayer {
   --total-scale-factor: calc(var(--scale-factor, 1) * 1);
   --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size, 1));
+  --min-font-size-inv: calc(1 / var(--min-font-size, 1));
   position: absolute;
   inset: 0;
   overflow: hidden;
@@ -331,6 +332,17 @@
   cursor: text;
   transform-origin: 0% 0%;
   user-select: text;
+  /* pdf.js sets --font-height/--scale-x inline per span (from the PDF's own glyph
+     metrics); without also sizing/stretching the span to match, each span renders at
+     the browser's default font-size instead of the PDF's, so its selectable/hit-testable
+     box no longer lines up with the glyphs the canvas actually painted underneath it —
+     on long lines this compounds into spans that overflow past the page's right edge,
+     which is what let selections drag off into unrelated parts of the page. */
+  --font-height: 0;
+  font-size: calc(var(--text-scale-factor) * var(--font-height));
+  --scale-x: 1;
+  --rotate: 0deg;
+  transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
 }
 
 .textLayer ::selection {

@@ -9,7 +9,13 @@ import {
   PDF_SCANNED_CHECK_SAMPLE_PAGES,
 } from '../../../config/settings'
 import { hasExtractableText } from '../domain/detectTextLayer'
-import { buildSelectionResult, resetForNewDocument, type PdfSelectionResult } from '../domain/pdfViewerState'
+import {
+  buildSelectionResult,
+  isReadingOrderBefore,
+  resetForNewDocument,
+  type PdfSelectionResult,
+  type PointerPoint,
+} from '../domain/pdfViewerState'
 
 // Vite resolves this to a hashed asset URL; pdf.js runs its parser/renderer in this
 // worker rather than the main thread. Must be set once, before the first getDocument().
@@ -17,6 +23,63 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
   'pdfjs-dist/build/pdf.worker.min.mjs',
   import.meta.url,
 ).href
+
+function isTextNodeInsideLayer(node: Node | null, layer: HTMLElement | null): node is Text {
+  return node !== null && node.nodeType === Node.TEXT_NODE && layer !== null && layer.contains(node)
+}
+
+function resolveCaretAtExactPoint(point: PointerPoint, layer: HTMLElement | null): { node: Text; offset: number } | null {
+  let node: Node | null = null
+  let offset = 0
+  if (typeof document.caretPositionFromPoint === 'function') {
+    const pos = document.caretPositionFromPoint(point.x, point.y)
+    if (pos) {
+      node = pos.offsetNode
+      offset = pos.offset
+    }
+  } else if (typeof document.caretRangeFromPoint === 'function') {
+    const range = document.caretRangeFromPoint(point.x, point.y)
+    if (range) {
+      node = range.startContainer
+      offset = range.startOffset
+    }
+  }
+  if (!isTextNodeInsideLayer(node, layer)) return null
+  return { node, offset }
+}
+
+/**
+ * Resolves the precise text-node caret at a viewport point, the same way the browser's
+ * own drag-selection hit-testing does internally — used to rebuild a selection from
+ * scratch when the native Selection object has landed outside any text node (see
+ * handleMouseUp in PdfViewer for why that happens).
+ *
+ * If there's no text exactly at the point, probes outward in a small cross pattern (both
+ * axes, both directions) for the nearest actual text instead of giving up immediately.
+ * Horizontal nudging alone doesn't help when the point is in the thin *vertical* gap
+ * between two lines' boxes (the whole row is dead, not just this x), so both axes are
+ * tried at each radius; this also covers a mouseup released just past the last character
+ * of a line, a very ordinary way to end a drag.
+ */
+function resolveCaretInLayer(point: PointerPoint, layer: HTMLElement | null): { node: Text; offset: number } | null {
+  const direct = resolveCaretAtExactPoint(point, layer)
+  if (direct) return direct
+  const maxNudgePx = 40
+  const stepPx = 4
+  for (let r = stepPx; r <= maxNudgePx; r += stepPx) {
+    const candidates: PointerPoint[] = [
+      { x: point.x - r, y: point.y },
+      { x: point.x + r, y: point.y },
+      { x: point.x, y: point.y - r },
+      { x: point.x, y: point.y + r },
+    ]
+    for (const candidate of candidates) {
+      const resolved = resolveCaretAtExactPoint(candidate, layer)
+      if (resolved) return resolved
+    }
+  }
+  return null
+}
 
 type LoadStatus = 'idle' | 'loading' | 'ready' | 'error'
 
@@ -37,6 +100,9 @@ export function PdfViewer({ onSelection, onDocumentChange }: PdfViewerProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const textLayerRef = useRef<HTMLDivElement>(null)
   const pageContainerRef = useRef<HTMLDivElement>(null)
+  // Viewport point where the current drag started, used to recover from the text-layer
+  // selection bug: see handleMouseUp for why.
+  const dragStartPointRef = useRef<PointerPoint | null>(null)
 
   const handleFileChange = useCallback(async (file: File) => {
     onDocumentChange()
@@ -134,16 +200,53 @@ export function PdfViewer({ onSelection, onDocumentChange }: PdfViewerProps) {
     }
   }, [doc, pageNumber, scale])
 
-  const handleMouseUp = useCallback(() => {
-    const selection = window.getSelection()
-    if (!selection || selection.isCollapsed) return
-    const text = selection.toString()
-    if (text.trim().length === 0) return
-    const anchorNode = selection.anchorNode
-    if (!anchorNode || !textLayerRef.current?.contains(anchorNode)) return
-    const result = buildSelectionResult(text, pageNumber)
-    if (result) onSelection(result)
-  }, [pageNumber, onSelection])
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    dragStartPointRef.current = { x: e.clientX, y: e.clientY }
+  }, [])
+
+  const handleMouseUp = useCallback(
+    (e: React.MouseEvent) => {
+      const selection = window.getSelection()
+      if (!selection || selection.isCollapsed) return
+
+      const layer = textLayerRef.current
+      const selectionLooksValid =
+        isTextNodeInsideLayer(selection.anchorNode, layer) && isTextNodeInsideLayer(selection.focusNode, layer)
+
+      if (!selectionLooksValid) {
+        // pdf.js positions each text line as its own absolutely-positioned <span>, with a
+        // gap between one line's box and the next. When a drag passes through that gap
+        // (or lands right at a span's edge), the browser's native hit-testing can resolve
+        // the selection focus to a position in an ancestor element instead of a text
+        // node, and the resulting selection can jump to an unrelated part of the page
+        // (e.g. back to the page header) instead of extending normally. When that
+        // happens, throw away the native selection and rebuild the range from the actual
+        // pointer positions (recorded on mousedown, and the current mouseup event).
+        const start = dragStartPointRef.current
+        if (!start) return
+        const end: PointerPoint = { x: e.clientX, y: e.clientY }
+        const startCaret = resolveCaretInLayer(start, layer)
+        const endCaret = resolveCaretInLayer(end, layer)
+        if (!startCaret || !endCaret) return
+
+        const [from, to] = isReadingOrderBefore(start, end) ? [startCaret, endCaret] : [endCaret, startCaret]
+        const range = document.createRange()
+        range.setStart(from.node, from.offset)
+        range.setEnd(to.node, to.offset)
+        if (range.collapsed) return
+        selection.removeAllRanges()
+        selection.addRange(range)
+      }
+
+      const text = selection.toString()
+      if (text.trim().length === 0) return
+      const anchorNode = selection.anchorNode
+      if (!anchorNode || !textLayerRef.current?.contains(anchorNode)) return
+      const result = buildSelectionResult(text, pageNumber)
+      if (result) onSelection(result)
+    },
+    [pageNumber, onSelection],
+  )
 
   return (
     <div className="pdf-viewer">
@@ -203,7 +306,12 @@ export function PdfViewer({ onSelection, onDocumentChange }: PdfViewerProps) {
           </p>
         )}
         {status === 'ready' && (
-          <div className="pdf-page-container" ref={pageContainerRef} onMouseUp={handleMouseUp}>
+          <div
+            className="pdf-page-container"
+            ref={pageContainerRef}
+            onMouseDown={handleMouseDown}
+            onMouseUp={handleMouseUp}
+          >
             <canvas ref={canvasRef} />
             <div className="textLayer" ref={textLayerRef} />
           </div>

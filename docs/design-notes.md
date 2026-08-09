@@ -4,6 +4,138 @@
 
 ---
 
+# Prototype 1.1 バグ修正 — PDF text selectionが離れた位置へ暴走する問題
+
+Prototype 1.1（Real-world PDF Acceptance Test）の1本目評価中に発見され、
+`tests/fixtures/pdf/sample-1col.pdf`を人間が操作した際にも再現が確認された、
+PDF selectionのバグ修正記録。**文法解析（`src/features/grammar/**`）・benchmark・
+normalizationルールは一切変更していない。** 変更したのは
+`src/App.css`・`src/features/pdf/components/PdfViewer.tsx`・
+`src/features/pdf/domain/pdfViewerState.ts`・`tests/pdf/pdfViewerState.test.ts`のみ。
+
+## 症状
+
+PDF上でテキストをドラッグ選択した際、行末付近やページ内の特定位置まで
+ドラッグすると、選択範囲が意図しない場所（ページ先頭・見出しなど）へ
+飛んでしまうことがあった。`sample-1col.pdf`・実論文PDF（Springer社刊行、
+`s11004-023-10132-3.pdf`）の両方で再現。
+
+## 原因（2つの独立した要因が重なっていた）
+
+### 主因: `.textLayer span`に`font-size`が設定されていなかった
+
+`src/App.css`の`.textLayer`関連CSSは、Prototype 1で
+`pdfjs-dist/web/pdf_viewer.css`から必要な部分だけを手で書き写した
+「最小限の再実装」（design-notesの Prototype 1 セクション参照）。この際、
+`font-size: calc(var(--text-scale-factor) * var(--font-height));`という、
+pdf.jsが各spanへ個別にインラインで設定する`--font-height`（PDFのフォントサイズ由来）
+とテキストレイヤーのスケール係数から実際のfont-sizeを計算する規則が、
+書き写し漏れで欠落していた。同様に`--scale-x`（文字幅の補正係数）を反映する
+`transform: scaleX(var(--scale-x)) ...`も欠落していた。
+
+結果として、すべてのspanがブラウザのデフォルトfont-size（16px）で描画されており、
+PDFが指定する実際のfont-size（今回のSpringer論文では本文12.45px程度）より
+大きく描画されていた。texthiddenレイヤーは透明(`color:transparent`)なので
+視覚的には気づかないが、**「選択可能な当たり判定」であるspanの矩形（特に幅）が、
+本来より約1.3倍広く**なっていた。長い行では、この誤差が蓄積して
+spanの右端がページの右マージンを超えてはみ出す状態になっていた
+（実測: 修正前は行末が789px付近まで達していたが、ページの実際の右端は756.6px
+だった。修正後は行末が692px付近に収まり、ページ内に収まる）。
+
+ブラウザの`caretRangeFromPoint`/ネイティブのドラッグ選択ヒットテストは、
+実際に描画されている要素に基づいて位置を解決する。誤って肥大化したspanの
+「本来は無地であるべき」右端部分（＝ページの余白部分に描画されてしまった領域）
+にマウスが入ると、そこは実際には何のテキストも描画されていない場所のため、
+ヒットテストが失敗し、ブラウザは最も近い祖先要素の子要素インデックスに基づく
+別の位置（しばしばページの先頭付近）へfocus/anchorを解決してしまっていた。
+
+**修正**: `.textLayer span, .textLayer br`に、pdf.js本来の
+`font-size`計算式と`transform: scaleX(...)`を追加（`src/App.css`）。
+`pdfjs-dist/web/pdf_viewer.css`（`node_modules`内）の該当箇所と突き合わせて
+正確な式を復元した。
+
+### 副因: 行と行の間の「隙間」でのヒットテスト不安定性
+
+主因を修正した後も、複数行にまたがるドラッグの途中でマウスが
+「ある行のspan矩形の下端」と「次の行のspan矩形の上端」の間の薄い隙間
+（pdf.jsの各行spanは`line-height:1`で個別に絶対配置されており、行間に
+隙間が生じ得る）を通過する瞬間や、行の実際の最後の文字よりわずかに右で
+mouseupした場合（＝ユーザーが行末の少し先までドラッグして離す、という
+ごく普通の操作）に、ネイティブ選択のfocus/anchorが一時的に
+テキストノードではなく要素ノードへ解決されることがあった
+（`document.caretPositionFromPoint`で直接確認）。多くの場合は
+その後のマウス移動で自己修復するが、**ちょうどそのタイミングでmouseupが
+発生すると、壊れた状態のまま採用されてしまう**。
+
+**修正**: `PdfViewer.tsx`の`handleMouseUp`に防御的な検証と復元処理を追加。
+mouseup時点の`window.getSelection()`のanchorNode/focusNodeが両方とも
+textLayer内のテキストノードであることを確認し、そうでない場合は
+mousedown時点の座標とmouseup時点の座標から`caretPositionFromPoint`
+（フォールバックで`caretRangeFromPoint`）を使って選択範囲を再構築する。
+それでも解決できない座標（テキストの真上ではない）は、上下左右方向に
+最大40pxまで4px刻みで探索し、最も近い実テキスト位置にスナップする
+（`resolveCaretInLayer`, `resolveCaretAtExactPoint`）。再構築後の
+開始/終了の順序判定には、DOM構造の比較ではなく単純な読み順（Y座標→X座標）
+の比較を用いている（`isReadingOrderBefore`, `pdfViewerState.ts`。
+2段組みでのカラムをまたぐreading orderの問題はPrototype 1の既知の
+範囲外のままなので、この比較は「同一カラム内の通常の複数行選択」を
+壊さないことだけを目的とした簡易なものであり、意図的にDOM順序の
+厳密な比較は行っていない）。
+
+再構築後も判定に失敗する場合（対応する実テキストが見つからない等）は、
+何もしない（＝ユーザーの選択操作をそのまま無視する）。誤った文字列を
+解析パネルへ渡すよりも、選択が一見反応しなかったように見える方が安全と
+判断した。
+
+## 変更ファイル
+
+- `src/App.css` — `.textLayer span, .textLayer br`にfont-size/transform規則を追加。
+- `src/features/pdf/components/PdfViewer.tsx` — mousedown位置の記録、
+  mouseup時の選択検証・復元ロジックを追加。
+- `src/features/pdf/domain/pdfViewerState.ts` — `isReadingOrderBefore`
+  （読み順比較のpure関数）を追加。
+- `tests/pdf/pdfViewerState.test.ts` — `isReadingOrderBefore`の単体テストを追加。
+
+## テスト
+
+`isReadingOrderBefore`は純粋関数のため`tests/pdf/pdfViewerState.test.ts`に
+単体テストを追加した（4ケース）。一方、今回の主因・副因とも
+「実際のブラウザのレイアウト・ヒットテスト・CSS計算結果」に依存する問題であり、
+このプロジェクトのvitest環境（`environment: 'node'`、jsdom等は未導入）では
+意味のある形で再現・検証できない。jsdomはレイアウト計算
+（`getBoundingClientRect`・`caretRangeFromPoint`等）を実装しないため、
+jsdomを追加してもこの種のバグは検出できない。そのため、この部分は
+自動ユニットテスト化を無理に行わず、以下の手動回帰手順を残す。
+
+### 手動回帰手順（DOM/ブラウザ依存のため）
+
+以下はPlaywright等のブラウザ自動化ツールでも、実際のブラウザで手動でも
+実施できる。`npm run dev`でアプリを起動した状態で実施する。
+
+1. **sample-1col.pdf**（`tests/fixtures/pdf/sample-1col.pdf`）を開く。
+   - 1つの行の中間だけをドラッグ選択 → 正しく選択されること。
+   - 2〜3行にまたがるドラッグ選択 → 改行が正しく含まれ、全行が選択されること。
+   - ある行の実際の最後の文字ちょうどまでドラッグして選択 → その行の最後まで
+     正しく選択され、次の行や無関係な位置に飛ばないこと。
+   - ある行の最後の文字より少し手前で選択を終える → その位置までで
+     正しく選択されること。
+   - 段落の最終行（他の行より短い行）まで選択 → 段落全体が正しく選択され、
+     余計な文字が混入しないこと。
+2. 上記5パターンを、著作権上リポジトリに含められない実論文PDF
+   （査読論文・単段組み）でも実施する。特に行の右端付近まで
+   ドラッグしたときに、選択が別の行やページの先頭・見出しなどへ
+   飛ばないことを確認する。
+3. 2段組みの実論文PDFで、同一カラム内での複数行選択・行末選択を確認する
+   （カラムをまたぐ選択のreading orderが乱れるのは既知の仕様であり、
+   このテストの対象外）。
+4. すべてのステップで、選択結果が右側のテキスト欄に反映され、
+   「解析」ボタンから最後まで解析が実行できることを確認する。
+
+いずれかのステップで選択が無関係な位置に飛ぶ、または選択が完全に無反応に
+なる場合は回帰が疑われる。
+
+---
+
 # Prototype 1 (PDF Reader Integration)
 
 目的は新しい文法解析アルゴリズムの開発ではなく、「PDFを読みながら選択英文をPrototype 0.2の

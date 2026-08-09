@@ -21,6 +21,24 @@ export interface PdfSelectionResult {
   pageNumber: number
 }
 
+export interface PointerPoint {
+  x: number
+  y: number
+}
+
+/**
+ * Reading-order comparison for two viewport points on the same text-layer page, used to
+ * decide which end of a rebuilt selection range is the start vs. the end regardless of
+ * which direction the user physically dragged (down-right, up-left, ...). Points within
+ * `lineTolerancePx` of each other vertically are treated as being on the same line and
+ * compared by X only, since pdf.js line spans can differ by a pixel or two in baseline Y
+ * even within one visual line.
+ */
+export function isReadingOrderBefore(a: PointerPoint, b: PointerPoint, lineTolerancePx = 4): boolean {
+  if (Math.abs(a.y - b.y) > lineTolerancePx) return a.y < b.y
+  return a.x <= b.x
+}
+
 /**
  * Turns a raw browser text-layer selection into the structured, normalized form the
  * UI hands to the (editable) sentence textarea. Returns null for an empty/whitespace
