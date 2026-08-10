@@ -3,12 +3,13 @@
 **この文書だけを読めば、過去の会話履歴が一切ない別PC・別のClaude Codeセッションでも
 プロジェクトを正確に理解し、作業を再開できることを目的としている。**
 
-現在の正式な到達点: **Prototype 0 → Prototype 0.1 → Prototype 0.2 → Prototype 1 まで完了**。
-**Prototype 1.1（Real-world PDF Acceptance Test）は未着手**。この文書はPrototype 1完了時点を
-引き継ぎ基準点として書かれている。
+現在の正式な到達点: **Prototype 0 → Prototype 0.1 → Prototype 0.2 → Prototype 1 → Prototype 1.1
+まで完了**。**Prototype 1.1のステータスは PASS WITH KNOWN LIMITATIONS**（詳細はJ章）。
+次のタスクは **Prototype 2 — Progressive Reading Tutor**（設計案は提示済み、実装は未着手）。
 
-作成日: 2026-08-09。以下の内容はすべて、このHANDOFF.md作成時点で実際のコード・README・docs・
-`benchmark/`配下の結果ファイルを確認して書いている（推測での補完はしていない）。
+作成日: 2026-08-09。2026-08-10にPrototype 1.1完了に伴い更新。以下の内容はすべて、更新時点で
+実際のコード・README・docs・`benchmark/`配下の結果ファイル・Git履歴を確認して書いている
+（推測での補完はしていない）。
 
 ---
 
@@ -357,50 +358,97 @@ Playwright + 実ブラウザ(Edge)による自動操作で検証した結果:
 
 ---
 
-# 次のタスク: Prototype 1.1 — Real-world PDF Acceptance Test
+# J. Prototype 1.1 — Real-world PDF Acceptance Test（完了、2026-08-10）
 
-## 目的
+## Status: **PASS WITH KNOWN LIMITATIONS**
 
-新機能開発ではない。**自作fixtureではなく、実際の英語論文PDFを使って**、
+自作fixtureではなく実際の英語論文PDF（`D:\sugimoto\paper-grammar-tutor-test-pdfs`、
+リポジトリ外）を使い、「PDF表示→英文selection→text extraction→normalization→
+必要なら手修正→Ollama解析→右側パネル表示」という読書フローのacceptance testを実施した。
 
-```
-PDF表示 → 英文selection → text extraction → normalization
-  → 必要なら手修正 → Ollama解析 → 右側パネル表示
-```
+## 結果サマリー
 
-という実際の読書フローが実用になるかどうかを確認する**acceptance test**。
+- 実PDF **5本**（Springer/単段組み・Elsevier/2段組み・IEEE Soenen/2段組み・
+  arXivプレプリント/2段組み・古い複写スキャン(JBIG2+OCR)/単段組み）。出版社・生成元・
+  レイアウトを分散。
+- 英文selection試行 約**51件**。うち成立48件（**A**（そのまま使用可能）**43** /
+  **B**（軽微な手修正で使用可能）**3** / **C**（実用上問題あり）**2**）、
+  安全側でselectionが無視された（データ破損なし）ケースが**3件**
+  （うち2件はTable内の列間の広い空白によるもの。40px snap範囲の限界として観測のみ、
+  ヒューリスティックは変更していない）。
+- Grammar analysis: **9/9成功**（fallback/error 0件）。
+- latency: median 約**10.6秒**、範囲6.5〜14.1秒、10秒超の頻度約56%、**timeout 0件**。
+- 詳細な観測項目（正規化・2段組み・UX等）はこのHANDOFF.mdには転記していない
+  （評価時のPDF本文をログ/ドキュメントへ大量保存しない方針のため）。数値のみここに残す。
 
-## 評価方針
+## Prototype 1.1中に発見・修正した重大バグ（2件、いずれも修正済み・回帰確認済み）
 
-- 可能なら5〜10本程度の実論文PDF、合計50〜100程度の英文selectionを試す。ただし件数の達成自体が
-  目的ではない。
-- 異なるレイアウト・異なるPDF生成元（LaTeX組版、Wordから出力、出版社のtypesetting等）で評価する。
-- 確認する観点: PDF rendering / text selection / selected textの順序 / 改行 / hyphenation /
-  citation（引用番号）/ 上付き文字 / 数式付近 / 脚注付近 / 1段組み / 2段組み / 手動修正のしやすさ /
-  GrammarAnalyzerへの入力としての妥当性 / 解析結果 / latency / PDFと解析パネル間の視線移動 /
-  長い解析結果のスクロール / 読書の流れを妨げないか。
+1. **PDF text layerのfont-size欠落による行末selection暴走**
+   - 原因: `src/App.css`の`.textLayer span`再実装がpdf.js本来の`font-size`計算式・
+     `transform: scaleX(...)`規則を書き写し漏れしており、全spanがブラウザ既定の16pxで
+     描画されていた。長い行でspanがページ右マージンを越えてはみ出し、その領域での
+     ネイティブ選択ヒットテストが不安定になり、選択がページ先頭など無関係な位置へ
+     飛ぶことがあった。
+   - 修正: `.textLayer span, .textLayer br`にpdf.js本来のfont-size/transform規則を追加
+     （`src/App.css`）。加えて、`PdfViewer.tsx`のmouseup処理に防御的な検証・復元処理
+     （テキストノード外に解決された場合、mousedown/mouseup座標から最大40pxの範囲で
+     最も近い実テキストへスナップ。それでも解決できない場合は選択を無視）を追加。
+   - 回帰確認: 5PDF全て・sample-1col/2col.pdfで再発なし。
+   - コミット: `c6eb42d`
 
-## 変更してはいけないもの（最初の実PDF評価が終わるまで）
+2. **pdf.js `wasmUrl`未設定によるJBIG2 scan PDFの本文白紙化**
+   - 原因: `pdfjsLib.getDocument()`に`wasmUrl`を渡していなかったため、JBIG2画像
+     デコーダのWASM/JSフォールバック双方が初期化に失敗し、例外を投げずに警告のみで
+     該当ページの描画がスキップされていた（text layerは別経路で構築されるため、
+     本文が透明テキストとしては存在するのに視覚的には白紙、という矛盾した症状）。
+   - 修正: pdfjs-dist公式の`wasm/`リソース一式を`public/pdfjs/wasm/`にコピーし、
+     `PDF_WASM_URL`（`src/config/settings.ts`）として`getDocument()`に渡すよう変更。
+   - 回帰確認: 5PDF全てで描画・selectionとも正常。
+   - コミット: `80a22c2`
 
-- prompt / schema / GrammarAnalyzer / derivePattern
-- benchmark / model evaluation logic
-- PDF側の実装も、まず現状のままで評価する
+## Known limitations
 
-**明確な再現バグが実PDFで確認された場合だけ**、原因を特定して最小限の修正を行う
-（Prototype 1で行った「同一ファイル再選択バグ」修正のような対応が許容される前例）。
+**Observed（今回の評価で実際に観測）**:
+- PDF内部のフォントエンコーディングに起因する数式文字化け（例: Elsevier論文で`≥`が
+  無関係な文字に置換）
+- 数式variable/symbolの完全な非抽出（例: IEEE Soenen論文で回帰係数等の斜体変数が
+  テキストとして一切存在しない）
+- スキャンPDFの既存OCR text layerの認識誤り（例: `μm`→`Jim`、`1`→`I`等）
+- table等、列間に広い空白がある構造では、40px snap範囲を超えるとselectionが
+  安全側で無視される場合がある（データ破損はしない）
 
-## 追加しないもの
+**Known / theoretical（今回は未観測、理論上の残留リスク）**:
+- 左右columnを意図的にまたぐselectionのreading orderは引き続き未対応（既知の範囲外）
+- 正規のhyphenated compoundがたまたま行末に来た場合の誤結合可能性（今回は0件観測）
+- 検証はChromium系ブラウザ（Edge）を主対象としている
+- `cMapUrl` / `standardFontDataUrl`は未設定（今回の2件のバグには無関係、非埋め込み
+  CJKフォント等を含むPDFでは将来的に類似の問題が起こり得る）
+- `pdfjs-dist`をアップデートする際は`public/pdfjs/wasm/`の再コピーが必要
+  （README.md参照）
+- OCR機能自体は実装していない（既存OCR text layerがあるPDFのみ対象）
 
-OCR / RAG / Zotero / Anki / IndexedDB / 履歴機能 / 注釈永続化 / dependency parser /
-PDF全文解析 / PDF全文翻訳 / cloud LLM / streaming / cache / 新しいprompt tuning /
-新しいbenchmark tuning。Prototype 1.1はacceptance testであり、機能追加フェーズではない。
+## Prototype 1.1で変更しなかったもの（確認事項）
 
-## 実PDFの取り扱いルール（厳守）
+prompt / schema / GrammarAnalyzer / derivePattern / benchmark / normalizationルール /
+selection heuristic（40px snap含む）はPrototype 1.1を通じて変更していない。変更したのは
+PDF selection暴走の修正（`c6eb42d`）とPDF.js wasmリソース設定（`80a22c2`）のみ。
+
+## 実PDFの取り扱いルール（厳守・継続）
 
 - 評価に使う実論文PDFをrepositoryへコミットしない。
 - 著作物をfixtureとして保存しない（`tests/fixtures/pdf/`には自作PDFのみを置く）。
 - 機密PDFをrepositoryへコピーしない。
 - PDF本文をログへ大量出力・保存しない。
+
+---
+
+# 次のタスク: Prototype 2 — Progressive Reading Tutor
+
+設計案を提示済み（実装は別セッション/別ターンでの判断待ち、このHANDOFF.mdには設計内容の
+詳細は転記していない）。既存の`GrammarAnalysis`構造化結果を使い、解析結果を段階的
+（Stage 0〜5、骨格→構造→言語補助→自己解釈→参考訳）に開示するUI/UXの検証が目的。
+prompt/schema/GrammarAnalyzer/derivePattern/benchmark/Ollama provider/PDF抽出/
+normalization/selection logicは変更しない方針。
 
 ---
 
@@ -423,7 +471,7 @@ paper-grammar-tutor/
                                 (Ollama format用、手書き・schema.tsと要同期)
     features/pdf/
       components/PdfViewer.tsx
-      domain/                  detectTextLayer.ts, pdfViewerState.ts
+      domain/                  detectTextLayer.ts, pdfViewerState.ts（isReadingOrderBefore含む）
       utils/pdfTextNormalize.ts
     llm/
       types.ts                 LLMProviderインターフェース
@@ -433,9 +481,13 @@ paper-grammar-tutor/
   tests/
     grammar/                   schema, spanMatch, textNormalize, jsonExtract, derivePattern,
                                 modelSizeAdvisory, GrammarAnalyzer の各テスト
-    pdf/                       pdfTextNormalize, detectTextLayer, pdfViewerState のテスト
+    pdf/                       pdfTextNormalize, detectTextLayer, pdfViewerState, pdfWasmUrl のテスト
     benchmark/                 parseArgs, scoring のテスト
     fixtures/                  validAnalysisFixture.ts, pdf/sample-1col.pdf, pdf/sample-2col.pdf
+  public/pdfjs/wasm/            pdfjs-distのJBIG2/JPX/QCMS用wasmリソース一式（公式バンドルの
+                                コピー、Vite `public/`配下でハッシュなし配信。pdfjs-dist更新時は
+                                再コピーが必要、README.md参照）
+  .eslintignore                  public/pdfjs/（pdf.js自身のベンダーコードをlint対象外に）
   benchmark/
     sentences/development.json  28文（development、prompt/schema調整に使用済み）
     sentences/holdout.json      57文（holdout、モデル出力を人間が確認済み。D章参照）
@@ -501,26 +553,21 @@ npm run benchmark -- qwen2.5:7b-instruct,qwen2.5:14b-instruct --dataset holdout
 
 # Git状態（重要・別PCでの作業者は必ず先に確認すること）
 
-**`paper-grammar-tutor`はこのHANDOFF.md作成時点で一度もGitコミットされていない。**
+**`paper-grammar-tutor`は現在、専用の独立したGitリポジトリになっている
+（このHANDOFF.md初版作成時点では未コミットのモノレポ内ディレクトリだったが、その後
+Prototype 1完了時に専用リポジトリへ移行済み）。**
 
-- `paper-grammar-tutor`ディレクトリは独立したGitリポジトリではなく、親ディレクトリ
-  `F:\sugimoto`配下の大きなGitリポジトリ（衛星リモートセンシング系の複数の無関係な
-  プロジェクトが同居するモノレポ）の一部として存在している。
-- その親リポジトリの`origin`リモートは`https://github.com/rime-remotesensing/Biomass_Burning_Sentinel-2`
-  を指しており、**Paper Grammar Tutorとは全く無関係な別プロジェクトのリポジトリ**である。
-- したがって、`paper-grammar-tutor`ディレクトリ全体が`git status`上は未追跡（untracked）
-  として扱われる。**現時点で「git clone すれば別PCでも作業を再開できる」状態にはなっていない。**
-- 本セッションではこの状況を発見した時点で、ユーザーの明示的な許可なくコミット・新規リモート
-  作成・pushのいずれも行っていない（安全側に倒した）。
+- `origin`リモートは`https://github.com/rime-remotesensing/paper-grammar-tutor.git`
+  （Paper Grammar Tutor専用）。以前の版に記載されていた無関係なリポジトリ
+  （`Biomass_Burning_Sentinel-2`）の話は解消済みで、現在は無関係。
+- `main`ブランチは`origin/main`と同期済み（`git status`で`up to date`）。
+- タグ: `prototype-1`（Prototype 1完了時点）、`prototype-1.1`（Prototype 1.1完了時点、
+  本セクション更新時に付与）。
+- 直近のコミット（新しい順）: `Configure PDF.js WASM resources for image decoding` →
+  `Fix PDF text selection near line endings` → `Complete Prototype 1 and prepare
+  project handoff`。
+- `git clone`すればそのまま別PCで作業を再開できる状態になっている。
 
-**別PCへの引き継ぎ方法についてユーザーの判断が必要**:
-1. Paper Grammar Tutor専用の新しいGitリポジトリを作成し、そこへコミット・push する。
-2. 現在の`F:\sugimoto`モノレポ内にそのままコミットする（ただしremoteが別プロジェクト名の
-   ままなので、pushする場合は宛先の再確認が必須）。
-3. Gitを使わず、フォルダを直接コピーして別PCへ持ち込む（この場合、`node_modules`/`dist`は
-   除外して良い。`.gitignore`に記載の対象と同じ）。
-
-いずれの方法を取るにせよ、**`benchmark/results/`配下（.gitignore対象）はコピーしないと
-別PCから失われる**。ただし重要な数値はすべてこのHANDOFF.md（C章）と`benchmark/baselines/
-prototype-0/`（Git管理下）と`docs/design-notes.md`に転記済みなので、生JSON自体は
-必須ではない（人間によるレビュー目的で残したい場合のみ、フォルダごとコピーすること）。
+`benchmark/results/`配下は引き続き`.gitignore`対象（`.gitkeep`のみ追跡）。重要な数値は
+このHANDOFF.md（C章・J章）と`benchmark/baselines/prototype-0/`（Git管理下）と
+`docs/design-notes.md`に転記済み。
