@@ -141,6 +141,14 @@ uncertainties）を示せたかを`ambiguityAwareness`として記録するの�
   （選択範囲をそのまま解析対象にする。カラムをまたいだ不自然な選択でもアプリは落ちない）、前後文の
   自動取得、解析履歴・注釈の永続保存。
 - 別のPDFを開くと、選択中の英文・解析結果は破棄される（異なる論文の解析結果が残り続けないように）。
+- JBIG2/JPEG2000形式で画像化された古いスキャンPDF（デジタル化された複写論文などで多い）を正しく
+  描画するため、`pdfjs-dist`本体の`wasm/`リソース一式を`public/pdfjs/wasm/`にコピーして同梱している
+  （`src/config/settings.ts`の`PDF_WASM_URL`が参照）。`pdfjs-dist`をアップデートした場合は、
+  以下のコマンドで再コピーすること（バージョンが古いままだと、この種のPDFだけ本文ページが
+  真っ白に描画される問題が再発する）。
+  ```bash
+  cp node_modules/pdfjs-dist/wasm/*.wasm node_modules/pdfjs-dist/wasm/*.js public/pdfjs/wasm/
+  ```
 
 ## 既知の限界
 

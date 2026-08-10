@@ -7,6 +7,7 @@ import {
   PDF_MIN_SCALE,
   PDF_SCALE_STEP,
   PDF_SCANNED_CHECK_SAMPLE_PAGES,
+  PDF_WASM_URL,
 } from '../../../config/settings'
 import { hasExtractableText } from '../domain/detectTextLayer'
 import {
@@ -116,7 +117,7 @@ export function PdfViewer({ onSelection, onDocumentChange }: PdfViewerProps) {
 
     try {
       const data = await file.arrayBuffer()
-      const pdf = await pdfjsLib.getDocument({ data }).promise
+      const pdf = await pdfjsLib.getDocument({ data, wasmUrl: PDF_WASM_URL }).promise
 
       const sampleCount = Math.min(PDF_SCANNED_CHECK_SAMPLE_PAGES, pdf.numPages)
       const sampleLengths: number[] = []
