@@ -108,6 +108,28 @@ describe('analyzeSentence', () => {
     expect(result.analysis.uncertainties.length).toBeGreaterThan(0)
   })
 
+  it('keeps the offending field path in the validation error instead of just the message', async () => {
+    // Both the initial response and the repair response are out of range, so this falls
+    // through to the fallback analysis — but meta.parseError should still say *which*
+    // field failed ("confidence: ..."), not just the bare Zod message, so a failure like
+    // this can be traced back to its field without guessing (see design-notes.md).
+    const outOfRangeConfidence = { ...validAnalysisFixture, confidence: 1.5 }
+    const provider = new StubProvider([
+      JSON.stringify(outOfRangeConfidence),
+      JSON.stringify(outOfRangeConfidence),
+    ])
+    const result = await analyzeSentence({
+      provider,
+      model: 'test-model',
+      sentence: SAMPLE_SENTENCE,
+      temperature: 0.1,
+    })
+
+    expect(result.meta.schemaValid).toBe(false)
+    expect(result.meta.parseError).toContain('confidence')
+    expect(result.meta.parseError?.startsWith('confidence:')).toBe(true)
+  })
+
   it('flags spans the model reports that do not appear in the sentence', async () => {
     const badSpanFixture = {
       ...validAnalysisFixture,

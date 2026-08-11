@@ -124,7 +124,7 @@ export const GRAMMAR_ANALYSIS_JSON_SCHEMA = {
       },
     },
     readingHint: { type: 'array', items: { type: 'string' } },
-    confidence: { type: 'number' },
+    confidence: { type: 'number', minimum: 0, maximum: 1 },
     uncertainties: { type: 'array', items: { type: 'string' } },
     needsMoreContext: { type: 'boolean' },
     referenceTranslation: { anyOf: [{ type: 'string' }, { type: 'null' }] },

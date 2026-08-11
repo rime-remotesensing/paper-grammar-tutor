@@ -132,7 +132,19 @@ function validate(rawText: string): ValidationOutcome {
   }
   const result = llmGrammarAnalysisSchema.safeParse(parsed.value)
   if (!result.success) {
-    return { success: false, error: result.error.issues.map((i) => i.message).join('; ') }
+    return { success: false, error: formatZodIssues(result.error.issues) }
   }
   return { success: true, data: result.data }
+}
+
+/** Keeps the field path in validation-error text (e.g. "confidence: Too big: ..." or
+ * "chunks.2.order: ...") instead of just the bare message, so a failure can be traced
+ * back to the offending field from `meta.parseError` alone. */
+function formatZodIssues(issues: ReadonlyArray<{ path: PropertyKey[]; message: string }>): string {
+  return issues
+    .map((issue) => {
+      const path = issue.path.join('.')
+      return path ? `${path}: ${issue.message}` : issue.message
+    })
+    .join('; ')
 }

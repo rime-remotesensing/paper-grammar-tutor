@@ -42,6 +42,17 @@ describe('llmGrammarAnalysisSchema', () => {
     expect(result.success).toBe(false)
   })
 
+  it('accepts confidence at the boundary values 0 and 1', () => {
+    expect(llmGrammarAnalysisSchema.safeParse({ ...validAnalysisFixture, confidence: 0 }).success).toBe(true)
+    expect(llmGrammarAnalysisSchema.safeParse({ ...validAnalysisFixture, confidence: 1 }).success).toBe(true)
+  })
+
+  it('rejects a confidence value below 0', () => {
+    const invalid = { ...validAnalysisFixture, confidence: -0.1 }
+    const result = llmGrammarAnalysisSchema.safeParse(invalid)
+    expect(result.success).toBe(false)
+  })
+
   it('accepts null for optional sentence-core spans', () => {
     const withNulls = {
       ...validAnalysisFixture,
