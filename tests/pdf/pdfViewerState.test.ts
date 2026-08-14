@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildSelectionResult,
+  computeNormalizedSelectionRects,
   isReadingOrderBefore,
   resetForNewDocument,
 } from '../../src/features/pdf/domain/pdfViewerState'
@@ -18,7 +19,19 @@ describe('buildSelectionResult', () => {
       rawText: 'The proposed\nmethod',
       normalizedText: 'The proposed method',
       pageNumber: 3,
+      ocrRects: [],
+      scientificTokens: [],
     })
+  })
+
+  it('carries through the provided ocrRects unchanged', () => {
+    const rects = [{ x0: 0.1, y0: 0.2, x1: 0.3, y1: 0.4 }]
+    expect(buildSelectionResult('Text', 1, rects)?.ocrRects).toEqual(rects)
+  })
+
+  it('carries through the provided scientificTokens unchanged', () => {
+    const tokens = [{ text: '0·8', rects: [{ x0: 0.1, y0: 0.2, x1: 0.3, y1: 0.4 }] }]
+    expect(buildSelectionResult('Text', 1, [], tokens)?.scientificTokens).toEqual(tokens)
   })
 
   it('returns null for a whitespace-only selection', () => {
@@ -27,6 +40,49 @@ describe('buildSelectionResult', () => {
 
   it('returns null for an empty selection', () => {
     expect(buildSelectionResult('', 1)).toBeNull()
+  })
+})
+
+describe('computeNormalizedSelectionRects', () => {
+  const canvasRect = { left: 100, top: 200, width: 800, height: 1000 }
+
+  it('normalizes a single rect to a 0..1 fraction of the canvas', () => {
+    const rects = [{ left: 300, top: 400, right: 500, bottom: 450, width: 200, height: 50 }]
+    expect(computeNormalizedSelectionRects(rects, canvasRect)).toEqual([
+      { x0: 0.25, y0: 0.2, x1: 0.5, y1: 0.25 },
+    ])
+  })
+
+  it('filters out zero-width ghost rects', () => {
+    const rects = [
+      { left: 100, top: 200, right: 100, bottom: 221, width: 0, height: 21 },
+      { left: 300, top: 400, right: 500, bottom: 450, width: 200, height: 50 },
+    ]
+    expect(computeNormalizedSelectionRects(rects, canvasRect)).toHaveLength(1)
+  })
+
+  it('filters out zero-height ghost rects', () => {
+    const rects = [
+      { left: 300, top: 400, right: 500, bottom: 400, width: 200, height: 0 },
+      { left: 300, top: 400, right: 500, bottom: 450, width: 200, height: 50 },
+    ]
+    expect(computeNormalizedSelectionRects(rects, canvasRect)).toHaveLength(1)
+  })
+
+  it('keeps multiple real rects independent (never unions them)', () => {
+    const rects = [
+      { left: 300, top: 400, right: 500, bottom: 450, width: 200, height: 50 },
+      { left: 150, top: 460, right: 350, bottom: 510, width: 200, height: 50 },
+    ]
+    const result = computeNormalizedSelectionRects(rects, canvasRect)
+    expect(result).toHaveLength(2)
+    expect(result[0].x0).toBeCloseTo(0.25)
+    expect(result[1].x0).toBeCloseTo(0.0625)
+  })
+
+  it('returns an empty array for a degenerate (zero-size) canvas rect', () => {
+    const rects = [{ left: 300, top: 400, right: 500, bottom: 450, width: 200, height: 50 }]
+    expect(computeNormalizedSelectionRects(rects, { left: 0, top: 0, width: 0, height: 0 })).toEqual([])
   })
 })
 

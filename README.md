@@ -137,7 +137,8 @@ uncertainties）を示せたかを`ambiguityAwareness`として記録するの�
   選択。選択は自動解析を開始しない（誤選択で無駄にLLMを実行しないため）。選択された文字列は
   改行結合・行末ハイフネーション補正・空白正規化のみ行った上で右側のテキスト欄に表示し、解析前に
   手動編集できる（PDF抽出には不要な改行やハイフネーションの乱れがあるため）。
-- 非対応: スキャンPDF/OCR（テキストレイヤーがないPDFはエラー表示）、複数カラムのreading-order自動復元
+- 非対応: pure scan PDF（テキストレイヤーがないPDFはエラー表示。テキストレイヤーはあるが品質が低い
+  PDFについては、下記のOCR fallbackで手動の読み直しができる）、複数カラムのreading-order自動復元
   （選択範囲をそのまま解析対象にする。カラムをまたいだ不自然な選択でもアプリは落ちない）、前後文の
   自動取得、解析履歴・注釈の永続保存。
 - 別のPDFを開くと、選択中の英文・解析結果は破棄される（異なる論文の解析結果が残り続けないように）。
@@ -149,6 +150,75 @@ uncertainties）を示せたかを`ambiguityAwareness`として記録するの�
   ```bash
   cp node_modules/pdfjs-dist/wasm/*.wasm node_modules/pdfjs-dist/wasm/*.js public/pdfjs/wasm/
   ```
+
+## OCR fallback（Prototype 1.2）について
+
+embedded text layerを持つPDFで、そのtext layer自体の品質が低い場合（古い複写スキャン論文などで、
+数字・小数点・`μm`のような単位記号が誤認識されていることがある）向けの、手動のOCR再読み込み機能。
+
+- **常にlocal-only**。PDF本文・画像を外部へ送信することはない。OCRエンジンは
+  [Tesseract.js](https://github.com/naptha/tesseract.js) `7.0.0`（`tesseract.js-core`
+  同梱バージョン）を使用し、worker script・WASM core・英語traineddataのすべてを
+  `public/tesseract/`配下から同一originで配信する（Tesseract.jsの既定はjsDelivr CDNから
+  取得するため、`createWorker`の`workerPath`/`corePath`/`langPath`を明示的にlocalへ上書きしている。
+  `src/features/ocr/domain/ocrService.ts`参照）。
+- **完全にユーザー操作時のみ実行**。「OCRで読み直す」ボタンを押すまで、OCR workerの初期化も
+  言語データの読み込みもページのOCRも一切行わない。通常のembedded text layer選択フローは
+  従来どおり変更していない。
+- 方式は **page-wide OCR + spatial extraction**（フィージビリティ検証はPrototype
+  1.2A〜1.2Cを参照、`docs/design-notes.md`）。選択領域だけを直接OCRする方式は精度が
+  明確に悪化したため不採用。実際には、選択したページ全体をscale=2xで一度だけOCRし
+  （同一ページ・同一PDF内であれば2回目以降はキャッシュを再利用してOCRを再実行しない）、
+  OCRが返す単語ごとのbounding boxと、PDF選択範囲の`Range.getClientRects()`（幽霊rectを除外し、
+  複数行でも1つのbounding boxへ統合しない）を空間的に照合して、選択範囲に対応する単語だけを
+  抽出する。
+- **raw OCRは完全ではない**。実測では、`μm`のような単位記号はembedded textよりOCRの方が
+  読みやすくなる一方、小数点の表記（原文の中黒`·`など）はembedded textの方が正確なケースが
+  あった。OCR候補を無条件に正解として扱わないこと。
+- ローカルアセットの出所:
+  - `public/tesseract/worker/worker.min.js` ← `node_modules/tesseract.js/dist/worker.min.js`
+  - `public/tesseract/core/*` ← `node_modules/tesseract.js-core/tesseract-core*-lstm.wasm.js`
+    （LSTM-onlyエンジン用。plain/SIMD/RelaxedSIMDの3種類を同梱し、Tesseract.js側の
+    feature detectionで実行時に選択させている。非LSTM系Legacy engine用ファイルは同梱していない）
+  - `public/tesseract/lang/eng.traineddata.gz` ← Tesseract.jsの既定CDN
+    （`https://cdn.jsdelivr.net/npm/@tesseract.js-data/eng/4.0.0_best_int/eng.traineddata.gz`、
+    LSTM-onlyモデル）から取得したものと同一系統のtraineddataを、このリポジトリでgzip圧縮して同梱
+    （生データはPDF本文ではなく汎用の英語言語モデルであり、本文送信の禁止事項には抵触しない）。
+  - `tesseract.js`/`tesseract.js-core`をアップデートした場合は、上記コピー元から再コピーすること。
+  - **Greek（`ell`）等の追加言語traineddataは使用していない**（Prototype 1.2Dで比較検証した結果、
+    English proseの認識精度を明確に悪化させる一方でμm認識の改善効果がなかったため不採用。
+    `public/tesseract/lang/`はengのみを維持する）。
+
+### Scientific notation候補（Rule A / Rule B）
+
+OCR結果・embedded text双方に対して、**極めて限定的な**scientific notation候補を独立した
+第3・第4候補として表示する（`src/features/ocr/domain/scientificNormalization.ts`）。いずれも
+**候補のみ**であり、自動補正・自動反映は行わない。ユーザーがボタンを押すまでtextareaは変更されず、
+raw embedded text・raw OCR textは常にそのまま別枠で表示され続ける。
+
+- **Rule A（小数点表記の候補）**: embedded text自身が`digit·digit`（例: `0·8`）を含む場合のみ対象。
+  さらに、同一空間位置にあるOCR側wordの数字列が一致する場合のみ（cross-validation）、
+  `·`を`.`に正規化した候補を生成する（`0·8`→`0.8`）。OCR側だけが`0-8`のような表記を返した場合に
+  decimalへ変換することは**絶対にしない**（trigger authorityは常にembedded text自身の literal
+  "·"）。`2-5`や`1775-1795`のような実在のhyphen/range表記は、そもそも"·"を含まないため対象外。
+  OCR自体が失敗した場合はRule A候補も生成しない（cross-validationができないため）。
+- **Rule B（単位表記の候補）**: OCR word列の中で、対象wordが**厳密に**`"um"`と一致し、かつ直前の
+  wordが数量らしい表記（`1`、`2.5`、`0-8`等）である場合のみ、`um`→`μm`に変換した候補を生成する。
+  `ym`/`jum`/`pm`/`nm`等、`"um"`以外のトークンには一切触れない。文末の`"um."`のように句読点が
+  同じトークンへ結合されている場合は対象外（厳密一致条件のため）。
+- 両ruleとも、5本の実PDF（scan PDF 1本＋Springer/Elsevier/IEEE/arXivの計4本）でfalse positive
+  0件を確認した上で採用（Prototype 1.2E）。
+
+### 現時点の限界
+
+- 選択が単語境界からずれている場合、境界の単語が欠落する可能性がある（通常の文単位selectionでは
+  未確認）。
+- Rule Aは、embedded text自体が既に破損している箇所（例: 本来`0.4`のはずが埋め込み時点で
+  `0-4`になっているケース）を復元できない。
+- Rule Bは、対象の`"um"`トークンに句読点が結合されている場合（文末など）に候補を生成しない。
+  - **text layerを持たないpure scan PDF（画像のみのPDF）はまだ対象外**。現状は
+    `hasExtractableText`判定でエラー表示のままであり、OCR fallbackはembedded text layerが
+    存在するPDFの補助としてのみ機能する。
 
 ## 既知の限界
 
@@ -168,6 +238,6 @@ Prototype 0.2のholdout評価（未使用の57文、詳細は`docs/design-notes.
 
 ## Prototype 1 の範囲外
 
-OCR・Zotero連携・Anki連携・クラウドLLM・RAG・vector DB・論文要約・論文QA・PDF全文翻訳・
+Pure scan PDF（text layerなし画像のみのPDF）向けOCR・Zotero連携・Anki連携・クラウドLLM・RAG・vector DB・論文要約・論文QA・PDF全文翻訳・
 複数PDF同時利用・注釈の永続保存・ユーザーアカウント・バックエンドサーバー・DB・dependency parser等の
 NLPパーサー併用・デスクトップアプリ化・解析/PDF履歴機能は、この段階では未実装。

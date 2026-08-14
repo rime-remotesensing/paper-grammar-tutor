@@ -34,3 +34,50 @@ export const MODEL_SIZE_ADVISORY_THRESHOLD_B = 4
  * the copy command; re-run it after bumping the pdfjs-dist version).
  */
 export const PDF_WASM_URL = '/pdfjs/wasm/'
+
+/**
+ * Local-only Tesseract.js asset paths (worker script, WASM core, English traineddata),
+ * copied from `node_modules/tesseract.js` / `tesseract.js-core` into `public/tesseract/`
+ * so the OCR fallback never depends on Tesseract.js's default jsDelivr CDN paths — the
+ * project's PDF content must never leave the machine, and by default Tesseract.js fetches
+ * its worker script, WASM core, and language data from a CDN. `OCR_CORE_PATH` is a
+ * directory (not a specific file): Tesseract.js feature-detects WASM SIMD support at
+ * runtime and picks the matching `tesseract-core-*lstm.wasm.js` file itself, so all three
+ * variants (plain/simd/relaxedsimd, LSTM-only engine) are served from this directory. See
+ * README for provenance of the bundled `eng.traineddata.gz` and the exact copy commands
+ * (re-run after bumping the tesseract.js / tesseract.js-core version).
+ */
+export const OCR_WORKER_PATH = '/tesseract/worker/worker.min.js'
+export const OCR_CORE_PATH = '/tesseract/core/'
+export const OCR_LANG_PATH = '/tesseract/lang/'
+
+/** Render scale used for the OCR fallback's page-wide render, matching the scale validated
+ * during the Prototype 1.2A/B/C feasibility spikes (accuracy plateaus at 2x; higher scales
+ * cost more time/memory without further improving Tesseract's recognition). */
+export const OCR_RENDER_SCALE = 2
+
+/** Selection-rect-to-OCR-word matching tolerance in OCR-canvas pixels, carried over
+ * unchanged from the Prototype 1.2C spike (see docs/design-notes.md). Reused by the
+ * Paddle path too — the underlying geometry (selection rect vs. word bbox center) is the
+ * same regardless of which engine produced the word boxes. */
+export const OCR_MATCH_TOLERANCE_PX = 3
+
+/**
+ * Local-only PaddleOCR service (Prototype 1.4A/1.4B) — the primary OCR engine.
+ * `services/paddle_ocr/` must be started manually in development (see its README); this
+ * app never spawns it. 127.0.0.1 only, matching the service's own bind address — this is
+ * never a configurable remote host.
+ */
+export const PADDLE_SERVICE_URL = 'http://127.0.0.1:8008'
+
+/** `/health` should answer near-instantly if the service is up at all; a short timeout
+ * here just bounds how long "OCRで読み直す" can hang before falling through to the
+ * explicit "利用できません" state when the service isn't running. */
+export const PADDLE_HEALTH_TIMEOUT_MS = 3_000
+
+/** `/ocr/page` warm latency measured 0.47-1.06s across the pages tested in
+ * Prototype 1.3B/1.4A; this leaves generous headroom (the service's model is already
+ * loaded by the time `/health` reports `modelLoaded: true`, so a "cold" inference within
+ * a session shouldn't occur) without leaving the user staring at a hung UI indefinitely
+ * if the service becomes unresponsive mid-session. */
+export const PADDLE_OCR_TIMEOUT_MS = 10_000

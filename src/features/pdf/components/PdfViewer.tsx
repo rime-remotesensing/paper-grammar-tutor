@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import * as pdfjsLib from 'pdfjs-dist'
 import type { PDFDocumentProxy, RenderTask } from 'pdfjs-dist'
 import {
@@ -12,8 +12,11 @@ import {
 import { hasExtractableText } from '../domain/detectTextLayer'
 import {
   buildSelectionResult,
+  computeNormalizedSelectionRects,
+  findDigitMiddotMatches,
   isReadingOrderBefore,
   resetForNewDocument,
+  type EmbeddedScientificToken,
   type PdfSelectionResult,
   type PointerPoint,
 } from '../domain/pdfViewerState'
@@ -24,6 +27,37 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
   'pdfjs-dist/build/pdf.worker.min.mjs',
   import.meta.url,
 ).href
+
+/**
+ * Walks every text node the selection `range` touches within `layer`, and for each
+ * `digit·digit` substring found (Rule A's trigger — see findDigitMiddotMatches), builds a
+ * DOM sub-range covering *only that token* (never the containing span's whole text) and
+ * captures its own tight, canvas-normalized rect. This is what lets Rule A later
+ * cross-validate a single embedded decimal token against the OCR word at that exact
+ * position, instead of the whole sentence.
+ */
+function extractScientificTokens(range: Range, layer: HTMLElement, canvasRect: DOMRect): EmbeddedScientificToken[] {
+  const tokens: EmbeddedScientificToken[] = []
+  const walker = document.createTreeWalker(layer, NodeFilter.SHOW_TEXT)
+  let node = walker.nextNode()
+  while (node) {
+    if (range.intersectsNode(node)) {
+      const text = node.textContent ?? ''
+      const localStart = node === range.startContainer ? range.startOffset : 0
+      const localEnd = node === range.endContainer ? range.endOffset : text.length
+      const selectedSlice = text.slice(localStart, localEnd)
+      for (const m of findDigitMiddotMatches(selectedSlice)) {
+        const subRange = document.createRange()
+        subRange.setStart(node, localStart + m.start)
+        subRange.setEnd(node, localStart + m.end)
+        const rects = computeNormalizedSelectionRects(Array.from(subRange.getClientRects()), canvasRect)
+        if (rects.length > 0) tokens.push({ text: m.text, rects })
+      }
+    }
+    node = walker.nextNode()
+  }
+  return tokens
+}
 
 function isTextNodeInsideLayer(node: Node | null, layer: HTMLElement | null): node is Text {
   return node !== null && node.nodeType === Node.TEXT_NODE && layer !== null && layer.contains(node)
@@ -90,7 +124,21 @@ interface PdfViewerProps {
   onDocumentChange: () => void
 }
 
-export function PdfViewer({ onSelection, onDocumentChange }: PdfViewerProps) {
+/** Imperative escape hatch for the OCR fallback: it needs to render a specific page at
+ * its own (independent) scale, but `doc`/`getPage` are intentionally kept as PdfViewer's
+ * own internal state rather than lifted to props, since nothing else in the app needs
+ * them. A ref avoids threading the whole PDFDocumentProxy up through App.tsx. */
+export interface PdfViewerHandle {
+  /** Renders `pageNumber` to a detached canvas at `scale`, independent of the viewer's
+   * current on-screen zoom. Throws if no document is loaded or the page fails to render;
+   * callers are expected to catch (see the OCR fallback's error handling). */
+  renderPageForOcr(pageNumber: number, scale: number): Promise<HTMLCanvasElement>
+}
+
+export const PdfViewer = forwardRef<PdfViewerHandle, PdfViewerProps>(function PdfViewer(
+  { onSelection, onDocumentChange },
+  ref,
+) {
   const [doc, setDoc] = useState<PDFDocumentProxy | null>(null)
   const [numPages, setNumPages] = useState(0)
   const [pageNumber, setPageNumber] = useState(1)
@@ -104,6 +152,33 @@ export function PdfViewer({ onSelection, onDocumentChange }: PdfViewerProps) {
   // Viewport point where the current drag started, used to recover from the text-layer
   // selection bug: see handleMouseUp for why.
   const dragStartPointRef = useRef<PointerPoint | null>(null)
+  // Mirrors `doc` for imperative access from renderPageForOcr — a ref (not the `doc`
+  // state variable) so the exposed handle always sees the latest document even though
+  // useImperativeHandle's factory only re-runs when its dependency array changes.
+  const docRef = useRef<PDFDocumentProxy | null>(null)
+  useEffect(() => {
+    docRef.current = doc
+  }, [doc])
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      async renderPageForOcr(pageNumber, ocrScale) {
+        const currentDoc = docRef.current
+        if (!currentDoc) throw new Error('PDFが読み込まれていません。')
+        const page = await currentDoc.getPage(pageNumber)
+        const viewport = page.getViewport({ scale: ocrScale })
+        const canvas = document.createElement('canvas')
+        canvas.width = Math.ceil(viewport.width)
+        canvas.height = Math.ceil(viewport.height)
+        const ctx = canvas.getContext('2d')
+        if (!ctx) throw new Error('canvasを初期化できませんでした。')
+        await page.render({ canvas, canvasContext: ctx, viewport }).promise
+        return canvas
+      },
+    }),
+    [],
+  )
 
   const handleFileChange = useCallback(async (file: File) => {
     onDocumentChange()
@@ -243,7 +318,23 @@ export function PdfViewer({ onSelection, onDocumentChange }: PdfViewerProps) {
       if (text.trim().length === 0) return
       const anchorNode = selection.anchorNode
       if (!anchorNode || !textLayerRef.current?.contains(anchorNode)) return
-      const result = buildSelectionResult(text, pageNumber)
+
+      // Captured now (not re-derived later from a fresh window.getSelection() call) since
+      // the native selection can be gone by the time the user clicks "OCRで読み直す" —
+      // e.g. any click outside the text layer collapses it. See ocr feature docs.
+      const canvas = canvasRef.current
+      const currentRange = selection.rangeCount > 0 ? selection.getRangeAt(0) : null
+      const canvasRect = canvas?.getBoundingClientRect() ?? null
+      const ocrRects =
+        canvasRect && currentRange
+          ? computeNormalizedSelectionRects(Array.from(currentRange.getClientRects()), canvasRect)
+          : []
+      const scientificTokens =
+        canvasRect && currentRange && textLayerRef.current
+          ? extractScientificTokens(currentRange, textLayerRef.current, canvasRect)
+          : []
+
+      const result = buildSelectionResult(text, pageNumber, ocrRects, scientificTokens)
       if (result) onSelection(result)
     },
     [pageNumber, onSelection],
@@ -320,4 +411,4 @@ export function PdfViewer({ onSelection, onDocumentChange }: PdfViewerProps) {
       </div>
     </div>
   )
-}
+})

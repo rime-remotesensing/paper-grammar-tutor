@@ -1,0 +1,18 @@
+# Prototype 1.4A spike dependencies. Exact versions pinned to the environment already
+# validated in Prototype 1.3 / 1.3B -- do not bump to "latest" without re-running that
+# validation (see README.md "Version policy").
+#
+# paddlepaddle-gpu is NOT listed here because it must be installed from PaddlePaddle's
+# own CUDA-specific package index rather than PyPI -- see README.md "Setup" for the
+# exact command. Installing it from this file with a plain `pip install -r` would pull
+# the wrong (or no) GPU build.
+
+paddleocr==3.7.0
+paddlex==3.7.2
+
+fastapi==0.141.1
+uvicorn[standard]==0.52.1
+python-multipart==0.0.32
+
+pytest==8.3.5
+httpx==0.28.1
