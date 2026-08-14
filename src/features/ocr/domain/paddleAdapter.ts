@@ -83,33 +83,41 @@ export interface PaddleExtractionResult {
   failed: boolean
 }
 
+/** One selected line's `[start, end)` character range within its own `line.text`
+ * (Prototype 1.5D) — the same range `extractPaddleCandidate` uses internally to slice
+ * `line.text`, exposed so the high-resolution second-pass (paddleHighResAdapter.ts) can
+ * map the identical selected span onto a *different* recognition of the same physical
+ * line without re-deriving the selection geometry. */
+export interface SelectedLineRange {
+  line: PaddleLine
+  start: number
+  end: number
+}
+
+export interface SelectedLineRangesResult {
+  /** Ordered top-to-bottom by the line's own bbox; only lines with a non-empty selected
+   * range are included. */
+  ranges: SelectedLineRange[]
+  /** True when a matched line's words couldn't be aligned to its own text — same
+   * whole-result-poisoning semantics as `PaddleExtractionResult.failed`. */
+  failed: boolean
+}
+
 /**
- * Top-level extraction: selection rects (pixel space, from the unchanged production
- * `toPixelRect`) → matched Paddle line → substring of `line.text` → joined top-to-bottom
- * with a single space between lines. Union bounding boxes are never used for the
- * selection geometry itself (each rect is matched to its own line independently, same
- * principle as the Tesseract path's `ocrGeometry.matchWordsToRects` — see
- * Prototype 1.2C).
- *
- * `line.text` is the string authority throughout: candidates are built by *slicing*
- * `line.text`, never by `words.map(w => w.text).join(' ')` (that would insert spaces
- * between tokens that were never spaced in the original, e.g. turning `"0·05"` into
- * `"0 · 05"` — see docs/design-notes.md, Prototype 1.4A/1.4B).
- *
- * Matching is grouped **by line, not by rect**: a single visual line of selected text can
- * produce several overlapping `getClientRects()` fragments (pdf.js emits one rect per
- * text span plus letter-spacing filler elements — Prototype 1.2B). Extracting a
- * substring independently per rect and joining them would emit the same words multiple
- * times (confirmed empirically in the Prototype 1.4A spike — e.g.
+ * Shared core of the selection→line-range mapping: selection rects (pixel space) →
+ * matched Paddle line → `[start, end)` within that line's own text. Grouped **by line,
+ * not by rect** — a single visual line of selected text can produce several overlapping
+ * `getClientRects()` fragments (pdf.js emits one rect per text span plus letter-spacing
+ * filler elements — Prototype 1.2B); extracting per rect and joining would emit the same
+ * words multiple times (confirmed empirically in the Prototype 1.4A spike — e.g.
  * `"materials materials were were"`). Every rect that maps to the same line instead
- * contributes to one shared matched-word `Set` for that line, and exactly one substring
- * is extracted per line.
+ * contributes to one shared matched-word `Set` for that line.
  */
-export function extractPaddleCandidate(
+function computeSelectedLineRanges(
   lines: readonly PaddleLine[],
   selectionRectsPixel: readonly PixelRect[],
   tolerancePx: number,
-): PaddleExtractionResult {
+): SelectedLineRangesResult {
   const lineState = new Map<PaddleLine, { alignment: LineAlignment; matchedIndices: Set<number> }>()
 
   for (const rect of selectionRectsPixel) {
@@ -136,19 +144,50 @@ export function extractPaddleCandidate(
 
   const entries = [...lineState.values()]
   if (entries.some((entry) => entry.alignment.alignmentFailed)) {
-    return { text: null, failed: true }
+    return { ranges: [], failed: true }
   }
 
   const orderedLines = [...lineState.entries()].sort((a, b) => a[0].bbox[1] - b[0].bbox[1])
-  const parts: string[] = []
+  const ranges: SelectedLineRange[] = []
   for (const [line, entry] of orderedLines) {
     if (entry.matchedIndices.size === 0) continue
     const matchedRanges = [...entry.matchedIndices].map((i) => entry.alignment.ranges[i])
     const start = Math.min(...matchedRanges.map((r) => r.start))
     const end = Math.max(...matchedRanges.map((r) => r.end))
-    parts.push(line.text.slice(start, end))
+    ranges.push({ line, start, end })
   }
 
-  if (parts.length === 0) return { text: null, failed: true }
-  return { text: parts.join(' '), failed: false }
+  return { ranges, failed: false }
+}
+
+/** Exposes the same selection→line-range mapping `extractPaddleCandidate` uses
+ * internally, for the Prototype 1.5D high-resolution second-pass. */
+export function extractSelectedLineRanges(
+  lines: readonly PaddleLine[],
+  selectionRectsPixel: readonly PixelRect[],
+  tolerancePx: number,
+): SelectedLineRangesResult {
+  return computeSelectedLineRanges(lines, selectionRectsPixel, tolerancePx)
+}
+
+/**
+ * Top-level extraction: selection rects (pixel space, from the unchanged production
+ * `toPixelRect`) → matched Paddle line → substring of `line.text` → joined top-to-bottom
+ * with a single space between lines.
+ *
+ * `line.text` is the string authority throughout: candidates are built by *slicing*
+ * `line.text`, never by `words.map(w => w.text).join(' ')` (that would insert spaces
+ * between tokens that were never spaced in the original, e.g. turning `"0·05"` into
+ * `"0 · 05"` — see docs/design-notes.md, Prototype 1.4A/1.4B).
+ */
+export function extractPaddleCandidate(
+  lines: readonly PaddleLine[],
+  selectionRectsPixel: readonly PixelRect[],
+  tolerancePx: number,
+): PaddleExtractionResult {
+  const { ranges, failed } = computeSelectedLineRanges(lines, selectionRectsPixel, tolerancePx)
+  if (failed) return { text: null, failed: true }
+  if (ranges.length === 0) return { text: null, failed: true }
+  const text = ranges.map((r) => r.line.text.slice(r.start, r.end)).join(' ')
+  return { text, failed: false }
 }

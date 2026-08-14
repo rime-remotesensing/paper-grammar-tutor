@@ -67,6 +67,14 @@ def _init_engine() -> None:
         device=DEVICE,
         return_word_box=True,
     )
+    # Prototype 1.5I: this single page-pipeline instance also serves the selected-line
+    # high-resolution second-pass (/ocr/lines) -- Prototype 1.5D/1.5H's separate
+    # recognition-only model (paddlex.create_model(MODEL_REC)) was removed after
+    # Prototype 1.5H's benchmark found the full det+rec pipeline more accurate on line
+    # crops than recognition-only, at acceptable latency (~35ms/line vs ~13ms/line). A
+    # single PaddleOCR instance's public .predict() handles both full-page and small
+    # line-crop images without any special handling (confirmed in Prototype 1.5H) --
+    # no second model instance, and no private API access, was needed to make this work.
 
 
 @asynccontextmanager
@@ -101,6 +109,28 @@ class PageResultDTO(BaseModel):
     imageWidth: int
     imageHeight: int
     lines: list[LineDTO]
+    timingMs: dict[str, float]
+
+
+class LineRecognitionResultDTO(BaseModel):
+    """Full-pipeline (det+rec) result for one line-crop image (Prototype 1.5I). Order in
+    the response's `lines` list always matches the order the crop files were uploaded in
+    -- callers reconstruct top-to-bottom order themselves before uploading.
+
+    Each crop is expected to contain exactly one physical line (the caller already
+    identified line boundaries from the 2x page-wide pass before cropping). `text`/
+    `confidence` are only populated when detection found exactly one text region;
+    `detectionCount != 1` means the crop's line result could not be trusted (0 = nothing
+    detected, >1 = the crop unexpectedly split into multiple regions) and the caller
+    must treat that line as a failure rather than silently combining multiple results."""
+
+    text: Optional[str] = None
+    confidence: Optional[float] = None
+    detectionCount: int
+
+
+class LinesResultDTO(BaseModel):
+    lines: list[LineRecognitionResultDTO]
     timingMs: dict[str, float]
 
 
@@ -191,6 +221,73 @@ async def ocr_page(file: UploadFile = File(...)):
             "serialize": round((t_serialize_done - t_inference_done) * 1000, 1),
             "total": round((t_serialize_done - t_start) * 1000, 1),
         },
+    )
+
+
+@app.post("/ocr/lines", response_model=LinesResultDTO)
+async def ocr_lines(files: list[UploadFile] = File(...)):
+    """Prototype 1.5I: uses the same full det+rec page pipeline as /ocr/page (not a
+    separate recognition-only model -- see docs/design-notes.md, Prototype 1.5H, for the
+    benchmark that found the full pipeline more accurate on line crops at acceptable
+    latency, and Prototype 1.5I for why a second model instance turned out to be
+    unnecessary rather than merely slower). The caller has already identified which
+    physical line(s) a selection touches (from the existing /ocr/page result) and
+    uploads one pre-cropped image per line, in top-to-bottom order. The uploaded crops
+    are never written to disk, matching /ocr/page.
+    """
+    if state.engine is None:
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "gpu_unavailable", "message": state.init_error or "OCR engine not initialized"},
+        )
+    if not files:
+        raise HTTPException(status_code=400, detail={"error": "empty_request", "message": "No line images were uploaded."})
+
+    t_start = time.monotonic()
+    results: list[LineRecognitionResultDTO] = []
+    for f in files:
+        raw = await f.read()
+        try:
+            image = Image.open(io.BytesIO(raw)).convert("RGB")
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail={"error": "invalid_image", "message": str(exc)}) from exc
+        array = np.array(image)
+        del raw, image
+        try:
+            preds = list(state.engine.predict(array))
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail={"error": "ocr_failed", "message": str(exc)}) from exc
+        finally:
+            del array
+
+        # Each crop is one physical line; flatten every detected text region across all
+        # returned pages/results for this single image into one count. Exactly 1 is the
+        # only trustworthy outcome -- 0 (nothing detected) or >1 (the crop unexpectedly
+        # split) are both reported as a failure for this line rather than guessed at by
+        # concatenating multiple regions (see docstring above).
+        detected_texts: list[str] = []
+        detected_scores: list[float] = []
+        for res in preds:
+            detected_texts.extend(res.get("rec_texts", []))
+            detected_scores.extend(res.get("rec_scores", []))
+
+        if len(detected_texts) == 1:
+            results.append(LineRecognitionResultDTO(
+                text=detected_texts[0],
+                confidence=float(detected_scores[0]) if detected_scores else None,
+                detectionCount=1,
+            ))
+        else:
+            results.append(LineRecognitionResultDTO(
+                text=None,
+                confidence=None,
+                detectionCount=len(detected_texts),
+            ))
+    t_done = time.monotonic()
+
+    return LinesResultDTO(
+        lines=results,
+        timingMs={"total": round((t_done - t_start) * 1000, 1)},
     )
 
 

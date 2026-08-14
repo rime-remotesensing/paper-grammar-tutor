@@ -1,15 +1,23 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ConnectionStatus } from './components/ConnectionStatus'
 import { ModelSelector } from './components/ModelSelector'
-import { DEFAULT_OLLAMA_BASE_URL, DEFAULT_TEMPERATURE, OCR_MATCH_TOLERANCE_PX, OCR_RENDER_SCALE } from './config/settings'
+import {
+  DEFAULT_OLLAMA_BASE_URL,
+  DEFAULT_TEMPERATURE,
+  OCR_MATCH_TOLERANCE_PX,
+  OCR_RENDER_SCALE,
+  PADDLE_HIGH_RES_SCALE,
+} from './config/settings'
 import { AnalysisResultPanel } from './features/grammar/components/AnalysisResultPanel'
 import { SentenceInputPanel } from './features/grammar/components/SentenceInputPanel'
 import { analyzeSentence, type AnalyzeSentenceResult } from './features/grammar/domain/GrammarAnalyzer'
 import { getModelSizeAdvisory } from './features/grammar/domain/modelSizeAdvisory'
-import { OcrFallbackPanel, type OcrStatus, type PaddleStatus } from './features/ocr/components/OcrFallbackPanel'
+import { OcrFallbackPanel, type OcrStatus, type PaddleStatus, type HighResStatus } from './features/ocr/components/OcrFallbackPanel'
 import { matchWordsToRects, toPixelRect, joinOcrWords } from './features/ocr/domain/ocrGeometry'
 import { extractPaddleCandidate } from './features/ocr/domain/paddleAdapter'
 import { checkPaddleAvailability, recognizePageWithPaddle, resetPaddleCache } from './features/ocr/domain/paddleOcrService'
+import { recognizeSelectedLinesHighRes } from './features/ocr/domain/paddleHighResService'
+import { resetHighResRenderCache } from './features/ocr/domain/highResPageCache'
 import { recognizePage, resetOcrCache } from './features/ocr/domain/ocrService'
 import { createRequestGuard } from './features/ocr/domain/requestGuard'
 import { applyRuleA, applyRuleB } from './features/ocr/domain/scientificNormalization'
@@ -50,6 +58,14 @@ export default function App() {
   const [paddleStatus, setPaddleStatus] = useState<PaddleStatus>('idle')
   const [paddleCandidate, setPaddleCandidate] = useState<string | null>(null)
   const [paddleUnavailableReason, setPaddleUnavailableReason] = useState<string | null>(null)
+
+  // High-resolution selected-line second-pass (Prototype 1.5D). Triggered by the same
+  // "OCRで読み直す" click, right after the 2x baseline succeeds — never by confidence,
+  // regex, or any other automatic signal. Its own independent candidate; never merged
+  // into paddleCandidate (see docs/design-notes.md, Prototype 1.5C's consensus findings
+  // for why an automatic m/µm merge is not safe).
+  const [highResStatus, setHighResStatus] = useState<HighResStatus>('idle')
+  const [highResCandidate, setHighResCandidate] = useState<string | null>(null)
 
   // Tesseract only ever runs when the user explicitly clicks "ブラウザOCRを使う" after
   // Paddle is reported unavailable — never as an automatic fallback (see docs/design-notes.md,
@@ -129,6 +145,8 @@ export default function App() {
     setPaddleStatus('idle')
     setPaddleCandidate(null)
     setPaddleUnavailableReason(null)
+    setHighResStatus('idle')
+    setHighResCandidate(null)
     setTesseractStatus('idle')
     setTesseractCandidate(null)
     setRuleACandidate(null)
@@ -158,6 +176,7 @@ export default function App() {
     ocrRequestGuardRef.current.next()
     resetOcrCache()
     resetPaddleCache()
+    resetHighResRenderCache()
   }
 
   // Bound to "OCRで読み直す" — the Paddle-primary flow. Never falls through to Tesseract on
@@ -189,13 +208,15 @@ export default function App() {
     }
 
     setPaddleStatus('loading')
+    let pageResult: Awaited<ReturnType<typeof recognizePageWithPaddle>>
+    let pixelRects: ReturnType<typeof toPixelRect>[]
     try {
       const canvas = await viewer.renderPageForOcr(selection.pageNumber, OCR_RENDER_SCALE)
-      const pageResult = await recognizePageWithPaddle(
+      pageResult = await recognizePageWithPaddle(
         { documentToken: String(documentToken), pageNumber: selection.pageNumber, scale: OCR_RENDER_SCALE },
         canvas,
       )
-      const pixelRects = selection.ocrRects.map((rect) => toPixelRect(rect, pageResult.imageWidth, pageResult.imageHeight))
+      pixelRects = selection.ocrRects.map((rect) => toPixelRect(rect, pageResult.imageWidth, pageResult.imageHeight))
       const extraction = extractPaddleCandidate(pageResult.lines, pixelRects, OCR_MATCH_TOLERANCE_PX)
 
       if (!ocrRequestGuardRef.current.isCurrent(requestId)) return // superseded by a newer selection/document
@@ -211,6 +232,37 @@ export default function App() {
     } catch {
       if (!ocrRequestGuardRef.current.isCurrent(requestId)) return
       setPaddleStatus('error')
+      return
+    }
+
+    // Prototype 1.5D: high-resolution selected-line second-pass, run right after the 2x
+    // baseline succeeds, still gated only by this same button click. Its own independent
+    // candidate — never merged into paddleCandidate (see paddleHighResService.ts). A
+    // failure here is silent (no error UI): the baseline candidate above is already
+    // shown and remains fully usable regardless of how this second pass turns out.
+    setHighResStatus('loading')
+    try {
+      const result = await recognizeSelectedLinesHighRes({
+        key: { documentToken: String(documentToken), pageNumber: selection.pageNumber, scale: PADDLE_HIGH_RES_SCALE },
+        lines: pageResult.lines,
+        baselineImageWidth: pageResult.imageWidth,
+        baselineImageHeight: pageResult.imageHeight,
+        selectionRectsPixel: pixelRects,
+        tolerancePx: OCR_MATCH_TOLERANCE_PX,
+        renderHighRes: () => viewer.renderPageForOcr(selection.pageNumber, PADDLE_HIGH_RES_SCALE),
+      })
+
+      if (!ocrRequestGuardRef.current.isCurrent(requestId)) return
+
+      if (result.failed || result.text === null) {
+        setHighResStatus('failed')
+        return
+      }
+      setHighResCandidate(result.text)
+      setHighResStatus('success')
+    } catch {
+      if (!ocrRequestGuardRef.current.isCurrent(requestId)) return
+      setHighResStatus('failed')
     }
   }
 
@@ -265,6 +317,13 @@ export default function App() {
   const handleAcceptPaddleCandidate = () => {
     if (paddleCandidate === null) return
     setSentence(paddleCandidate)
+    setResult(null)
+    setAnalyzeError(null)
+  }
+
+  const handleAcceptHighResCandidate = () => {
+    if (highResCandidate === null) return
+    setSentence(highResCandidate)
     setResult(null)
     setAnalyzeError(null)
   }
@@ -350,6 +409,9 @@ export default function App() {
               onRecheckPaddle={handleRecheckPaddle}
               onAcceptPaddleCandidate={handleAcceptPaddleCandidate}
               onUseBrowserOcr={() => void handleUseBrowserOcr()}
+              highResStatus={highResStatus}
+              highResCandidateText={highResCandidate}
+              onAcceptHighResCandidate={handleAcceptHighResCandidate}
               tesseractStatus={tesseractStatus}
               tesseractCandidateText={tesseractCandidate}
               ruleACandidateText={ruleACandidate}

@@ -81,3 +81,39 @@ export const PADDLE_HEALTH_TIMEOUT_MS = 3_000
  * a session shouldn't occur) without leaving the user staring at a hung UI indefinitely
  * if the service becomes unresponsive mid-session. */
 export const PADDLE_OCR_TIMEOUT_MS = 10_000
+
+/**
+ * Render scale for the user-selected-line high-resolution second-pass (Prototype 1.5D).
+ * Fixed at 6x per the Prototype 1.5B/1.5C benchmarks (2x/3x/4x page-wide scale changes
+ * showed no meaningful accuracy gain — see docs/design-notes.md — but a 6x *targeted*
+ * re-render of just the selected line(s), recognition-only, reliably recovered the
+ * dropped-µ failure case with zero incorrect patches across the benchmarked corpus). Not
+ * re-tuned here — re-validate against the same benchmark methodology before changing it.
+ */
+export const PADDLE_HIGH_RES_SCALE = 6
+
+/**
+ * Padding added around each selected line's bbox before cropping for the high-res
+ * second-pass, as a fraction of that line's own character height. Validated at 10% in
+ * Prototype 1.5B/1.5C/1.5D and this remains the production value.
+ *
+ * Prototype 1.5E found a real failure case ("Data was recorded...", Reno) where 10%
+ * padding was insufficient for a *recognition-only* model to keep a µ it otherwise
+ * dropped. Raising padding to 20% (1.5F) or adding a synthetic blank-margin border at
+ * 10%+10% (1.5G) both fixed that case but introduced new dropped-µ/decimal-point
+ * failures elsewhere (dense multi-line captions on Reno p11) — both were rejected. The
+ * actual fix (1.5H/1.5I) was not a padding change at all: the selected-line second-pass
+ * now runs through the same full det+rec pipeline `/ocr/page` uses (see
+ * `PADDLE_LINES_TIMEOUT_MS` below), not a separate recognition-only model, which
+ * resolved the 1.5E failure case without the padding-driven regressions. See
+ * docs/design-notes.md, Prototype 1.5E-1.5I.
+ */
+export const PADDLE_HIGH_RES_PADDING_FRAC = 0.1
+
+/** `/ocr/lines` now runs the selected line crop(s) through the same full det+rec
+ * PP-OCRv6 pipeline `/ocr/page` uses (Prototype 1.5I) — not a separate recognition-only
+ * model, which Prototype 1.5H found to be less accurate on line crops despite being
+ * faster. Measured ~35ms/line once warm (vs ~13ms/line for the recognition-only
+ * approach it replaced) — still small next to the 6x render's own cost on a cache miss,
+ * so the timeout is not cut tight. */
+export const PADDLE_LINES_TIMEOUT_MS = 10_000

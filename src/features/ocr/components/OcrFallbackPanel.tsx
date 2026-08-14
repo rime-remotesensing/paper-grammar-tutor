@@ -1,5 +1,23 @@
+import { diffForDisplay, type DiffSegment } from '../domain/textDiff'
+import { getCandidateLabels } from '../domain/candidateLabels'
+
 export type PaddleStatus = 'idle' | 'checking' | 'loading' | 'success' | 'unavailable' | 'alignmentFailed' | 'error'
 export type OcrStatus = 'idle' | 'loading' | 'success' | 'error'
+export type HighResStatus = 'idle' | 'loading' | 'success' | 'failed'
+
+/** Renders diff segments with changed spans lightly marked — display only, never alters
+ * the underlying candidate text (Prototype 1.5I item 10/11). */
+function renderDiffSegments(segments: readonly DiffSegment[]) {
+  return segments.map((seg, i) =>
+    seg.changed ? (
+      <mark key={i} className="ocr-diff-mark">
+        {seg.text}
+      </mark>
+    ) : (
+      <span key={i}>{seg.text}</span>
+    ),
+  )
+}
 
 interface OcrFallbackPanelProps {
   /** Hidden entirely when there's no PDF selection to OCR — free-typed text in the
@@ -17,6 +35,16 @@ interface OcrFallbackPanelProps {
   onAcceptPaddleCandidate: () => void
   /** Explicit-only Tesseract fallback trigger — never called automatically. */
   onUseBrowserOcr: () => void
+
+  // High-resolution selected-line second-pass (Prototype 1.5D). Runs automatically right
+  // after paddleStatus reaches 'success', still gated only by the same button click —
+  // never shown as a separate trigger. Its candidate is only rendered when it differs
+  // from paddleCandidateText (identical → no extra block, per item 2/18); it is never
+  // auto-merged into the primary candidate (see paddleHighResService.ts / Prototype
+  // 1.5C's consensus findings for why an automatic merge is not safe).
+  highResStatus: HighResStatus
+  highResCandidateText: string | null
+  onAcceptHighResCandidate: () => void
 
   // Tesseract (browser-only fallback — Prototype 1.2), run only via onUseBrowserOcr.
   tesseractStatus: OcrStatus
@@ -51,6 +79,9 @@ export function OcrFallbackPanel({
   onRecheckPaddle,
   onAcceptPaddleCandidate,
   onUseBrowserOcr,
+  highResStatus,
+  highResCandidateText,
+  onAcceptHighResCandidate,
   tesseractStatus,
   tesseractCandidateText,
   ruleACandidateText,
@@ -65,6 +96,16 @@ export function OcrFallbackPanel({
   const paddleButtonLabel =
     paddleStatus === 'checking' ? '確認しています…' : paddleStatus === 'loading' ? '高精度OCRを実行しています…' : 'OCRで読み直す'
 
+  const showHighRes =
+    paddleStatus === 'success' && highResStatus === 'success' && highResCandidateText !== null && highResCandidateText !== paddleCandidateText
+  // Pure text diff, computed only when both candidates are actually shown side by side —
+  // never alters either candidate string, purely a display aid (item 10/11).
+  const diff = showHighRes && paddleCandidateText !== null ? diffForDisplay(paddleCandidateText, highResCandidateText) : null
+  // Neutral, non-judgmental labels (Prototype 1.5J) — never implies either candidate is
+  // "correct"/"recommended", since baseline is sometimes right when high-res is wrong
+  // and vice versa (see docs/design-notes.md, Prototype 1.5H/1.5I).
+  const candidateLabels = getCandidateLabels(showHighRes)
+
   return (
     <div className="ocr-fallback-panel">
       <button type="button" className="ocr-request-button" onClick={onRequestPaddleOcr} disabled={paddleBusy}>
@@ -73,10 +114,24 @@ export function OcrFallbackPanel({
 
       {paddleStatus === 'success' && paddleCandidateText !== null && (
         <div className="ocr-candidate">
-          <p className="ocr-candidate-label">高精度OCR候補:</p>
-          <p className="ocr-candidate-text">{paddleCandidateText}</p>
+          <p className="ocr-candidate-label">{candidateLabels.primary.label}:</p>
+          <p className="ocr-candidate-text">{diff ? renderDiffSegments(diff.aSegments) : paddleCandidateText}</p>
           <button type="button" onClick={onAcceptPaddleCandidate}>
-            この候補を使う
+            {candidateLabels.primary.buttonText}
+          </button>
+        </div>
+      )}
+
+      {paddleStatus === 'success' && highResStatus === 'loading' && (
+        <p className="ocr-highres-loading">高解像度で再確認しています…</p>
+      )}
+
+      {showHighRes && highResCandidateText !== null && (
+        <div className="ocr-candidate">
+          <p className="ocr-candidate-label">{candidateLabels.secondary.label}:</p>
+          <p className="ocr-candidate-text">{diff ? renderDiffSegments(diff.bSegments) : highResCandidateText}</p>
+          <button type="button" onClick={onAcceptHighResCandidate}>
+            {candidateLabels.secondary.buttonText}
           </button>
         </div>
       )}
