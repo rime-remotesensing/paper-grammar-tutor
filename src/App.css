@@ -144,6 +144,16 @@
   margin-bottom: 1.1rem;
 }
 
+.reveal-details-button {
+  padding: 0.4rem 1rem;
+  border-radius: 4px;
+  border: 1px solid var(--accent);
+  background: var(--bg);
+  color: var(--accent);
+  margin-bottom: 1.1rem;
+  cursor: pointer;
+}
+
 /* Pure display aid marking where the baseline/high-res OCR candidates differ
    (Prototype 1.5I) — never changes either candidate's underlying text. */
 .ocr-diff-mark {

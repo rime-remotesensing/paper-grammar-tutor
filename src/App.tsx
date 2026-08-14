@@ -429,7 +429,12 @@ export default function App() {
 
           <div className="result-pane">
             {result ? (
-              <AnalysisResultPanel key={result.analysis.originalText} result={result} />
+              <AnalysisResultPanel
+                key={result.analysis.originalText}
+                result={result}
+                provider={provider}
+                model={selectedModel}
+              />
             ) : (
               <p className="empty-note">
                 PDFで英文を選択するか、上のテキスト欄に直接入力して「解析」を押すと、ここに文の骨格や修飾関係などが表示されます。

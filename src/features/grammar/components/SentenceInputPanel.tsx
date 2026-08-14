@@ -44,7 +44,7 @@ export function SentenceInputPanel({
           ))}
         </select>
         <button type="button" onClick={onAnalyze} disabled={!canAnalyze || analyzing}>
-          {analyzing ? '解析中…' : '解析'}
+          {analyzing ? '解析中…' : '骨格を見る'}
         </button>
       </div>
     </div>
