@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { diffForDisplay, type DiffSegment } from '../domain/textDiff'
 import { getCandidateLabels } from '../domain/candidateLabels'
 
@@ -20,11 +21,12 @@ function renderDiffSegments(segments: readonly DiffSegment[]) {
 }
 
 interface OcrFallbackPanelProps {
-  /** Hidden entirely when there's no PDF selection to OCR — free-typed text in the
+  /** Hidden entirely when there's no PDF selection to re-read — free-typed text in the
    * textarea has no page/geometry to re-read. */
   visible: boolean
 
-  // Paddle (high-accuracy, GPU, primary — Prototype 1.4B). Bound to "OCRで読み直す".
+  // Paddle (high-accuracy, GPU, primary — Prototype 1.4B). Bound to "読み直す". Internal
+  // engine name never surfaces in user-facing text (Prototype 2.2 item 18/19).
   paddleStatus: PaddleStatus
   paddleCandidateText: string | null
   /** Human-readable reason the last health check failed; not shown verbatim in the UI
@@ -59,17 +61,24 @@ interface OcrFallbackPanelProps {
 }
 
 /**
- * Manual, user-triggered OCR fallback for embedded PDF text that came out garbled (see
+ * Manual, user-triggered re-read of embedded PDF text that came out garbled (see
  * docs/design-notes.md, Prototype 1.2/1.4B). Never auto-runs and never overwrites the
  * sentence textarea by itself — every candidate is shown separately until the user
- * explicitly accepts it, and accepting one never touches the others.
+ * explicitly accepts it, and accepting one never touches the others. User-facing text
+ * deliberately never names the internal engines (OCR/Paddle/Tesseract/high-resolution) —
+ * see Prototype 2.2 item 18; those names remain as internal prop/type/class identifiers.
  *
- * Paddle (high-accuracy, GPU-backed) is the primary engine, triggered by "OCRで読み直す".
- * If the Paddle service is unavailable, this shows a fixed message plus two buttons —
- * "再確認" (retry the health check) and "ブラウザOCRを使う" (explicitly opt into the
- * Tesseract fallback). Tesseract NEVER runs automatically; it only runs after that second
- * button is clicked. Rule A/B are Tesseract-only extras (see scientificNormalization.ts)
- * and never apply to Paddle candidates.
+ * Paddle (high-accuracy, GPU-backed) is the primary engine, triggered by "読み直す". If
+ * unavailable, this shows a fixed message plus two buttons — "再確認" (retry the health
+ * check) and "別の方法で読み直す" (explicitly opt into the Tesseract fallback). Tesseract
+ * NEVER runs automatically; it only runs after that second button is clicked. Rule A/B
+ * are Tesseract-only extras (see scientificNormalization.ts) and never apply to Paddle
+ * candidates.
+ *
+ * The candidate area (Prototype 2.2 item 21/22) is a collapsible panel: it opens
+ * automatically the moment fresh candidates/results are ready, and closes automatically
+ * the moment the user adopts one — reopenable any time via its summary, with all
+ * underlying candidate/diff state preserved (nothing is unmounted on close, only hidden).
  */
 export function OcrFallbackPanel({
   visible,
@@ -90,21 +99,50 @@ export function OcrFallbackPanel({
   onAcceptRuleACandidate,
   onAcceptRuleBCandidate,
 }: OcrFallbackPanelProps) {
+  const [panelOpen, setPanelOpen] = useState(false)
+  const [adoptedLabel, setAdoptedLabel] = useState<string | null>(null)
+
+  // Auto-open the instant a fresh read finishes (success or a terminal failure state) —
+  // item 21. A brand-new "読み直す" click always starts from paddleStatus 'checking', so
+  // this reliably fires again on every fresh attempt, not just the first one.
+  useEffect(() => {
+    if (paddleStatus === 'success' || paddleStatus === 'unavailable' || paddleStatus === 'alignmentFailed' || paddleStatus === 'error') {
+      setPanelOpen(true)
+    }
+    if (paddleStatus === 'checking' || paddleStatus === 'loading') {
+      setAdoptedLabel(null)
+    }
+  }, [paddleStatus])
+
   if (!visible) return null
 
   const paddleBusy = paddleStatus === 'checking' || paddleStatus === 'loading'
   const paddleButtonLabel =
-    paddleStatus === 'checking' ? '確認しています…' : paddleStatus === 'loading' ? '高精度OCRを実行しています…' : 'OCRで読み直す'
+    paddleStatus === 'checking' ? '確認しています…' : paddleStatus === 'loading' ? '読み直しています…' : '読み直す'
 
   const showHighRes =
     paddleStatus === 'success' && highResStatus === 'success' && highResCandidateText !== null && highResCandidateText !== paddleCandidateText
   // Pure text diff, computed only when both candidates are actually shown side by side —
   // never alters either candidate string, purely a display aid (item 10/11).
   const diff = showHighRes && paddleCandidateText !== null ? diffForDisplay(paddleCandidateText, highResCandidateText) : null
-  // Neutral, non-judgmental labels (Prototype 1.5J) — never implies either candidate is
-  // "correct"/"recommended", since baseline is sometimes right when high-res is wrong
-  // and vice versa (see docs/design-notes.md, Prototype 1.5H/1.5I).
+  // Neutral, non-judgmental labels (Prototype 1.5J, reworded 2.2) — never implies either
+  // candidate is "correct"/"recommended", since baseline is sometimes right when high-res
+  // is wrong and vice versa (see docs/design-notes.md, Prototype 1.5H/1.5I).
   const candidateLabels = getCandidateLabels(showHighRes)
+
+  const candidateCount = paddleStatus === 'success' && paddleCandidateText !== null ? (showHighRes ? 2 : 1) : 0
+  const panelSummary = adoptedLabel ? `${adoptedLabel}を使用中` : `読み取り候補（${candidateCount}件）`
+
+  const acceptPrimary = () => {
+    onAcceptPaddleCandidate()
+    setAdoptedLabel(candidateLabels.primary.label)
+    setPanelOpen(false)
+  }
+  const acceptSecondary = () => {
+    onAcceptHighResCandidate()
+    setAdoptedLabel(candidateLabels.secondary.label)
+    setPanelOpen(false)
+  }
 
   return (
     <div className="ocr-fallback-panel">
@@ -112,43 +150,51 @@ export function OcrFallbackPanel({
         {paddleButtonLabel}
       </button>
 
-      {paddleStatus === 'success' && paddleCandidateText !== null && (
-        <div className="ocr-candidate">
-          <p className="ocr-candidate-label">{candidateLabels.primary.label}:</p>
-          <p className="ocr-candidate-text">{diff ? renderDiffSegments(diff.aSegments) : paddleCandidateText}</p>
-          <button type="button" onClick={onAcceptPaddleCandidate}>
-            {candidateLabels.primary.buttonText}
-          </button>
-        </div>
+      {candidateCount > 0 && (
+        <details
+          className="ocr-candidate-panel"
+          open={panelOpen}
+          onToggle={(e) => setPanelOpen(e.currentTarget.open)}
+        >
+          <summary>{panelSummary}</summary>
+
+          <div className="ocr-candidate">
+            <p className="ocr-candidate-label">{candidateLabels.primary.label}:</p>
+            <p className="ocr-candidate-text">{diff ? renderDiffSegments(diff.aSegments) : paddleCandidateText}</p>
+            <button type="button" onClick={acceptPrimary}>
+              {candidateLabels.primary.buttonText}
+            </button>
+          </div>
+
+          {showHighRes && highResCandidateText !== null && (
+            <div className="ocr-candidate">
+              <p className="ocr-candidate-label">{candidateLabels.secondary.label}:</p>
+              <p className="ocr-candidate-text">{diff ? renderDiffSegments(diff.bSegments) : highResCandidateText}</p>
+              <button type="button" onClick={acceptSecondary}>
+                {candidateLabels.secondary.buttonText}
+              </button>
+            </div>
+          )}
+        </details>
       )}
 
       {paddleStatus === 'success' && highResStatus === 'loading' && (
-        <p className="ocr-highres-loading">高解像度で再確認しています…</p>
-      )}
-
-      {showHighRes && highResCandidateText !== null && (
-        <div className="ocr-candidate">
-          <p className="ocr-candidate-label">{candidateLabels.secondary.label}:</p>
-          <p className="ocr-candidate-text">{diff ? renderDiffSegments(diff.bSegments) : highResCandidateText}</p>
-          <button type="button" onClick={onAcceptHighResCandidate}>
-            {candidateLabels.secondary.buttonText}
-          </button>
-        </div>
+        <p className="ocr-highres-loading">さらに詳しく読み直しています…</p>
       )}
 
       {paddleStatus === 'unavailable' && (
         <div className="ocr-paddle-unavailable">
           <p className="analysis-warning" role="alert">
-            高精度OCRサービスを利用できません。
+            高精度な読み取りを利用できません。
             <br />
-            PaddleOCRサービスが起動していることを確認してください。
+            読み取りサービスが起動していることを確認してください。
           </p>
           <div className="ocr-unavailable-actions">
             <button type="button" onClick={onRecheckPaddle}>
               再確認
             </button>
             <button type="button" onClick={onUseBrowserOcr}>
-              ブラウザOCRを使う
+              別の方法で読み直す
             </button>
           </div>
         </div>
@@ -156,7 +202,7 @@ export function OcrFallbackPanel({
 
       {paddleStatus === 'alignmentFailed' && (
         <p className="analysis-warning" role="alert">
-          高精度OCR結果を選択範囲へ正しく対応付けられませんでした。
+          読み取り結果を選択範囲へ正しく対応付けられませんでした。
           <br />
           元の文字列は変更されていません。
         </p>
@@ -164,17 +210,17 @@ export function OcrFallbackPanel({
 
       {paddleStatus === 'error' && (
         <p className="analysis-warning" role="alert">
-          高精度OCRの実行中にエラーが発生しました。元の文字列は変更されていません。
+          読み取り中にエラーが発生しました。元の文字列は変更されていません。
         </p>
       )}
 
       {tesseractStatus !== 'idle' && (
         <div className="ocr-tesseract-fallback">
-          {tesseractStatus === 'loading' && <p>ブラウザOCRを実行しています…</p>}
+          {tesseractStatus === 'loading' && <p>読み取っています…</p>}
 
           {tesseractStatus === 'success' && tesseractCandidateText !== null && (
             <div className="ocr-candidate">
-              <p className="ocr-candidate-label">ブラウザOCR候補:</p>
+              <p className="ocr-candidate-label">候補:</p>
               <p className="ocr-candidate-text">{tesseractCandidateText}</p>
               <button type="button" onClick={onAcceptTesseractCandidate}>
                 この候補を使う
@@ -204,7 +250,7 @@ export function OcrFallbackPanel({
 
           {tesseractStatus === 'error' && (
             <p className="analysis-warning" role="alert">
-              ブラウザOCRで読み取れませんでした。元の文字列は変更されていません。
+              読み取れませんでした。元の文字列は変更されていません。
             </p>
           )}
         </div>

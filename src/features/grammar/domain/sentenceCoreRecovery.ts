@@ -6,25 +6,7 @@ import { forcedCoreSchema } from '../schemas/forcedCore.schema.ts'
 import { FORCED_CORE_JSON_SCHEMA } from '../schemas/forcedCore.jsonSchema.ts'
 import type { GrammarAnalysis, Span, SentenceCore } from '../schemas/grammarAnalysis.schema.ts'
 import { attachDerivedPattern } from './derivePattern.ts'
-
-/**
- * True when both spans have resolved (non-negative) offsets and their ranges intersect,
- * treating start/end as a half-open [start, end) interval — so `a.end === b.start`
- * (merely adjacent) is NOT an overlap. Unresolved spans (start/end -1, i.e. the app
- * could not locate the model's claimed text in the sentence at all) can't be compared
- * meaningfully, so they never count as overlapping — that failure mode is already
- * surfaced separately via `uncertainties`, not through this gate.
- */
-function spansOverlap(a: Span, b: Span): boolean {
-  if (a.start < 0 || a.end < 0 || b.start < 0 || b.end < 0) return false
-  return Math.max(a.start, b.start) < Math.min(a.end, b.end)
-}
-
-/** True when `inner` falls fully within `outer`'s [start, end] bounds (inclusive). */
-function isContainedWithin(outer: Span, inner: Span): boolean {
-  if (outer.start < 0 || inner.start < 0) return true
-  return outer.start <= inner.start && inner.end <= outer.end
-}
+import { classifySentenceCoreFailure } from './sentenceCoreFailureReason.ts'
 
 /**
  * A "core failure" is when the primary GrammarAnalysis request produced a sentenceCore
@@ -37,26 +19,21 @@ function isContainedWithin(outer: Span, inner: Span): boolean {
  * Missing object/complement alone is normal (not every sentence has them) and must NOT
  * trigger recovery.
  *
- * Conditions (OR'd together):
- * 1. subject is null.
- * 2. verb is null.
- * 3. the resolved subject and verb spans overlap (a real example: subject was returned
- *    as the whole clause "The sensor recorded data" while verb was correctly "recorded"
- *    — subjectHead/verb/object were all individually right, but subject swallowed the
- *    entire clause, which is self-contradictory within the same response).
- * 4. subjectHead is present but its resolved span is not contained within the resolved
- *    subject span.
+ * Prototype 2.3L: this boolean is now a thin wrapper over
+ * sentenceCoreFailureReason.ts's classifySentenceCoreFailure() — the finer-grained SSOT
+ * used by analyzeSentenceWithAutoRecovery.ts to route each failure reason to the repair
+ * strategy validated for that specific shape (SUBJECT_VERB_OVERLAP -> Focused
+ * Subject-Verb Repair; everything else -> existing forced-core recovery). Behavior here
+ * is byte-for-byte unchanged from the original inline implementation — see that file's
+ * own comment for why the classifier's failure surface is kept exactly boolean-equivalent
+ * (no silent widening from the UNGROUNDED_* diagnostic categories).
  */
 export function isSentenceCoreFailure(core: {
   subject: Span | null
   subjectHead: Span | null
   verb: Span | null
 }): boolean {
-  if (core.subject === null) return true
-  if (core.verb === null) return true
-  if (spansOverlap(core.subject, core.verb)) return true
-  if (core.subjectHead !== null && !isContainedWithin(core.subject, core.subjectHead)) return true
-  return false
+  return classifySentenceCoreFailure(core) !== 'NONE'
 }
 
 export interface RecoverSentenceCoreOptions {

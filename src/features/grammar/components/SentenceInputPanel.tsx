@@ -1,20 +1,37 @@
 import sampleDataset from '../../../../benchmark/sentences/development.json'
 
+export type AnalyzePhase = 'idle' | 'analyzing' | 'confirmingCore' | 'repairingSubjectVerb' | 'verifyingComplement'
+
 interface SentenceInputPanelProps {
   sentence: string
   onChange: (sentence: string) => void
   onAnalyze: () => void
-  analyzing: boolean
+  /** 'analyzing' covers the main GrammarAnalysis call; 'confirmingCore' covers the
+   * existing forced-core recovery sub-step (Prototype 2.2); 'repairingSubjectVerb' covers
+   * the Focused Subject-Verb Repair sub-step (Prototype 2.3L, only for a
+   * SUBJECT_VERB_OVERLAP core); 'verifyingComplement' covers the focused complement
+   * verifier sub-step (Prototype 2.3I) — each reached only for its specific failure
+   * shape, invisible to the user as a separate action. All four share the same
+   * user-facing label; the distinct phase values exist only for internal state clarity. */
+  phase: AnalyzePhase
   canAnalyze: boolean
 }
 
 const SAMPLE_SENTENCES = sampleDataset.sentences as Array<{ id: string; text: string }>
 
+const PHASE_LABEL: Record<AnalyzePhase, string> = {
+  idle: '骨格を見る',
+  analyzing: '解析中…',
+  confirmingCore: '文の骨格を確認中…',
+  repairingSubjectVerb: '文の骨格を確認中…',
+  verifyingComplement: '文の骨格を確認中…',
+}
+
 export function SentenceInputPanel({
   sentence,
   onChange,
   onAnalyze,
-  analyzing,
+  phase,
   canAnalyze,
 }: SentenceInputPanelProps) {
   return (
@@ -43,8 +60,8 @@ export function SentenceInputPanel({
             </option>
           ))}
         </select>
-        <button type="button" onClick={onAnalyze} disabled={!canAnalyze || analyzing}>
-          {analyzing ? '解析中…' : '骨格を見る'}
+        <button type="button" onClick={onAnalyze} disabled={!canAnalyze || phase !== 'idle'}>
+          {PHASE_LABEL[phase]}
         </button>
       </div>
     </div>

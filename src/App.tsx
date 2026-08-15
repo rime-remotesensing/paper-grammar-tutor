@@ -9,8 +9,9 @@ import {
   PADDLE_HIGH_RES_SCALE,
 } from './config/settings'
 import { AnalysisResultPanel } from './features/grammar/components/AnalysisResultPanel'
-import { SentenceInputPanel } from './features/grammar/components/SentenceInputPanel'
-import { analyzeSentence, type AnalyzeSentenceResult } from './features/grammar/domain/GrammarAnalyzer'
+import { SentenceInputPanel, type AnalyzePhase } from './features/grammar/components/SentenceInputPanel'
+import type { VerifiedSentenceAnalysis } from './features/grammar/domain/analyzeSentenceWithComplementVerification'
+import { analyzeSentenceWithComplementVerification } from './features/grammar/domain/analyzeSentenceWithComplementVerification'
 import { getModelSizeAdvisory } from './features/grammar/domain/modelSizeAdvisory'
 import { OcrFallbackPanel, type OcrStatus, type PaddleStatus, type HighResStatus } from './features/ocr/components/OcrFallbackPanel'
 import { matchWordsToRects, toPixelRect, joinOcrWords } from './features/ocr/domain/ocrGeometry'
@@ -42,9 +43,16 @@ export default function App() {
 
   const [sentence, setSentence] = useState('')
   const [selectionPageNumber, setSelectionPageNumber] = useState<number | null>(null)
-  const [analyzing, setAnalyzing] = useState(false)
-  const [result, setResult] = useState<AnalyzeSentenceResult | null>(null)
+  const [analyzePhase, setAnalyzePhase] = useState<AnalyzePhase>('idle')
+  const [result, setResult] = useState<VerifiedSentenceAnalysis | null>(null)
   const [analyzeError, setAnalyzeError] = useState<string | null>(null)
+  // Guards the "骨格を見る" flow (GrammarAnalysis + automatic forced-core recovery +
+  // focused complement verification, Prototype 2.2/2.3I) against a slow in-flight call
+  // landing after a newer one has started — same pattern as ocrRequestGuardRef below, but
+  // a separate guard since these are two independent async flows. The whole
+  // analyzeSentenceWithComplementVerification() call (including its internal focused
+  // verifier step) is one guarded flow, so no additional guard is needed for that step.
+  const analyzeRequestGuardRef = useRef(createRequestGuard())
 
   const pdfViewerRef = useRef<PdfViewerHandle>(null)
   // Bumped on every new PDF load; scopes the OCR page cache to "this document" (a
@@ -119,17 +127,27 @@ export default function App() {
 
   const handleAnalyze = async () => {
     if (!selectedModel || sentence.trim().length === 0) return
-    setAnalyzing(true)
+    const requestId = analyzeRequestGuardRef.current.next()
     setAnalyzeError(null)
     try {
-      const analyzeResult = await analyzeSentence({
+      const outcome = await analyzeSentenceWithComplementVerification({
         provider,
         model: selectedModel,
         sentence,
         temperature: DEFAULT_TEMPERATURE,
+        onPhaseChange: (phase) => {
+          if (analyzeRequestGuardRef.current.isCurrent(requestId)) setAnalyzePhase(phase)
+        },
       })
-      setResult(analyzeResult)
+      if (!analyzeRequestGuardRef.current.isCurrent(requestId)) return
+      if (outcome.success) {
+        setResult(outcome.result)
+      } else {
+        setResult(null)
+        setAnalyzeError(outcome.error)
+      }
     } catch (err) {
+      if (!analyzeRequestGuardRef.current.isCurrent(requestId)) return
       setResult(null)
       setAnalyzeError(
         err instanceof LLMProviderError
@@ -137,7 +155,7 @@ export default function App() {
           : '解析中に予期しないエラーが発生しました。Ollamaの接続状態を確認してください。',
       )
     } finally {
-      setAnalyzing(false)
+      if (analyzeRequestGuardRef.current.isCurrent(requestId)) setAnalyzePhase('idle')
     }
   }
 
@@ -158,9 +176,11 @@ export default function App() {
     setSelectionPageNumber(selection.pageNumber)
     setResult(null)
     setAnalyzeError(null)
+    setAnalyzePhase('idle')
     setSelectionMetadata(selection)
     clearOcrState()
     ocrRequestGuardRef.current.next()
+    analyzeRequestGuardRef.current.next()
   }
 
   // A different PDF may describe different content entirely; carrying over a selection,
@@ -170,10 +190,12 @@ export default function App() {
     setSelectionPageNumber(null)
     setResult(null)
     setAnalyzeError(null)
+    setAnalyzePhase('idle')
     setDocumentToken((t) => t + 1)
     setSelectionMetadata(null)
     clearOcrState()
     ocrRequestGuardRef.current.next()
+    analyzeRequestGuardRef.current.next()
     resetOcrCache()
     resetPaddleCache()
     resetHighResRenderCache()
@@ -397,7 +419,7 @@ export default function App() {
               sentence={sentence}
               onChange={setSentence}
               onAnalyze={() => void handleAnalyze()}
-              analyzing={analyzing}
+              phase={analyzePhase}
               canAnalyze={Boolean(selectedModel) && sentence.trim().length > 0}
             />
             <OcrFallbackPanel
