@@ -1,0 +1,12 @@
+# Prototype 2.4B-R6/R7/R8 -- exact versions verified in the R6/R7 spikes and this
+# integration. Do not bump to "latest" without re-running Failure A/B + Elsevier/MDPI
+# fixture validation (see README.md "Version policy").
+
+pymupdf==1.28.2
+
+fastapi==0.141.1
+uvicorn[standard]==0.52.3
+python-multipart==0.0.32
+
+pytest==8.3.5
+httpx==0.28.1

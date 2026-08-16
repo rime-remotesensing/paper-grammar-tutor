@@ -3,6 +3,7 @@ import {
   buildSelectionResult,
   computeNormalizedSelectionRects,
   isReadingOrderBefore,
+  pageNumbersInRange,
   resetForNewDocument,
 } from '../../src/features/pdf/domain/pdfViewerState'
 import { PDF_DEFAULT_SCALE } from '../../src/config/settings'
@@ -10,6 +11,25 @@ import { PDF_DEFAULT_SCALE } from '../../src/config/settings'
 describe('resetForNewDocument', () => {
   it('always returns page 1 at the default scale', () => {
     expect(resetForNewDocument()).toEqual({ pageNumber: 1, scale: PDF_DEFAULT_SCALE })
+  })
+})
+
+describe('pageNumbersInRange — Prototype 2.4B item 22/74', () => {
+  it('returns a single-element array for a same-page drag', () => {
+    expect(pageNumbersInRange(3, 3)).toEqual([3])
+  })
+
+  it('returns the ascending inclusive range for a forward drag', () => {
+    expect(pageNumbersInRange(2, 4)).toEqual([2, 3, 4])
+  })
+
+  it('normalizes a backward drag to the same ascending range', () => {
+    expect(pageNumbersInRange(4, 2)).toEqual([2, 3, 4])
+  })
+
+  it('handles adjacent pages', () => {
+    expect(pageNumbersInRange(5, 6)).toEqual([5, 6])
+    expect(pageNumbersInRange(6, 5)).toEqual([5, 6])
   })
 })
 

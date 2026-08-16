@@ -93,6 +93,29 @@ export const PADDLE_OCR_TIMEOUT_MS = 10_000
 export const PADDLE_HIGH_RES_SCALE = 6
 
 /**
+ * Local-only PyMuPDF layout service (Prototype 2.4B-R6/R7/R8) — the selection-
+ * reconstruction authority for cross-block/cross-page PDF text selection, replacing the
+ * retired PDF.js-only geometry/typography heuristic (see docs/design-notes.md, Prototype
+ * 2.4B-R1 through R8). `services/pymupdf_layout/` must be started manually in development
+ * (see its README); the app never spawns it. 127.0.0.1 only, matching the service's own
+ * bind address — never a configurable remote host. Port 8009, chosen to sit next to the
+ * PaddleOCR service's 8008 without colliding.
+ */
+export const PYMUPDF_LAYOUT_SERVICE_URL = 'http://127.0.0.1:8009'
+
+/** `/document/register` uploads the whole PDF once per document open; generous relative to
+ * `/health` since it involves a real file upload + PyMuPDF opening the document. */
+export const PYMUPDF_REGISTER_TIMEOUT_MS = 10_000
+
+/** `/health` should answer near-instantly if the service is up at all. */
+export const PYMUPDF_HEALTH_TIMEOUT_MS = 3_000
+
+/** `/layout/selection` measured 3-72ms across every fixture tested in Prototype 2.4B-R7 —
+ * this leaves generous headroom without leaving the user staring at a hung selection
+ * indefinitely if the service becomes unresponsive mid-session. */
+export const PYMUPDF_SELECTION_TIMEOUT_MS = 5_000
+
+/**
  * Padding added around each selected line's bbox before cropping for the high-res
  * second-pass, as a fraction of that line's own character height. Validated at 10% in
  * Prototype 1.5B/1.5C/1.5D and this remains the production value.

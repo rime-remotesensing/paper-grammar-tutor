@@ -148,3 +148,18 @@ export function buildSelectionResult(
   if (normalizedText.length === 0) return null
   return { rawText, normalizedText, pageNumber, ocrRects, scientificTokens }
 }
+
+/**
+ * Prototype 2.4B item 22/74: normalizes a drag's two touched page numbers (in whichever
+ * order the user physically dragged — forward top-to-bottom, or backward) into the
+ * ascending, inclusive list of page numbers the selection spans. A same-page drag returns a
+ * single-element array; a multi-page drag returns every page in between too (item 5: not
+ * limited to two pages).
+ */
+export function pageNumbersInRange(pageA: number, pageB: number): number[] {
+  const start = Math.min(pageA, pageB)
+  const end = Math.max(pageA, pageB)
+  const pages: number[] = []
+  for (let p = start; p <= end; p++) pages.push(p)
+  return pages
+}

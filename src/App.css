@@ -549,25 +549,47 @@
   text-align: center;
 }
 
+/* Prototype 2.4B item 55: the PDF pane owns its own scroll (overflow-y here), capped at
+   75vh -- this is what keeps the outer page (and therefore the side-pane's analysis UI)
+   from needing to scroll along with a long document, without any separate "sticky panel"
+   CSS of its own (item 53/54). */
 .pdf-canvas-area {
   overflow: auto;
   max-height: 75vh;
   border: 1px solid var(--border);
   border-radius: 4px;
   background: #575757;
-  display: flex;
-  justify-content: center;
   padding: 1rem;
+}
+
+/* Prototype 2.4B item 9: pages stack vertically with a small gap, centered horizontally --
+   replaces the single hardcoded page area from Prototype 1-2.4A. */
+.pdf-scroll-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
 }
 
 .pdf-page-container {
   position: relative;
   background: #fff;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+  flex-shrink: 0;
 }
 
 .pdf-page-container canvas {
   display: block;
+}
+
+/* Prototype 2.4B item 9: lightweight placeholder shown before a page's own canvas/text
+   layer has lazily rendered (item 13/68) -- sized by the wrapper's own inline width/height
+   (the measured or estimated page size), so the scrollbar/layout never jumps once the real
+   canvas replaces it. */
+.pdf-page-placeholder {
+  width: 100%;
+  height: 100%;
+  background: repeating-linear-gradient(135deg, #f0f0f0, #f0f0f0 10px, #e6e6e6 10px, #e6e6e6 20px);
 }
 
 /* Minimal reimplementation of pdf.js's own text-layer CSS (pdfjs-dist/web/pdf_viewer.css),

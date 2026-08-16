@@ -500,3 +500,110 @@ Nodeから直接実行されないため、この制約を受けず拡張子な�
   妥当という前提（仕様書8章）で、まずは調整UIなしで精度を評価する。
 - 解析履歴の保存: 仕様書は「解析履歴を外部送信しない」とは述べているが、
   ローカル保存自体もPrototype 0の完了条件（21章）に含まれていないため未実装。
+
+---
+
+# Prototype 2.4B — PDF selection reconstruction: PDF.js-only heuristics retired in favor of a local PyMuPDF service
+
+**Final architecture (Prototype 2.4 checkpoint):**
+
+```
+PDF.js (browser, src/features/pdf)
+  - rendering, continuous scroll, canvas, text layer
+  - native drag interaction
+  - acquires selection ENDPOINTS ONLY: page-local normalized (0-1, top-down) x/y
+    coordinates + exact boundary text (click-to-end-of-line / start-of-line-to-click)
+  - never used as a cross-block/cross-page membership or reconstruction authority
+
+PyMuPDF local service (services/pymupdf_layout, Python, local-only)
+  - native paragraph/block extraction via page.get_text("dict")
+  - resolves each endpoint to its own native block (coordinate hit-test, falling back to
+    exact boundary-text search — never fuzzy/semantic matching)
+  - reconstructs the text between two different blocks/pages when they differ
+
+Routing (every selection, no shortcuts):
+  same PyMuPDF block  -> use the browser's own native Range selection text, unchanged
+  different blocks    -> use the service's reconstructedText/fragments
+  service unreachable/errors -> explicit failure message to the user; NEVER a silent
+                                 fallback to the retired custom heuristic
+
+Grammar pipeline (src/features/grammar) and OCR (src/features/ocr) are unchanged by any
+of this — they only ever see the final selected/reconstructed string.
+```
+
+## Why the custom PDF.js-only heuristic was retired (R1–R5B)
+
+Six rounds (R1–R5B) of a hand-built, PDF.js-only geometry/typography heuristic — column-
+anchor detection, gutter-crossing checks, FULL_WIDTH/LEFT/RIGHT zone classification,
+font-height-based paragraph/block segmentation, drop-cap merging — were built to solve
+cross-column and cross-page selection reconstruction. Each round passed its own
+Node/pdfjs-dist simulation cleanly, then failed live-browser acceptance on a **new**
+real paper, each time via a genuinely new failure mode not covered by the existing rules
+(narrow inter-column gutters, decorative drop-cap openers, a caption/footnote sharing its
+column's own x-range, a click landing in the gap between two blocks). Continuing to add
+publisher-specific thresholds was not converging.
+
+## Why PyMuPDF (R6/R7)
+
+R6 spike-tested PyMuPDF's own native `page.get_text("dict")` block segmentation against
+the exact real PDFs that had broken the custom heuristic. It separated body/footnote/
+caption blocks correctly with **zero** custom geometry logic. R7 built an end-to-end
+spike (repo-external FastAPI service + a Node client using real PDF.js-captured
+coordinates) and confirmed exact, zero-pollution reconstruction on all failing fixtures,
+after fixing one real bug: a block hit-test's nearest-block fallback must use nearest
+**edge** distance (not center distance), preferring x-overlapping blocks — a large
+block's center can be closer than a small, correctly-adjacent block's edge. PDF.js's
+`page.view` and PyMuPDF's `page.rect` were confirmed numerically identical for the same
+page (both top-down, 0-1 normalizable, no unit conversion needed).
+
+R8 integrated this into production (`services/pymupdf_layout/main.py`), carrying the
+edge-distance fix forward verbatim, adding document registration (a browser `File`/`Blob`
+never exposes a filesystem path, so upload-by-bytes + an opaque `documentId` is the only
+viable API — no raw-path endpoint exists), and adding middle-page handling for 3+ page
+selections (a page fully spanned by a selection contributes every block within 12% of the
+page's own median font size, excluding header/footer/footnote-sized blocks).
+
+## Staged retirement
+
+`src/features/pdf/domain/pageLayoutClassifier.ts` (the custom block/zone model) was kept
+in the repository, unused by production code, through R8's live-acceptance step —
+deliberately reversible in case live acceptance failed again. Live acceptance passed
+(Failure A same-page cross-column, Failure B cross-page, the Elsevier regression fixture,
+continuous scroll — all confirmed PASS in a real browser) at the Prototype 2.4 checkpoint,
+and a usage search confirmed zero production importers, so the module and its two
+dedicated test files (`tests/pdf/pageLayoutClassifier.test.ts`,
+`tests/pdf/multiPageReconstruction.test.ts`) were deleted at that point. `pageTextClassifier.ts`
+(repetition-based header/footer/page-number filtering) and `crossPageSelection.ts`/
+`fragmentJoin.ts` (fragment joining) are a separate, orthogonal concern — not part of this
+retirement, still actively used downstream of whatever text PyMuPDF supplies.
+
+## Known limitation: display equations
+
+Selections that land near a display equation can misresolve — e.g. selecting text ending
+"...can then be used as a moderator..." near an equation numbered "(5)" can pick up the
+equation-number text object instead of (or appended to) the intended body text. Equation
+numbers, equation bodies, and surrounding prose are frequently separate text objects with
+layout that doesn't cleanly match ordinary paragraph-block assumptions. This is an
+explicit, accepted Prototype 2.4 limitation, not fixed in this phase — normal academic
+prose selection (the checkpoint's actual acceptance scope) is unaffected. A future phase
+could treat a display equation as a logical placeholder (e.g. `[Equation (5)]`) and stitch
+the surrounding prose around it, but no equation-specific heuristic was added now to avoid
+reopening the same "keep layering special cases" trap R1–R5B fell into.
+
+## A real incident worth remembering: stale process masking a fix (R7)
+
+After editing the service and attempting to restart it, `/health` kept returning success
+from what turned out to be the *old*, unfixed process — a `pkill` invoked from git-bash
+had failed to actually terminate the Windows-spawned Python process, and the new process
+had silently failed to bind (port already held). This is why `/health` returns a
+`serviceVersion` string: bump it whenever `main.py`'s selection-reconstruction logic
+changes, and check it after every restart during development.
+
+## License
+
+PyMuPDF is AGPL-3.0, with a commercial license available from Artifex. Local/personal
+development and use is unaffected. Distributing this app to others (public release,
+hosted service, sale) would require either an AGPL-compatible release or a commercial
+license — a decision deferred to when that's actually being considered, not resolved
+here. No AGPL notice is shown in the app's own UI; see `services/pymupdf_layout/README.md`
+for the full note.

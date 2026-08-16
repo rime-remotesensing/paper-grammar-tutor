@@ -6,6 +6,10 @@ interface SentenceInputPanelProps {
   sentence: string
   onChange: (sentence: string) => void
   onAnalyze: () => void
+  /** Prototype 2.4B item 4/44: explicit escape hatch for a failed/unwanted PDF selection —
+   * empties the sentence and any selection/OCR provenance tied to it. Never disabled (even
+   * an already-empty sentence is harmless to "clear" again). */
+  onClear: () => void
   /** 'analyzing' covers the main GrammarAnalysis call; 'confirmingCore' covers the
    * existing forced-core recovery sub-step (Prototype 2.2); 'repairingSubjectVerb' covers
    * the Focused Subject-Verb Repair sub-step (Prototype 2.3L, only for a
@@ -31,6 +35,7 @@ export function SentenceInputPanel({
   sentence,
   onChange,
   onAnalyze,
+  onClear,
   phase,
   canAnalyze,
 }: SentenceInputPanelProps) {
@@ -62,6 +67,9 @@ export function SentenceInputPanel({
         </select>
         <button type="button" onClick={onAnalyze} disabled={!canAnalyze || phase !== 'idle'}>
           {PHASE_LABEL[phase]}
+        </button>
+        <button type="button" onClick={onClear} disabled={phase !== 'idle'}>
+          クリア
         </button>
       </div>
     </div>

@@ -1,6 +1,6 @@
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react'
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import * as pdfjsLib from 'pdfjs-dist'
-import type { PDFDocumentProxy, RenderTask } from 'pdfjs-dist'
+import type { PDFDocumentProxy } from 'pdfjs-dist'
 import {
   PDF_DEFAULT_SCALE,
   PDF_MAX_SCALE,
@@ -11,7 +11,6 @@ import {
 } from '../../../config/settings'
 import { hasExtractableText } from '../domain/detectTextLayer'
 import {
-  buildSelectionResult,
   computeNormalizedSelectionRects,
   findDigitMiddotMatches,
   isReadingOrderBefore,
@@ -20,6 +19,28 @@ import {
   type PdfSelectionResult,
   type PointerPoint,
 } from '../domain/pdfViewerState'
+import { normalizePdfSelectionText } from '../utils/pdfTextNormalize'
+import { extractPageLines, classifyPageLines, type PageLine, type RawTextItem } from '../domain/pageTextClassifier'
+import { buildFilteredFragmentText, buildNuisancePredicate, combineFragments, type SelectionFragment } from '../domain/crossPageSelection'
+import {
+  closeLayoutDocument,
+  registerDocumentWithLayoutService,
+  resolveSelectionWithLayoutService,
+  type SelectionEndpointInput,
+} from '../domain/pymupdfLayoutService'
+import { createRequestGuard } from '../../ocr/domain/requestGuard'
+import { PdfPageView } from './PdfPageView'
+
+/**
+ * Prototype 2.4B-R2 item 3-4 (kept through R5B item 29): dev-only (never present in a
+ * production build -- `import.meta.env.DEV` is compiled away by Vite) diagnostic trace for
+ * the selection-reconstruction pipeline. Exists because R1's fix passed every
+ * Node/pdfjs-dist simulation this app has no browser to fully replicate, but FAILED
+ * live-browser acceptance -- meaning something about the real browser pipeline diverges
+ * from simulation in ways static analysis alone couldn't pin down. Never changes
+ * reconstruction behavior; only reports what the existing code actually decided and why.
+ */
+const TRACE_ENABLED = import.meta.env.DEV
 
 // Vite resolves this to a hashed asset URL; pdf.js runs its parser/renderer in this
 // worker rather than the main thread. Must be set once, before the first getDocument().
@@ -28,13 +49,33 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
   import.meta.url,
 ).href
 
+function isTextNodeInsideAnyTextLayer(node: Node | null): node is Text {
+  if (node === null || node.nodeType !== Node.TEXT_NODE) return false
+  const el = node.parentElement
+  return el !== null && el.closest('.textLayer') !== null
+}
+
+/** Walks up from `node` to the nearest `[data-page-number]` ancestor (each PdfPageView's own
+ * wrapper) and returns its page number, or null if `node` isn't inside any rendered page. */
+function pageNumberOfNode(node: Node): number | null {
+  const el = node instanceof Element ? node : node.parentElement
+  const container = el?.closest('[data-page-number]')
+  const attr = container?.getAttribute('data-page-number')
+  return attr ? Number(attr) : null
+}
+
+function pageContainerOf(pageNumber: number, root: HTMLElement): HTMLElement | null {
+  return root.querySelector(`[data-page-number="${pageNumber}"]`)
+}
+
+function textLayerOf(pageContainer: Element): HTMLElement | null {
+  return pageContainer.querySelector('.textLayer')
+}
+
 /**
- * Walks every text node the selection `range` touches within `layer`, and for each
- * `digit·digit` substring found (Rule A's trigger — see findDigitMiddotMatches), builds a
- * DOM sub-range covering *only that token* (never the containing span's whole text) and
- * captures its own tight, canvas-normalized rect. This is what lets Rule A later
- * cross-validate a single embedded decimal token against the OCR word at that exact
- * position, instead of the whole sentence.
+ * Prototype 2.4A's `extractScientificTokens`, generalized to take an explicit `range`
+ * parameter (unchanged logic otherwise) so it can be scoped to a single page's sub-range of
+ * a cross-page/cross-column selection, not just "the one and only page's whole selection".
  */
 function extractScientificTokens(range: Range, layer: HTMLElement, canvasRect: DOMRect): EmbeddedScientificToken[] {
   const tokens: EmbeddedScientificToken[] = []
@@ -59,10 +100,6 @@ function extractScientificTokens(range: Range, layer: HTMLElement, canvasRect: D
   return tokens
 }
 
-function isTextNodeInsideLayer(node: Node | null, layer: HTMLElement | null): node is Text {
-  return node !== null && node.nodeType === Node.TEXT_NODE && layer !== null && layer.contains(node)
-}
-
 function resolveCaretAtExactPoint(point: PointerPoint, layer: HTMLElement | null): { node: Text; offset: number } | null {
   let node: Node | null = null
   let offset = 0
@@ -79,22 +116,16 @@ function resolveCaretAtExactPoint(point: PointerPoint, layer: HTMLElement | null
       offset = range.startOffset
     }
   }
-  if (!isTextNodeInsideLayer(node, layer)) return null
+  if (!isTextNodeInsideAnyTextLayer(node) || (layer && !layer.contains(node))) return null
   return { node, offset }
 }
 
 /**
- * Resolves the precise text-node caret at a viewport point, the same way the browser's
- * own drag-selection hit-testing does internally — used to rebuild a selection from
- * scratch when the native Selection object has landed outside any text node (see
- * handleMouseUp in PdfViewer for why that happens).
- *
- * If there's no text exactly at the point, probes outward in a small cross pattern (both
- * axes, both directions) for the nearest actual text instead of giving up immediately.
- * Horizontal nudging alone doesn't help when the point is in the thin *vertical* gap
- * between two lines' boxes (the whole row is dead, not just this x), so both axes are
- * tried at each radius; this also covers a mouseup released just past the last character
- * of a line, a very ordinary way to end a drag.
+ * Resolves the precise text-node caret at a viewport point (Prototype 1.1) — used to
+ * rebuild a selection from scratch when the native Selection object has landed outside any
+ * text node. Unchanged from Prototype 2.4A except `layer` narrows the search to one
+ * specific page's text layer (determined by the caller from the point's own page first),
+ * rather than assuming a single always-mounted layer.
  */
 function resolveCaretInLayer(point: PointerPoint, layer: HTMLElement | null): { node: Text; offset: number } | null {
   const direct = resolveCaretAtExactPoint(point, layer)
@@ -116,49 +147,174 @@ function resolveCaretInLayer(point: PointerPoint, layer: HTMLElement | null): { 
   return null
 }
 
+/** Prototype 2.4B-R1 item 12/13 (extended R8 item 12/13): converts a selection boundary
+ * (text node + offset) to its normalized (0-1) page-local point, in the same convention
+ * `services/pymupdf_layout` uses for its own bbox normalization (top-down Y, left-origin X)
+ * -- verified numerically identical in Prototype 2.4B-R7. A zero-width Range's
+ * `getClientRects()` gives a caret-height rect at the exact boundary in every browser this
+ * app targets; the parent element's own rect is used as a fallback only if that ever comes
+ * back empty. */
+function normalizedPointOfBoundary(node: Node, offset: number, canvasRect: DOMRect): { x: number; y: number } {
+  const pointRange = document.createRange()
+  pointRange.setStart(node, offset)
+  pointRange.setEnd(node, offset)
+  let rect: DOMRect | undefined = pointRange.getClientRects()[0]
+  if (!rect) {
+    const el = node instanceof Element ? node : node.parentElement
+    rect = el?.getBoundingClientRect()
+  }
+  if (!rect || canvasRect.height === 0 || canvasRect.width === 0) return { x: 0, y: 0 }
+  const centerY = (rect.top + rect.bottom) / 2
+  return {
+    x: (rect.left - canvasRect.left) / canvasRect.width,
+    y: (centerY - canvasRect.top) / canvasRect.height,
+  }
+}
+
+/**
+ * Prototype 2.4B-R1 item 22: "最初と最後のline/spanだけはnative selection offsetを使用" — the
+ * ONLY place this file still trusts native DOM Range membership is for extracting the exact
+ * partial text of the single line the user's click point landed on. pdf.js's TextLayer
+ * inserts a real `<br>` element at every `hasEOL` boundary (confirmed against the actual
+ * pdfjs-dist build), so "the rest of this one line" can be found by walking the text layer's
+ * flat node sequence from the click point until the nearest `<br>` in the requested
+ * direction — a small, local DOM operation, not a page-wide sweep. Every other included
+ * line in a multi-page/multi-column selection comes from the geometric line model's own
+ * text instead (never from this function or from DOM traversal).
+ */
+function extractWithinLine(layer: HTMLElement, node: Text, offset: number, direction: 'forward' | 'backward'): string {
+  const walker = document.createTreeWalker(layer, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT, {
+    acceptNode(n) {
+      if (n.nodeType === Node.TEXT_NODE) return NodeFilter.FILTER_ACCEPT
+      if (n.nodeType === Node.ELEMENT_NODE && (n as Element).tagName === 'BR') return NodeFilter.FILTER_ACCEPT
+      return NodeFilter.FILTER_SKIP
+    },
+  })
+  const flatNodes: Node[] = []
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) flatNodes.push(n)
+  const nodeIndex = flatNodes.indexOf(node)
+  if (nodeIndex === -1) return node.textContent ?? ''
+
+  if (direction === 'forward') {
+    let text = (node.textContent ?? '').slice(offset)
+    for (let i = nodeIndex + 1; i < flatNodes.length; i++) {
+      const cur = flatNodes[i]
+      if (cur.nodeType === Node.ELEMENT_NODE) break
+      text += cur.textContent ?? ''
+    }
+    return text
+  }
+  const prefixParts: string[] = []
+  for (let i = nodeIndex - 1; i >= 0; i--) {
+    const cur = flatNodes[i]
+    if (cur.nodeType === Node.ELEMENT_NODE) break
+    prefixParts.unshift(cur.textContent ?? '')
+  }
+  return prefixParts.join('') + (node.textContent ?? '').slice(0, offset)
+}
+
 type LoadStatus = 'idle' | 'loading' | 'ready' | 'error'
 
 interface PdfViewerProps {
-  onSelection: (selection: PdfSelectionResult) => void
+  /** Prototype 2.4B: always one fragment per touched page (length 1 for an ordinary
+   * same-page — including cross-column, item 24-26 — selection; length > 1 only when the
+   * drag genuinely crosses a page boundary). The host app combines them (crossPageSelection.ts,
+   * unchanged from 2.4A) — this file never joins text itself. */
+  onSelection: (fragments: SelectionFragment[]) => void
   /** Fired once, synchronously, whenever the user picks a (new) PDF file — before it's read or parsed — so the host app can clear any selection/analysis state tied to the previous document. */
   onDocumentChange: () => void
+  /** Prototype 2.4B-R8 item 37: fired when a cross-block/cross-page selection could not be
+   * resolved (the local PyMuPDF layout service is unreachable, or returned an error) --
+   * never a silent fallback to the retired custom heuristic (item 6/38). Same-block
+   * selections are unaffected and never trigger this, since they don't depend on the
+   * service at all. */
+  onSelectionFailed?: (message: string) => void
+  /** Fired whenever the page nearest the viewport center changes (IntersectionObserver-driven, item 16), for the page indicator. */
+  /** Optional: most consumers don't need this now that the page indicator is
+   * self-contained in this component's own toolbar (item 16/17). */
+  onPageChange?: (pageNumber: number, numPages: number) => void
 }
 
-/** Imperative escape hatch for the OCR fallback: it needs to render a specific page at
- * its own (independent) scale, but `doc`/`getPage` are intentionally kept as PdfViewer's
- * own internal state rather than lifted to props, since nothing else in the app needs
- * them. A ref avoids threading the whole PDFDocumentProxy up through App.tsx. */
 export interface PdfViewerHandle {
   /** Renders `pageNumber` to a detached canvas at `scale`, independent of the viewer's
    * current on-screen zoom. Throws if no document is loaded or the page fails to render;
    * callers are expected to catch (see the OCR fallback's error handling). */
   renderPageForOcr(pageNumber: number, scale: number): Promise<HTMLCanvasElement>
+  /** Synchronous, authoritative current-page (viewport-center) / total pages. */
+  getPageInfo(): { pageNumber: number; numPages: number }
+  /** Returns `pageNumber`'s text lines (cached per page for the lifetime of the current
+   * document — item 21/55/66: never scans the whole document eagerly, only the specific
+   * pages the marginal-text classifier actually asks for). */
+  getPageLines(pageNumber: number): Promise<PageLine[]>
 }
 
+const NEIGHBOR_RANGE = 3
+
 export const PdfViewer = forwardRef<PdfViewerHandle, PdfViewerProps>(function PdfViewer(
-  { onSelection, onDocumentChange },
+  { onSelection, onDocumentChange, onSelectionFailed, onPageChange },
   ref,
 ) {
   const [doc, setDoc] = useState<PDFDocumentProxy | null>(null)
   const [numPages, setNumPages] = useState(0)
-  const [pageNumber, setPageNumber] = useState(1)
   const [scale, setScale] = useState(PDF_DEFAULT_SCALE)
   const [status, setStatus] = useState<LoadStatus>('idle')
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const [currentPageNumber, setCurrentPageNumber] = useState(1)
+  // First page's own measured size, reused as every other page's placeholder estimate
+  // (item 9's continuous layout needs SOME height before a page has been lazily rendered;
+  // academic PDFs are overwhelmingly one uniform page size, so this avoids fetching every
+  // page's real geometry up front just for placeholder sizing -- item 68).
+  const [estimatedPageSize, setEstimatedPageSize] = useState({ width: 600, height: 800 })
 
-  const canvasRef = useRef<HTMLCanvasElement>(null)
-  const textLayerRef = useRef<HTMLDivElement>(null)
-  const pageContainerRef = useRef<HTMLDivElement>(null)
-  // Viewport point where the current drag started, used to recover from the text-layer
-  // selection bug: see handleMouseUp for why.
+  const pageLinesCacheRef = useRef<Map<number, Promise<PageLine[]>>>(new Map())
+  const scrollContainerRef = useRef<HTMLDivElement>(null)
   const dragStartPointRef = useRef<PointerPoint | null>(null)
-  // Mirrors `doc` for imperative access from renderPageForOcr — a ref (not the `doc`
-  // state variable) so the exposed handle always sees the latest document even though
-  // useImperativeHandle's factory only re-runs when its dependency array changes.
   const docRef = useRef<PDFDocumentProxy | null>(null)
   useEffect(() => {
     docRef.current = doc
   }, [doc])
+
+  // Prototype 2.4B-R8: the PyMuPDF layout service's own document identity for the
+  // currently-loaded PDF (item 14/16) -- a Promise, not a plain value, so `handleMouseUp`
+  // can safely await it even if a selection happens before registration has resolved.
+  // `null` (after resolving) means registration failed; every cross-block selection on
+  // this document will explicitly fail (item 6/38: never a silent fallback) until a new
+  // document is opened. Cleared and re-registered on every file change (item 55); the
+  // previous document is explicitly closed server-side, never left registered forever.
+  const documentIdPromiseRef = useRef<Promise<{ documentId: string; numPages: number } | null> | null>(null)
+  const currentDocumentIdRef = useRef<string | null>(null)
+  const layoutRequestGuardRef = useRef(createRequestGuard())
+
+  useEffect(() => {
+    // Item 55: release the layout service's document handle on unmount, same as an
+    // explicit file change.
+    return () => {
+      const id = currentDocumentIdRef.current
+      if (id) void closeLayoutDocument(id)
+    }
+  }, [])
+
+  const getPageLinesImpl = useCallback((targetPageNumber: number): Promise<PageLine[]> => {
+    const cached = pageLinesCacheRef.current.get(targetPageNumber)
+    if (cached) return cached
+    const currentDoc = docRef.current
+    if (!currentDoc) return Promise.resolve([])
+    const promise = (async () => {
+      const page = await currentDoc.getPage(targetPageNumber)
+      const textContent = await page.getTextContent()
+      const [x0, y0, x1, y1] = page.view
+      const pageHeight = y1 - y0
+      const pageWidth = x1 - x0
+      // pdf.js's TextItem has far more fields than RawTextItem needs; the runtime check
+      // narrows out TextMarkedContent (which never has `str`), and the remainder is an
+      // accurate, deliberate cast -- every field RawTextItem reads genuinely exists on the
+      // real TextItem objects that survive this filter (see PdfViewer's prior version).
+      const items = textContent.items.filter((it) => 'str' in it).map((it) => it as unknown as RawTextItem)
+      return extractPageLines(items, pageHeight, pageWidth)
+    })()
+    pageLinesCacheRef.current.set(targetPageNumber, promise)
+    return promise
+  }, [])
 
   useImperativeHandle(
     ref,
@@ -176,105 +332,124 @@ export const PdfViewer = forwardRef<PdfViewerHandle, PdfViewerProps>(function Pd
         await page.render({ canvas, canvasContext: ctx, viewport }).promise
         return canvas
       },
+      getPageInfo() {
+        return { pageNumber: currentPageNumber, numPages }
+      },
+      getPageLines: getPageLinesImpl,
     }),
-    [],
+    [currentPageNumber, numPages, getPageLinesImpl],
   )
 
-  const handleFileChange = useCallback(async (file: File) => {
-    onDocumentChange()
-    setDoc(null)
-    setNumPages(0)
-    const initial = resetForNewDocument()
-    setPageNumber(initial.pageNumber)
-    setScale(initial.scale)
-    setErrorMessage(null)
-    setStatus('loading')
+  const handleFileChange = useCallback(
+    async (file: File) => {
+      onDocumentChange()
+      setDoc(null)
+      setNumPages(0)
+      const initial = resetForNewDocument()
+      setScale(initial.scale)
+      setCurrentPageNumber(1)
+      setErrorMessage(null)
+      setStatus('loading')
+      pageLinesCacheRef.current = new Map()
 
-    try {
-      const data = await file.arrayBuffer()
-      const pdf = await pdfjsLib.getDocument({ data, wasmUrl: PDF_WASM_URL }).promise
+      // Item 55: release the previous document's layout-service handle before registering
+      // the new one -- never left registered indefinitely across a file change.
+      const previousDocumentId = currentDocumentIdRef.current
+      currentDocumentIdRef.current = null
+      if (previousDocumentId) void closeLayoutDocument(previousDocumentId)
 
-      const sampleCount = Math.min(PDF_SCANNED_CHECK_SAMPLE_PAGES, pdf.numPages)
-      const sampleLengths: number[] = []
-      for (let i = 1; i <= sampleCount; i++) {
-        const page = await pdf.getPage(i)
-        const textContent = await page.getTextContent()
-        const length = textContent.items.reduce(
-          (sum, item) => sum + ('str' in item ? item.str.length : 0),
-          0,
-        )
-        sampleLengths.push(length)
-      }
+      try {
+        const data = await file.arrayBuffer()
 
-      if (!hasExtractableText(sampleLengths)) {
+        // Item 14/16: register the SAME bytes with the local PyMuPDF layout service,
+        // in parallel with pdf.js's own load below -- File.arrayBuffer() re-reads the
+        // source Blob on each call rather than consuming/transferring it, so this is safe
+        // to call a second time independently of the `data` passed to pdf.js. Selections
+        // made before this resolves simply await it (see handleMouseUp); the PDF becomes
+        // visible/selectable well before registration typically finishes.
+        documentIdPromiseRef.current = (async () => {
+          const registerBytes = await file.arrayBuffer()
+          const result = await registerDocumentWithLayoutService(registerBytes)
+          currentDocumentIdRef.current = result?.documentId ?? null
+          return result
+        })()
+
+        const pdf = await pdfjsLib.getDocument({ data, wasmUrl: PDF_WASM_URL }).promise
+
+        const sampleCount = Math.min(PDF_SCANNED_CHECK_SAMPLE_PAGES, pdf.numPages)
+        const sampleLengths: number[] = []
+        for (let i = 1; i <= sampleCount; i++) {
+          const page = await pdf.getPage(i)
+          const textContent = await page.getTextContent()
+          const length = textContent.items.reduce((sum, item) => sum + ('str' in item ? item.str.length : 0), 0)
+          sampleLengths.push(length)
+        }
+
+        if (!hasExtractableText(sampleLengths)) {
+          setStatus('error')
+          setErrorMessage('このPDFからテキストを取得できません。Prototype 1ではスキャンPDF/OCRには対応していません。')
+          return
+        }
+
+        const firstPage = await pdf.getPage(1)
+        const firstViewport = firstPage.getViewport({ scale: initial.scale })
+        setEstimatedPageSize({ width: firstViewport.width, height: firstViewport.height })
+
+        setDoc(pdf)
+        setNumPages(pdf.numPages)
+        setStatus('ready')
+      } catch (err) {
         setStatus('error')
-        setErrorMessage(
-          'このPDFからテキストを取得できません。Prototype 1ではスキャンPDF/OCRには対応していません。',
-        )
-        return
+        setErrorMessage(err instanceof Error ? `PDFを開けませんでした: ${err.message}` : 'PDFを開けませんでした。')
       }
+    },
+    [onDocumentChange],
+  )
 
-      setDoc(pdf)
-      setNumPages(pdf.numPages)
-      setStatus('ready')
-    } catch (err) {
-      setStatus('error')
-      setErrorMessage(err instanceof Error ? `PDFを開けませんでした: ${err.message}` : 'PDFを開けませんでした。')
-    }
-  }, [onDocumentChange])
+  // Prototype 2.4B item 16: tracks whichever rendered page is nearest the viewport center
+  // as "current", for the page indicator -- driven by the same scroll container every page
+  // is mounted in, independent of which pages have actually rendered yet.
+  useEffect(() => {
+    const container = scrollContainerRef.current
+    if (!container || status !== 'ready') return
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const visible = entries.filter((e) => e.isIntersecting)
+        if (visible.length === 0) return
+        // Nearest to vertical center of the viewport wins.
+        const containerRect = container.getBoundingClientRect()
+        const centerY = containerRect.top + containerRect.height / 2
+        let best: { pageNumber: number; distance: number } | null = null
+        for (const entry of visible) {
+          const attr = entry.target.getAttribute('data-page-number')
+          if (!attr) continue
+          const rect = entry.boundingClientRect
+          const distance = Math.abs((rect.top + rect.bottom) / 2 - centerY)
+          if (best === null || distance < best.distance) best = { pageNumber: Number(attr), distance }
+        }
+        if (best) setCurrentPageNumber(best.pageNumber)
+      },
+      { root: container, threshold: [0, 0.25, 0.5, 0.75, 1] },
+    )
+    for (const el of container.querySelectorAll('[data-page-number]')) observer.observe(el)
+    return () => observer.disconnect()
+  }, [status, numPages])
 
   useEffect(() => {
-    if (!doc) return
-    let cancelled = false
-    let renderTask: RenderTask | null = null
+    if (doc) onPageChange?.(currentPageNumber, numPages)
+  }, [doc, currentPageNumber, numPages, onPageChange])
 
-    async function renderPage() {
-      const page = await doc!.getPage(pageNumber)
-      if (cancelled) return
-      const viewport = page.getViewport({ scale })
+  const scrollToPage = useCallback((pageNumber: number) => {
+    const container = scrollContainerRef.current
+    if (!container) return
+    const target = pageContainerOf(pageNumber, container)
+    target?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }, [])
 
-      const canvas = canvasRef.current
-      const textLayerDiv = textLayerRef.current
-      const pageContainer = pageContainerRef.current
-      if (!canvas || !textLayerDiv || !pageContainer) return
-
-      const outputScale = window.devicePixelRatio || 1
-      canvas.width = Math.floor(viewport.width * outputScale)
-      canvas.height = Math.floor(viewport.height * outputScale)
-      canvas.style.width = `${viewport.width}px`
-      canvas.style.height = `${viewport.height}px`
-      pageContainer.style.width = `${viewport.width}px`
-      pageContainer.style.height = `${viewport.height}px`
-      pageContainer.style.setProperty('--scale-factor', String(scale))
-
-      const ctx = canvas.getContext('2d')
-      if (!ctx) return
-      const transform = outputScale !== 1 ? [outputScale, 0, 0, outputScale, 0, 0] : undefined
-
-      renderTask = page.render({ canvas, canvasContext: ctx, viewport, transform })
-      await renderTask.promise
-      if (cancelled) return
-
-      textLayerDiv.replaceChildren()
-      const textContent = await page.getTextContent()
-      if (cancelled) return
-      const textLayer = new pdfjsLib.TextLayer({
-        textContentSource: textContent,
-        container: textLayerDiv,
-        viewport,
-      })
-      await textLayer.render()
-    }
-
-    renderPage().catch((err: unknown) => {
-      if (!cancelled) console.error('PDF page render failed', err)
-    })
-
-    return () => {
-      cancelled = true
-      renderTask?.cancel()
-    }
-  }, [doc, pageNumber, scale])
+  const handleMeasured = useCallback((_pageNumber: number, _width: number, _height: number) => {
+    // Reserved for a future per-page geometry cache; PdfPageView already keeps its own
+    // measured size for its own placeholder, so there is nothing else to do here today.
+  }, [])
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     dragStartPointRef.current = { x: e.clientX, y: e.clientY }
@@ -284,61 +459,196 @@ export const PdfViewer = forwardRef<PdfViewerHandle, PdfViewerProps>(function Pd
     (e: React.MouseEvent) => {
       const selection = window.getSelection()
       if (!selection || selection.isCollapsed) return
+      const scrollContainer = scrollContainerRef.current
+      if (!scrollContainer) return
 
-      const layer = textLayerRef.current
       const selectionLooksValid =
-        isTextNodeInsideLayer(selection.anchorNode, layer) && isTextNodeInsideLayer(selection.focusNode, layer)
+        isTextNodeInsideAnyTextLayer(selection.anchorNode) && isTextNodeInsideAnyTextLayer(selection.focusNode)
 
-      if (!selectionLooksValid) {
-        // pdf.js positions each text line as its own absolutely-positioned <span>, with a
-        // gap between one line's box and the next. When a drag passes through that gap
-        // (or lands right at a span's edge), the browser's native hit-testing can resolve
-        // the selection focus to a position in an ancestor element instead of a text
-        // node, and the resulting selection can jump to an unrelated part of the page
-        // (e.g. back to the page header) instead of extending normally. When that
-        // happens, throw away the native selection and rebuild the range from the actual
-        // pointer positions (recorded on mousedown, and the current mouseup event).
+      let range: Range
+      if (selectionLooksValid) {
+        range = selection.getRangeAt(0)
+      } else {
+        // Prototype 1.1/2.4A: pdf.js's absolutely-positioned line spans can make native
+        // hit-testing land outside any text node when a drag passes through the gap
+        // between two lines. Rebuild the range from the actual pointer positions instead.
         const start = dragStartPointRef.current
         if (!start) return
         const end: PointerPoint = { x: e.clientX, y: e.clientY }
-        const startCaret = resolveCaretInLayer(start, layer)
-        const endCaret = resolveCaretInLayer(end, layer)
+        const startPageEl = document.elementFromPoint(start.x, start.y)?.closest('[data-page-number]') ?? null
+        const endPageEl = document.elementFromPoint(end.x, end.y)?.closest('[data-page-number]') ?? null
+        const startCaret = resolveCaretInLayer(start, startPageEl ? textLayerOf(startPageEl) : null)
+        const endCaret = resolveCaretInLayer(end, endPageEl ? textLayerOf(endPageEl) : null)
         if (!startCaret || !endCaret) return
 
-        const [from, to] = isReadingOrderBefore(start, end) ? [startCaret, endCaret] : [endCaret, startCaret]
-        const range = document.createRange()
-        range.setStart(from.node, from.offset)
-        range.setEnd(to.node, to.offset)
-        if (range.collapsed) return
+        const startCaretPage = pageNumberOfNode(startCaret.node)
+        const endCaretPage = pageNumberOfNode(endCaret.node)
+        // Cross-page ordering uses page number (scroll-position independent); same-page
+        // ordering falls back to the original viewport-Y comparison (item 22/74).
+        const startIsFirst =
+          startCaretPage !== null && endCaretPage !== null && startCaretPage !== endCaretPage
+            ? startCaretPage < endCaretPage
+            : isReadingOrderBefore(start, end)
+        const [from, to] = startIsFirst ? [startCaret, endCaret] : [endCaret, startCaret]
+        const rebuilt = document.createRange()
+        rebuilt.setStart(from.node, from.offset)
+        rebuilt.setEnd(to.node, to.offset)
+        if (rebuilt.collapsed) return
         selection.removeAllRanges()
-        selection.addRange(range)
+        selection.addRange(rebuilt)
+        range = rebuilt
       }
 
-      const text = selection.toString()
-      if (text.trim().length === 0) return
-      const anchorNode = selection.anchorNode
-      if (!anchorNode || !textLayerRef.current?.contains(anchorNode)) return
+      const startPage = pageNumberOfNode(range.startContainer)
+      const endPage = pageNumberOfNode(range.endContainer)
+      if (startPage === null || endPage === null) return
 
-      // Captured now (not re-derived later from a fresh window.getSelection() call) since
-      // the native selection can be gone by the time the user clicks "OCRで読み直す" —
-      // e.g. any click outside the text layer collapses it. See ocr feature docs.
-      const canvas = canvasRef.current
-      const currentRange = selection.rangeCount > 0 ? selection.getRangeAt(0) : null
-      const canvasRect = canvas?.getBoundingClientRect() ?? null
-      const ocrRects =
-        canvasRect && currentRange
-          ? computeNormalizedSelectionRects(Array.from(currentRange.getClientRects()), canvasRect)
-          : []
-      const scientificTokens =
-        canvasRect && currentRange && textLayerRef.current
-          ? extractScientificTokens(currentRange, textLayerRef.current, canvasRect)
-          : []
+      if (TRACE_ENABLED) {
+        console.groupCollapsed('[PGT-TRACE] mouseup')
+        console.log('A. start page:', startPage)
+        console.log('B. end page:', endPage)
+        console.log('C. start DOM node text:', JSON.stringify(range.startContainer.textContent), 'offset', range.startOffset)
+        console.log('D. end DOM node text:', JSON.stringify(range.endContainer.textContent), 'offset', range.endOffset)
+        console.groupEnd()
+      }
 
-      const result = buildSelectionResult(text, pageNumber, ocrRects, scientificTokens)
-      if (result) onSelection(result)
+      async function buildNuisancePredicateFor(pageNumber: number) {
+        const distances: number[] = []
+        for (let d = 1; d <= NEIGHBOR_RANGE; d++) {
+          if (pageNumber - d >= 1) distances.push(-d)
+          if (pageNumber + d <= numPages) distances.push(d)
+        }
+        const currentLines = await getPageLinesImpl(pageNumber)
+        const neighbors = await Promise.all(
+          distances.map(async (pageDistance) => ({ pageDistance, lines: await getPageLinesImpl(pageNumber + pageDistance) })),
+        )
+        const classified = classifyPageLines(currentLines, neighbors)
+        return buildNuisancePredicate(classified)
+      }
+
+      // Captured synchronously (a standing concern since 2.4A: the live window Selection can
+      // change before async work below finishes) so these plain DOM references stay valid
+      // regardless of how long block/nuisance resolution takes.
+      const startContainer = range.startContainer
+      const startOffset = range.startOffset
+      const endContainer = range.endContainer
+      const endOffset = range.endOffset
+      if (startContainer.nodeType !== Node.TEXT_NODE || endContainer.nodeType !== Node.TEXT_NODE) return
+
+      const startPageContainer = pageContainerOf(startPage, scrollContainer)
+      const endPageContainer = pageContainerOf(endPage, scrollContainer)
+      const startLayer = startPageContainer ? textLayerOf(startPageContainer) : null
+      const endLayer = endPageContainer ? textLayerOf(endPageContainer) : null
+      const startCanvas = startPageContainer?.querySelector('canvas') ?? null
+      const endCanvas = endPageContainer?.querySelector('canvas') ?? null
+      if (!startPageContainer || !endPageContainer || !startLayer || !endLayer || !startCanvas || !endCanvas) return
+      const startCanvasRect = startCanvas.getBoundingClientRect()
+      const endCanvasRect = endCanvas.getBoundingClientRect()
+
+      // Prototype 2.4B-R5B item 3/19/35: native-path artifacts, computed synchronously so
+      // they're ready immediately if routing (below) lands on "same page, same text block" --
+      // the untouched Prototype 1.1 native Range selection, exactly as it has always worked.
+      const nativeText = range.toString()
+      const nativeOcrRects = computeNormalizedSelectionRects(Array.from(range.getClientRects()), startCanvasRect)
+      const nativeScientificTokens = extractScientificTokens(range, startLayer, startCanvasRect)
+
+      const runNativePath = () => {
+        if (nativeText.trim().length === 0) return
+        if (TRACE_ENABLED) console.log('[PGT-TRACE] mode = SINGLE_PAGE_NATIVE_RANGE', { page: startPage })
+        void (async () => {
+          const isNuisance = await buildNuisancePredicateFor(startPage)
+          const normalizedText = normalizePdfSelectionText(nativeText)
+          const filteredText = buildFilteredFragmentText(nativeText, isNuisance)
+          if (TRACE_ENABLED) console.log('[PGT-TRACE] SINGLE_PAGE final filtered text:', JSON.stringify(filteredText))
+          const selectionResult: PdfSelectionResult = {
+            rawText: nativeText,
+            normalizedText,
+            pageNumber: startPage,
+            ocrRects: nativeOcrRects,
+            scientificTokens: nativeScientificTokens,
+          }
+          onSelection([{ pageNumber: startPage, selection: selectionResult, filteredText }])
+        })()
+      }
+
+      // Prototype 2.4B-R8 item 4/29: unified routing via the local PyMuPDF layout service --
+      // "same page" alone is no longer sufficient to trust native Range/DOM order (R4's
+      // confirmed live failure: a same-page LEFT_COLUMN->RIGHT_COLUMN drag can have
+      // footnote/front-matter content sitting in DOM order between the two columns; R7/R8
+      // confirmed PyMuPDF's own native blocks solve this with no custom geometry needed).
+      // Every selection is sent to the service for block resolution; `sameBlock: true` means
+      // "use the native Range text you already have" (below), `sameBlock: false` means "use
+      // the service's own reconstructed text." No coordinate-only fast path (item 28): the
+      // R4 same-page-cross-column failure is exactly why "same page -> native" can't be
+      // assumed safe without checking block identity first.
+      const startPoint = normalizedPointOfBoundary(startContainer, startOffset, startCanvasRect)
+      const endPoint = normalizedPointOfBoundary(endContainer, endOffset, endCanvasRect)
+      const startBoundaryText = extractWithinLine(startLayer, startContainer as Text, startOffset, 'forward')
+      const endBoundaryText = extractWithinLine(endLayer, endContainer as Text, endOffset, 'backward')
+
+      void (async () => {
+        const requestId = layoutRequestGuardRef.current.next()
+        const docInfo = await documentIdPromiseRef.current
+        if (!layoutRequestGuardRef.current.isCurrent(requestId)) return // superseded while awaiting registration
+
+        if (!docInfo) {
+          if (TRACE_ENABLED) console.log('[PGT-TRACE] mode = SERVICE_UNAVAILABLE (no registered document)')
+          onSelectionFailed?.('文の読み取りを確認できませんでした。レイアウトサービスが起動していることを確認してください。')
+          return
+        }
+
+        const startEndpoint: SelectionEndpointInput = { pageNumber: startPage, xNorm: startPoint.x, yNorm: startPoint.y, boundaryText: startBoundaryText, direction: 'forward' }
+        const endEndpoint: SelectionEndpointInput = { pageNumber: endPage, xNorm: endPoint.x, yNorm: endPoint.y, boundaryText: endBoundaryText, direction: 'backward' }
+
+        let response
+        try {
+          response = await resolveSelectionWithLayoutService(docInfo.documentId, startEndpoint, endEndpoint)
+        } catch (err) {
+          if (!layoutRequestGuardRef.current.isCurrent(requestId)) return
+          if (TRACE_ENABLED) console.log('[PGT-TRACE] mode = SERVICE_UNAVAILABLE (request failed)', err)
+          onSelectionFailed?.('文の読み取りを確認できませんでした。レイアウトサービスが起動していることを確認してください。')
+          return
+        }
+        if (!layoutRequestGuardRef.current.isCurrent(requestId)) return // superseded while awaiting resolution
+
+        if (response.sameBlock) {
+          if (TRACE_ENABLED) console.log('[PGT-TRACE] mode = SERVICE_SAME_BLOCK_NATIVE', { blockId: response.startBlockId })
+          runNativePath()
+          return
+        }
+
+        if (TRACE_ENABLED) {
+          console.log('[PGT-TRACE] mode = SERVICE_RECONSTRUCTION', { startBlockId: response.startBlockId, endBlockId: response.endBlockId })
+          console.log('[PGT-TRACE] fragments (pre-filter):', response.fragments)
+        }
+
+        const fragments: SelectionFragment[] = []
+        for (const frag of response.fragments) {
+          if (frag.text.trim().length === 0) continue
+          const isNuisance = await buildNuisancePredicateFor(frag.pageNumber)
+          const normalizedText = normalizePdfSelectionText(frag.text)
+          const filteredText = buildFilteredFragmentText(frag.text, isNuisance)
+          if (TRACE_ENABLED) console.log(`[PGT-TRACE] page ${frag.pageNumber}: filtered fragment text:`, JSON.stringify(filteredText))
+          // Item 41/42: OCR stays single-region/native-Range-only -- a service-reconstructed
+          // fragment's rects/tokens are never used (the OCR panel gates on fragment count in
+          // the host app), so they are left empty here, same as the retired custom path did.
+          const selectionResult: PdfSelectionResult = { rawText: frag.text, normalizedText, pageNumber: frag.pageNumber, ocrRects: [], scientificTokens: [] }
+          fragments.push({ pageNumber: frag.pageNumber, selection: selectionResult, filteredText })
+        }
+
+        if (TRACE_ENABLED) console.log('[PGT-TRACE] final text (preview via combineFragments):', combineFragments(fragments))
+
+        if (fragments.length > 0) {
+          onSelection(fragments)
+        } else if (TRACE_ENABLED) {
+          console.log('[PGT-TRACE] no fragments produced -- selection dropped')
+        }
+      })()
     },
-    [pageNumber, onSelection],
+    [numPages, onSelection, onSelectionFailed, getPageLinesImpl],
   )
+
+  const pageNumbers = useMemo(() => Array.from({ length: numPages }, (_, i) => i + 1), [numPages])
 
   return (
     <div className="pdf-viewer">
@@ -357,16 +667,16 @@ export const PdfViewer = forwardRef<PdfViewerHandle, PdfViewerProps>(function Pd
         />
         {status === 'ready' && (
           <>
-            <button type="button" onClick={() => setPageNumber((p) => Math.max(1, p - 1))} disabled={pageNumber <= 1}>
+            <button type="button" onClick={() => scrollToPage(Math.max(1, currentPageNumber - 1))} disabled={currentPageNumber <= 1}>
               前へ
             </button>
             <span className="pdf-page-indicator">
-              {pageNumber} / {numPages}
+              {currentPageNumber} / {numPages}
             </span>
             <button
               type="button"
-              onClick={() => setPageNumber((p) => Math.min(numPages, p + 1))}
-              disabled={pageNumber >= numPages}
+              onClick={() => scrollToPage(Math.min(numPages, currentPageNumber + 1))}
+              disabled={currentPageNumber >= numPages}
             >
               次へ
             </button>
@@ -397,15 +707,19 @@ export const PdfViewer = forwardRef<PdfViewerHandle, PdfViewerProps>(function Pd
             {errorMessage}
           </p>
         )}
-        {status === 'ready' && (
-          <div
-            className="pdf-page-container"
-            ref={pageContainerRef}
-            onMouseDown={handleMouseDown}
-            onMouseUp={handleMouseUp}
-          >
-            <canvas ref={canvasRef} />
-            <div className="textLayer" ref={textLayerRef} />
+        {status === 'ready' && doc && (
+          <div className="pdf-scroll-container" ref={scrollContainerRef} onMouseDown={handleMouseDown} onMouseUp={handleMouseUp}>
+            {pageNumbers.map((pageNumber) => (
+              <PdfPageView
+                key={pageNumber}
+                doc={doc}
+                pageNumber={pageNumber}
+                scale={scale}
+                estimatedWidth={estimatedPageSize.width}
+                estimatedHeight={estimatedPageSize.height}
+                onMeasured={handleMeasured}
+              />
+            ))}
           </div>
         )}
       </div>
