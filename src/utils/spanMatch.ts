@@ -48,6 +48,29 @@ export function resolveSpan(fullText: string, candidate: RawSpan): ResolvedSpan 
   return { text, start: -1, end: -1, resolved: false, corrected: false }
 }
 
+/** Resolves an exact substring at or after a known source position. Ordered LLM lists use
+ * this so repeated text binds to successive occurrences, never silently to the first one. */
+export function resolveSpanAfter(fullText: string, text: string, minStart: number): ResolvedSpan {
+  const boundedStart = Math.max(0, minStart)
+  const exactIndex = fullText.indexOf(text, boundedStart)
+  if (exactIndex !== -1) {
+    return { text, start: exactIndex, end: exactIndex + text.length, resolved: true, corrected: true }
+  }
+
+  const fuzzy = findWhitespaceInsensitive(fullText.slice(boundedStart), text)
+  if (fuzzy) {
+    return {
+      text: fuzzy.text,
+      start: boundedStart + fuzzy.start,
+      end: boundedStart + fuzzy.end,
+      resolved: true,
+      corrected: true,
+    }
+  }
+
+  return { text, start: -1, end: -1, resolved: false, corrected: false }
+}
+
 function findWhitespaceInsensitive(fullText: string, needle: string): RawSpan | null {
   const normalizedNeedle = needle.trim().replace(/\s+/g, ' ')
   if (normalizedNeedle.length === 0) return null

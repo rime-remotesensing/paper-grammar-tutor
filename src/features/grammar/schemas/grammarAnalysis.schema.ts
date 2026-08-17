@@ -94,9 +94,23 @@ export const phraseSchema = z.object({
 })
 export type Phrase = z.infer<typeof phraseSchema>
 
+export const vocabularyPartOfSpeechSchema = z.enum([
+  'noun',
+  'verb',
+  'adjective',
+  'adverb',
+  'nounPhrase',
+  'verbPhrase',
+  'adjectivePhrase',
+  'adverbialPhrase',
+  'other',
+])
+export type VocabularyPartOfSpeech = z.infer<typeof vocabularyPartOfSpeechSchema>
+
 export const vocabularyItemSchema = z.object({
   word: z.string(),
   contextualMeaning: z.string(),
+  partOfSpeech: vocabularyPartOfSpeechSchema,
 })
 export type VocabularyItem = z.infer<typeof vocabularyItemSchema>
 

@@ -3,7 +3,7 @@ import { prepareExpressionsForDisplay } from '../../src/features/grammar/domain/
 import type { Expression } from '../../src/features/grammar/schemas/readingGuide.schema'
 
 function expr(text: string, pattern: string, meaning = 'm', func = 'f'): Expression {
-  return { text, pattern, meaning, function: func }
+  return { text, pattern, meaning, function: func, start: 0, end: text.length }
 }
 
 describe('prepareExpressionsForDisplay', () => {

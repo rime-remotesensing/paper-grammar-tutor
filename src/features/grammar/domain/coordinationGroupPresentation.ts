@@ -28,8 +28,34 @@ export interface CoordinationGroup {
   /** Literal connector word extracted from the source text between the group's members
    * (e.g. "and"/"or"/"but") — never invented (item 4/5). Null when no explicit
    * conjunction WORD appears in any gap (e.g. a pure comma-only chain), in which case the
-   * UI shows the group without a word badge rather than fabricating one. */
+   * UI shows the group without a word badge rather than fabricating one. Kept for backward
+   * compatibility (it represents "the group's one overall/final connector", still the
+   * right concept for coordinationListParser.ts's own separate single-node-text rendering
+   * path) — box-level rendering of a StructureTreeView sibling group now uses
+   * `boundaryConnectors` instead (Prototype 2.5ZA). */
   connectorText: string | null
+  /** Prototype 2.5ZA (item 9/17): the connector immediately BEFORE each member, in member
+   * order — same length as `members`, index 0 is always null (nothing precedes the first
+   * member). For "A, B, and C" this is [null, null, "and"]: the outer connector belongs to
+   * the B→C boundary, not the group as a whole. Derived the same way as `connectorText`
+   * (scan the literal source gap between two consecutive members for an explicit
+   * conjunction word) but WITHOUT stopping at the first hit — every boundary is inspected
+   * independently, so a longer chain never collapses to "the last connector labels
+   * everything". Never invented (item 14): a boundary with no explicit conjunction word in
+   * its own gap is null, even if an earlier or later boundary has one. */
+  boundaryConnectors: (string | null)[]
+}
+
+/** The literal explicit conjunction word (if any) in the gap between two specific,
+ * consecutive members — the same per-boundary check `deriveBoundaryConnectors` and
+ * `extractConnector` both build on. Returns null when the gap has no CONNECTOR_MARKER
+ * match, without falling back to a comma or any other punctuation. */
+function connectorInGap(sentence: string, before: StructureTreeNode, after: StructureTreeNode): string | null {
+  const gapStart = endOf(before)
+  const gapEnd = after.start
+  if (gapEnd < gapStart) return null
+  const match = CONNECTOR_MARKER.exec(sentence.slice(gapStart, gapEnd))
+  return match ? match[1] : null
 }
 
 /** Scans gaps from the LAST pair backward and returns the first explicit conjunction word
@@ -37,13 +63,19 @@ export interface CoordinationGroup {
  * comma in a longer chain. */
 function extractConnector(sentence: string, sortedMembers: StructureTreeNode[]): string | null {
   for (let i = sortedMembers.length - 1; i > 0; i--) {
-    const gapStart = endOf(sortedMembers[i - 1])
-    const gapEnd = sortedMembers[i].start
-    if (gapEnd < gapStart) continue
-    const match = CONNECTOR_MARKER.exec(sentence.slice(gapStart, gapEnd))
-    if (match) return match[1]
+    const connector = connectorInGap(sentence, sortedMembers[i - 1], sortedMembers[i])
+    if (connector) return connector
   }
   return null
+}
+
+/** Prototype 2.5ZA (item 9): the connector immediately before EACH member, independently —
+ * unlike extractConnector, never stops early; a boundary with no explicit conjunction word
+ * in its own literal gap is null regardless of what any other boundary has (item 5: nested
+ * "and" tokens INSIDE one member's own text never leak into a neighboring boundary, since
+ * each boundary only ever inspects the gap strictly BETWEEN two member spans). */
+function deriveBoundaryConnectors(sentence: string, sortedMembers: StructureTreeNode[]): (string | null)[] {
+  return sortedMembers.map((member, i) => (i === 0 ? null : connectorInGap(sentence, sortedMembers[i - 1], member)))
 }
 
 /**
@@ -64,16 +96,28 @@ export function detectCoordinationGroup(sentence: string, candidates: StructureT
     if (gapEnd < gapStart) return null
     if (!hasCoordinationEvidence(sentence.slice(gapStart, gapEnd))) return null
   }
-  return { members: sorted, connectorText: extractConnector(sentence, sorted) }
+  return { members: sorted, connectorText: extractConnector(sentence, sorted), boundaryConnectors: deriveBoundaryConnectors(sentence, sorted) }
 }
 
 /** Main predicate + coordinated predicate(s) are always treated as one "family" for
  * grouping purposes (item 6) even though they carry different display roles
  * ('predicate' vs 'coordinatedPredicate') — every other role groups only with an
  * identical role (item 8's two "condition" dependents; never mixes e.g. a "modifier" with
- * a "condition" just because they happen to sit next to each other). */
+ * a "condition" just because they happen to sit next to each other).
+ *
+ * Prototype 2.5S defensive guard (item 23): role "other" is the schema's catch-all for
+ * content the model couldn't classify (e.g. an equation placeholder pushed to
+ * sentenceModifiers) — it carries no real evidence that two such leftovers are actually
+ * coordinated with each other, only that a connector word happens to sit in the source gap
+ * between them (which may belong to unrelated surrounding structure, as with two equation
+ * placeholders flanking a predicate-level "and"). Give every "other" node its own unique
+ * key so it can never form a same-key run with another "other" node, regardless of gap
+ * text — a real coordinated pair should already have been classified with a specific role
+ * (object/clause/etc) upstream. This does not touch grouping for any other role. */
 function groupingKey(node: StructureTreeNode): string {
-  return node.role === 'predicate' || node.role === 'coordinatedPredicate' ? 'predicateFamily' : node.role
+  if (node.role === 'predicate' || node.role === 'coordinatedPredicate') return 'predicateFamily'
+  if (node.role === 'other') return `other:${node.start}`
+  return node.role
 }
 
 export type SiblingRenderItem = { kind: 'group'; group: CoordinationGroup } | { kind: 'node'; node: StructureTreeNode }

@@ -74,7 +74,14 @@ export const expressionSchema = z.object({
   meaning: z.string(),
   function: z.string(),
 })
-export type Expression = z.infer<typeof expressionSchema>
+export type LlmExpression = z.infer<typeof expressionSchema>
+
+/** Expression plus the app-verified position in the normalized analysis sentence. */
+export const resolvedExpressionSchema = expressionSchema.extend({
+  start: z.number().int(),
+  end: z.number().int(),
+})
+export type Expression = z.infer<typeof resolvedExpressionSchema>
 
 /** What the LLM is asked to produce. readingSteps carry no offsets — the app derives
  * start/end itself (see resolvedReadingStepSchema) rather than trusting the model's. */

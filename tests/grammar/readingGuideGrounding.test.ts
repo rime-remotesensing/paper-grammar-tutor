@@ -103,7 +103,7 @@ describe('groundReadingGuide — blank-field tolerance (unchanged since 2.2)', (
 })
 
 describe('groundReadingGuide — expression grounding (unchanged since 2.2)', () => {
-  it('keeps expressions whose text is genuinely in the sentence: passive, every+unit, from A to B', () => {
+  it('keeps useful grounded usage while suppressing a generic passive label', () => {
     const guide = baseLlmGuide({
       expressions: [
         { text: 'was recorded', pattern: 'be + past participle', meaning: '〜される', function: '受動態。' },
@@ -114,11 +114,7 @@ describe('groundReadingGuide — expression grounding (unchanged since 2.2)', ()
     const result = groundReadingGuide(guide, PRIMARY_SENTENCE)
     expect(result.success).toBe(true)
     if (!result.success) return
-    expect(result.readingGuide.expressions.map((e) => e.pattern)).toEqual([
-      'be + past participle',
-      'every + number + unit',
-      'from A to B',
-    ])
+    expect(result.readingGuide.expressions.map((e) => e.pattern)).toEqual(['every + number + unit', 'from A to B'])
   })
 
   it('drops an expression whose text is not actually in the sentence, without failing the guide', () => {
@@ -131,7 +127,41 @@ describe('groundReadingGuide — expression grounding (unchanged since 2.2)', ()
     const result = groundReadingGuide(guide, PRIMARY_SENTENCE)
     expect(result.success).toBe(true)
     if (!result.success) return
-    expect(result.readingGuide.expressions).toHaveLength(1)
+    expect(result.readingGuide.expressions).toHaveLength(0)
+  })
+
+  it('grounds repeated expressions to successive source occurrences', () => {
+    const sentence = 'The method is based on data and the estimate is based on observations.'
+    const guide = baseLlmGuide({
+      readingSteps: [step('The method'), step('is based on data'), step('and the estimate'), step('is based on observations')],
+      expressions: [
+        { text: 'is based on', pattern: 'be based on ~', meaning: '〜に基づく', function: '根拠を示す。' },
+        { text: 'is based on', pattern: 'be based on ~', meaning: '〜に基づく', function: '根拠を示す。' },
+      ],
+    })
+    const result = groundReadingGuide(guide, sentence)
+    expect(result.success).toBe(true)
+    if (!result.success) return
+    expect(result.readingGuide.expressions.map(({ start }) => start)).toEqual([
+      sentence.indexOf('is based on'),
+      sentence.lastIndexOf('is based on'),
+    ])
+  })
+
+  it('suppresses elementary structure notes while keeping preposition-dependent usage', () => {
+    const sentence = 'The method can be rotated and is based on observations where x is the input.'
+    const guide = baseLlmGuide({
+      readingSteps: [step('The method'), step('can be rotated'), step('and is based on observations'), step('where x is the input')],
+      expressions: [
+        { text: 'can be rotated', pattern: 'can be ~', meaning: '回転できる', function: '受動態。' },
+        { text: 'is based on', pattern: 'be based on ~', meaning: '〜に基づく', function: 'on以下を根拠とする。' },
+        { text: 'where x is the input', pattern: 'where X is Y', meaning: 'xは入力', function: 'where節。' },
+      ],
+    })
+    const result = groundReadingGuide(guide, sentence)
+    expect(result.success).toBe(true)
+    if (!result.success) return
+    expect(result.readingGuide.expressions.map(({ text }) => text)).toEqual(['is based on'])
   })
 })
 

@@ -20,11 +20,14 @@ full-sentence translation of the chunk. A subordinate clause with its own finite
 "that"/relative/adverbial clause) should stay as its own step(s), not be merged into the step
 that introduces it.
 
-expressions: multi-word patterns actually present in the sentence (e.g. "be + past participle",
-"every + number + unit", "from A to B") — never a single word, never a pattern that is not
-literally in the sentence. "text" must be an exact substring. For a relative clause with an
-auxiliary verb (e.g. "that have changed"), name the pattern accurately, e.g. "that + have +
-past participle" (present perfect) — never just "past participle" or "present participle" alone.
+expressions: list reusable, non-obvious academic usage actually present in the sentence,
+in source order. Prioritize verb/adjective/participle + preposition, collocations, and academic
+phrases (e.g. "is based on", pattern "be based on ~"). "text" must be the exact English
+substring. Explain the combined meaning and, briefly, the preposition's contribution when
+useful. Do NOT teach elementary labels such as subject/predicate, be verb, article, conjunction,
+or generic passive voice. Return [] when there is no useful expression; never invent one.
+Treat generic "can be + past participle" and "where X is Y" as structure, not expressions.
+Typical high-value patterns include "result in ~" and "be analogous to ~".
 
 connections: plain-Japanese explanation of how parts relate (coordination, what a preposed
 phrase modifies, etc.) — not just a grammar-term label by itself.
@@ -37,21 +40,25 @@ Never answer any of these fields in Chinese.
 
 Output valid JSON matching the schema only, no prose outside the JSON.
 
-Example (sentence: "Data was recorded every 1 nm in the 0.4 to 0.8 μm region and every 4 nm from
-0.8 to 2.5 μm."):
+Example (sentence: "The method is based on observations and accounts for spatial variability."):
 {"readingSteps":[
-{"text":"Data","cue":"何について？","explanation":"文の主語。"},
-{"text":"was recorded","cue":"どうなった？","explanation":"受動態で記録されたことを示す。"},
-{"text":"every 1 nm","cue":"どの間隔で？","explanation":"記録の間隔。"},
-{"text":"in the 0.4 to 0.8 μm region","cue":"どの範囲で？","explanation":"最初の間隔が適用される波長範囲。"},
-{"text":"and every 4 nm","cue":"他には？","explanation":"別の間隔が並列で示される。"},
-{"text":"from 0.8 to 2.5 μm","cue":"どの範囲で？","explanation":"2つ目の間隔が適用される波長範囲。"}],
-"connections":[{"text":"every 1 nm ... and every 4 nm ...","explanation":"2つの間隔条件が並列に示されている。"}],
+{"text":"The method is based","cue":"どんな根拠？","explanation":"まず「その方法は基づいている」と受け取る。"},
+{"text":"on observations","cue":"何に基づく？","explanation":"根拠となる対象を後ろから足す。"},
+{"text":"and accounts for spatial variability","cue":"さらに何をする？","explanation":"空間的な変動も考慮する、と並列に読み足す。"}],
+"connections":[{"text":"is based ... and accounts ...","explanation":"同じ方法について二つの性質を並列に述べる。"}],
 "expressions":[
-{"text":"was recorded","pattern":"be + past participle","meaning":"〜される","function":"受動態。"},
-{"text":"every 1 nm","pattern":"every + number + unit","meaning":"〜ごとに","function":"間隔を示す。"},
-{"text":"from 0.8 to 2.5 μm","pattern":"from A to B","meaning":"AからBまで","function":"範囲を示す。"}],
-"readingAdvice":["まず主語と動詞を確認してから、条件や範囲の情報を順に読み足していく。"]}`
+{"text":"is based on","pattern":"be based on ~","meaning":"〜に基づいている","function":"on 以下を根拠として結びつける。"},
+{"text":"accounts for","pattern":"account for ~","meaning":"〜を考慮する","function":"for 以下を考慮の対象として示す。"}],
+"readingAdvice":["述べられる性質を一つずつ受け取り、前置詞の後ろで対象を補う。"]}`
+
+const RESPECTIVELY_READING_RULE = `When two ordered lists are linked by "respectively", the
+readingStep containing it must explain the same-order correspondence and name the concrete pairs.
+Copy each paired item name from the English source verbatim; never translate or substitute it.
+In the explanation, use the sentence's actual items and values; never output placeholder letters
+such as A/B/X/Y in place of them.
+For example, "values of a and b are 10 and 20, respectively" should say
+"a → 10、b → 20 と同じ順で対応させる。" in the respectively step.
+Treat the full "A and B ... X and Y, respectively" construction as a reusable expression when useful.`
 
 export interface ReadingGuidePromptPair {
   system: string
@@ -61,7 +68,7 @@ export interface ReadingGuidePromptPair {
 export function buildReadingGuidePrompt(sentence: string): ReadingGuidePromptPair {
   return {
     system: READING_GUIDE_SYSTEM_PROMPT,
-    user: `Sentence:\n${sentence}`,
+    user: `Sentence:\n${sentence}\n\n${RESPECTIVELY_READING_RULE}`,
   }
 }
 
@@ -82,6 +89,8 @@ ${previousRawText}
 
 Validation error:
 ${validationError}
+
+${RESPECTIVELY_READING_RULE}
 
 Return a corrected JSON object only, matching the schema exactly. Remember: readingSteps.text
 must be an exact substring of the sentence, and readingSteps must stay in left-to-right order.

@@ -110,7 +110,7 @@ function lastWordMatches(coreVerbText: string, candidateText: string): boolean {
   return lastWord(coreVerbText) === lastWord(candidateText)
 }
 
-interface WorkingPredicate {
+export interface WorkingPredicate {
   text: string
   start: number
   end: number
@@ -118,25 +118,37 @@ interface WorkingPredicate {
   dependents: ResolvedDependent[]
 }
 
+export interface AcceptedPredicateClassification {
+  /** Candidates that survive Steps 1–4, in final sorted (source) order — exactly the set
+   * that will become `finalPredicates` in the merged result. */
+  accepted: WorkingPredicate[]
+  /** Candidates rejected at any of Steps 1–4, in their original relative order. */
+  rejected: WorkingPredicate[]
+  /** The one candidate anchored to sentenceCore.verb (Step 3), if any. */
+  anchor: WorkingPredicate | undefined
+  dropped: DroppedCandidate[]
+  anchorInjected: boolean
+}
+
 /**
- * @param sentence - normalizedText (same coordinate space as sentenceCore spans and as
- *   what was passed to PredicateStructureAnalyzer).
- * @param sentenceCore - the already-confirmed, already-grounded SentenceCore
- *   (analyzeSentenceWithAutoRecovery's result — post forced-core recovery if that ran).
- * @param structure - the already-grounded PredicateStructure (PredicateStructureAnalyzer's
- *   result).
+ * Prototype 2.5W (item 28/29) — Steps 1–4 of mergeHybridPredicateStructure, extracted
+ * verbatim into a standalone pure helper so a second caller (the focused where-clause
+ * repair's accepted-predicate candidate list) can share the SAME authority the merger
+ * itself uses for which predicate candidates actually survive, rather than duplicating this
+ * logic. Byte-for-byte behaviorally identical to the inline version it replaced — see
+ * hybridPredicateMerger.test.ts's "Steps 1–4 extraction" regression suite (item 30).
  */
-export function mergeHybridPredicateStructure(
+export function classifyAcceptedPredicates(
   sentence: string,
   sentenceCore: SentenceCore,
-  structure: PredicateStructure,
-): HybridMergedStructure {
+  predicates: PredicateStructure['predicates'],
+): AcceptedPredicateClassification {
   const dropped: DroppedCandidate[] = []
   const subject = isGrounded(sentenceCore.subject) ? sentenceCore.subject : null
   const coreVerb = sentenceCore.verb
 
   // --- Step 1: subject-containment filter (item 12) + pre-subject filter (item 13) ---
-  let candidates: WorkingPredicate[] = structure.predicates.filter((p) => {
+  let candidates: WorkingPredicate[] = predicates.filter((p) => {
     if (subject && fullyContains(subject, p)) {
       dropped.push({ text: p.text, reason: 'subject-contained (e.g. gerund head)' })
       return false
@@ -209,16 +221,47 @@ export function mergeHybridPredicateStructure(
     if (!accepted[i]) dropped.push({ text: sorted[i].text, reason: `no coordination evidence before "${sorted[i + 1].text}"` })
   }
 
-  const finalPredicates: HybridPredicate[] = sorted
-    .filter((_, i) => accepted[i])
-    .map((p) => ({
-      text: p.text,
-      start: p.start,
-      end: p.end,
-      relation: anchor && sameSpan(p, anchor) ? 'main' : 'coordinated',
-      dependents: p.dependents.map(toHybridDependent),
-      isCoreAnchor: anchor ? sameSpan(p, anchor) : false,
-    }))
+  return {
+    accepted: sorted.filter((_, i) => accepted[i]),
+    rejected: sorted.filter((_, i) => !accepted[i]),
+    anchor,
+    dropped,
+    anchorInjected,
+  }
+}
+
+/**
+ * @param sentence - normalizedText (same coordinate space as sentenceCore spans and as
+ *   what was passed to PredicateStructureAnalyzer).
+ * @param sentenceCore - the already-confirmed, already-grounded SentenceCore
+ *   (analyzeSentenceWithAutoRecovery's result — post forced-core recovery if that ran).
+ * @param structure - the already-grounded PredicateStructure (PredicateStructureAnalyzer's
+ *   result).
+ */
+export function mergeHybridPredicateStructure(
+  sentence: string,
+  sentenceCore: SentenceCore,
+  structure: PredicateStructure,
+): HybridMergedStructure {
+  const subject = isGrounded(sentenceCore.subject) ? sentenceCore.subject : null
+  const { accepted, rejected, anchor, dropped, anchorInjected } = classifyAcceptedPredicates(sentence, sentenceCore, structure.predicates)
+
+  // Rejecting a candidate here means we don't trust it as its own predicate (e.g. a
+  // participial phrase the model mistook for a coordinated verb) — but its dependents are
+  // still real, grounded content (e.g. an equation placeholder) that must not silently
+  // vanish. Demote them to sentence-level modifiers instead of discarding them.
+  const salvagedModifiers: ResolvedLeaf[] = rejected.flatMap((p) =>
+    p.dependents.flatMap((d) => [{ text: d.text, start: d.start, end: d.end, role: d.role }, ...d.children]),
+  )
+
+  const finalPredicates: HybridPredicate[] = accepted.map((p) => ({
+    text: p.text,
+    start: p.start,
+    end: p.end,
+    relation: anchor && sameSpan(p, anchor) ? 'main' : 'coordinated',
+    dependents: p.dependents.map(toHybridDependent),
+    isCoreAnchor: anchor ? sameSpan(p, anchor) : false,
+  }))
 
   // --- Step 5: core O/IO/C contamination check + attachment (item 18/19) ---
   const suppressed: SuppressedCoreDependent[] = []
@@ -237,20 +280,38 @@ export function mergeHybridPredicateStructure(
         continue
       }
       const alreadyPresent = anchorNode.dependents.some((d) => sameSpan(d, slotSpan))
-      if (!alreadyPresent) {
-        anchorNode.dependents.push({ text: slotSpan.text, start: slotSpan.start, end: slotSpan.end, role: slotName, children: [] })
+      if (alreadyPresent) continue
+
+      // Prototype 2.5U redundancy condition (item 14): a core slot whose span both (A)
+      // overlaps the anchor predicate's OWN text (e.g. Stage 1 folded the predicate nominal
+      // itself into its object/complement span, as with "is a function of X" -> object "a
+      // function of X") AND (B) fully contains an already-grounded Stage-2 dependent of that
+      // same anchor is redundant with content Stage 2 already represents more precisely —
+      // injecting it would only duplicate that dependent under a wider, sloppier span.
+      // Deliberately narrower than a bare overlap check (item 13): a slot that merely
+      // overlaps the anchor without containing any existing dependent, or that contains a
+      // dependent without touching the anchor's own text, still gets attached normally.
+      const redundantWithAnchor =
+        overlapsOrContains(slotSpan, anchorNode) && anchorNode.dependents.some((d) => fullyContains(slotSpan, d))
+      if (redundantWithAnchor) {
+        suppressed.push({ slot: slotName, text: slotSpan.text, reason: 'redundant with an existing dependent of the anchor predicate' })
+        continue
       }
+
+      anchorNode.dependents.push({ text: slotSpan.text, start: slotSpan.start, end: slotSpan.end, role: slotName, children: [] })
     }
     anchorNode.dependents.sort((a, b) => a.start - b.start)
   }
 
   finalPredicates.sort((a, b) => a.start - b.start)
 
+  const sentenceModifiers = [...structure.sentenceModifiers, ...salvagedModifiers].sort((a, b) => a.start - b.start)
+
   return {
     subject,
     subjectModifiers: structure.subjectModifiers,
     predicates: finalPredicates,
-    sentenceModifiers: structure.sentenceModifiers,
+    sentenceModifiers,
     dropped,
     suppressedCoreDependents: suppressed,
     anchorInjected,

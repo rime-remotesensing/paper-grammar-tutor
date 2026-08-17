@@ -4,6 +4,7 @@ import {
   closeDocument,
   registerDocument,
   requestSelectionResolution,
+  SelectionResolutionError,
 } from '../../src/features/pdf/domain/pymupdfLayoutClient'
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -116,5 +117,28 @@ describe('requestSelectionResolution', () => {
     const expectation = expect(promise).rejects.toThrow()
     controller.abort()
     await expectation
+  })
+
+  it('throws a SelectionResolutionError carrying the service\'s detail.error code on a recognized failure', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({ detail: { error: 'equation_endpoint_unresolved', message: 'no recoverable prose' } }, 422)))
+    const promise = requestSelectionResolution('http://127.0.0.1:8009', 'doc-1', endpoint, endpoint, 5000)
+    await expect(promise).rejects.toBeInstanceOf(SelectionResolutionError)
+    try {
+      await promise
+    } catch (err) {
+      expect(err).toBeInstanceOf(SelectionResolutionError)
+      expect((err as SelectionResolutionError).code).toBe('equation_endpoint_unresolved')
+    }
+  })
+
+  it('throws a SelectionResolutionError with a null code when the failure body has no detail.error', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({}, 500)))
+    try {
+      await requestSelectionResolution('http://127.0.0.1:8009', 'doc-1', endpoint, endpoint, 5000)
+      expect.unreachable('expected requestSelectionResolution to throw')
+    } catch (err) {
+      expect(err).toBeInstanceOf(SelectionResolutionError)
+      expect((err as SelectionResolutionError).code).toBeNull()
+    }
   })
 })

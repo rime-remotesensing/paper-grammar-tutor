@@ -10,6 +10,7 @@ import {
   closeDocument,
   registerDocument,
   requestSelectionResolution,
+  SelectionResolutionError,
   type SelectionEndpointInput,
 } from './pymupdfLayoutClient'
 
@@ -75,3 +76,4 @@ export async function resolveSelectionWithLayoutService(
 }
 
 export type { SelectionEndpointInput }
+export { SelectionResolutionError }

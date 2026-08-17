@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { normalizeSentenceForGrammarAnalysis } from '../../src/features/grammar/domain/grammarInputNormalization'
 import { resolveSpan } from '../../src/utils/spanMatch'
 
 const SENTENCE = 'The results obtained in the previous experiment indicate that the method is effective.'
@@ -32,5 +33,26 @@ describe('resolveSpan', () => {
     expect(result.resolved).toBe(false)
     expect(result.start).toBe(-1)
     expect(result.end).toBe(-1)
+  })
+
+  it('resolves a span containing the Prototype 2.5G equation placeholder token exactly (item 52/53)', () => {
+    const withEquation = 'The value of k can then be used as a moderator for the equation, as [EQUATION_5].'
+    const result = resolveSpan(withEquation, { text: 'as [EQUATION_5]', start: 0, end: 0 })
+    expect(result.resolved).toBe(true)
+    expect(result.corrected).toBe(true)
+    expect(result.text).toBe('as [EQUATION_5]')
+    expect(withEquation.slice(result.start, result.end)).toBe('as [EQUATION_5]')
+  })
+
+  it('Prototype 2.5H item 32/12: resolves spans against the citation-free NORMALIZED analysis text, never raw source offsets', () => {
+    const source = 'The value of k can then be used as a moderator [9] for the cosine equation, as [式 (5)]'
+    const analysisText = normalizeSentenceForGrammarAnalysis(source)
+    expect(analysisText).toBe('The value of k can then be used as a moderator for the cosine equation, as [EQUATION_5]')
+    // A span the LLM reports (e.g. the object/adverbial "as [EQUATION_5]") must resolve
+    // against THIS normalized text -- its offsets would be meaningless against `source`,
+    // which still contains "[9]" and has different character positions entirely.
+    const result = resolveSpan(analysisText, { text: 'as [EQUATION_5]', start: 0, end: 0 })
+    expect(result.resolved).toBe(true)
+    expect(analysisText.slice(result.start, result.end)).toBe('as [EQUATION_5]')
   })
 })

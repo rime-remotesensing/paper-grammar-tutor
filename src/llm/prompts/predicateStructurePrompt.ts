@@ -20,11 +20,20 @@ Each dependent is something attached to that predicate: {"text": exact substring
 object/complement/modifier/condition/range/clause/other, "children": [...]} — children are
 nested details inside that dependent (e.g. a range narrowing a condition), at most one more
 level, each {"text","role"}. "clause" is ONLY for a subordinate clause with its own finite verb
-— never a bare phrase.
+— never a bare phrase. When a "clause" dependent itself contains several finite subject-verb
+units (e.g. "where A is X, B is Y, and C is Z"), keep the whole clause as the dependent's own
+text, but ALSO list each finite unit as its own item in "children" — never leave several finite
+units flattened into one opaque string when "children" can hold them separately.
 
 "subjectModifiers": phrases describing the subject noun itself (e.g. "of X, Y and Z"), as
 [{"text","role"}]. "sentenceModifiers": other sentence-level phrases not tied to one predicate
 (e.g. a preposed clause), as [{"text","role"}].
+
+"[EQUATION]" or "[EQUATION_n]" is one opaque expression, already written into the sentence like
+any other word. Treat it as a normal dependent of whichever predicate it belongs to — never put
+it in sentenceModifiers just because it looks unusual. Text after it is still part of the
+sentence: keep capturing dependents normally instead of stopping at the placeholder — never drop
+what follows it.
 
 Every "text" must be an EXACT substring of the sentence, copied verbatim — never invent text,
 never add a word (like a shared auxiliary) that is not literally written at that position.
@@ -39,6 +48,23 @@ Example ("The sensor collected data and analyzed the results."):
 {"subjectModifiers":[],"predicates":[
 {"text":"collected","relation":"main","dependents":[{"text":"data","role":"object","children":[]}]},
 {"text":"analyzed","relation":"coordinated","dependents":[{"text":"the results","role":"object","children":[]}]}],
+"sentenceModifiers":[]}
+
+Example ("The model uses [EQUATION_1] where x is the input, y is the output, and z is the
+error."):
+{"subjectModifiers":[],"predicates":[{"text":"uses","relation":"main","dependents":[
+{"text":"[EQUATION_1]","role":"object","children":[]},
+{"text":"where x is the input, y is the output, and z is the error","role":"clause","children":[
+{"text":"x is the input","role":"clause"},
+{"text":"y is the output","role":"clause"},
+{"text":"z is the error","role":"clause"}]}]}],"sentenceModifiers":[]}
+
+Example ("The gain is calculated from the input signal [EQUATION_2] and is applied to the output
+stage [EQUATION_3]."): two genuinely separate finite verbs joined by "and" — each equation stays
+with the verb right before it, not sentenceModifiers.
+{"subjectModifiers":[],"predicates":[
+{"text":"is calculated","relation":"main","dependents":[{"text":"from the input signal","role":"object","children":[]},{"text":"[EQUATION_2]","role":"object","children":[]}]},
+{"text":"is applied","relation":"coordinated","dependents":[{"text":"to the output stage","role":"object","children":[]},{"text":"[EQUATION_3]","role":"object","children":[]}]}],
 "sentenceModifiers":[]}`
 
 export interface PredicateStructurePromptPair {

@@ -9,4 +9,6 @@ uvicorn[standard]==0.52.3
 python-multipart==0.0.32
 
 pytest==8.3.5
+# Prototype 2.5E: httpx is now also a runtime dependency, not test-only -- main.py uses it
+# to call the existing local Paddle OCR service for missing-glyph recovery.
 httpx==0.28.1

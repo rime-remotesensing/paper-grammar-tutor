@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useReducer, useRef, useState } from 'react'
 import { DEFAULT_TEMPERATURE } from '../../../config/settings'
 import type { LLMProvider } from '../../../llm/types'
 import type { VerifiedSentenceAnalysis } from '../domain/analyzeSentenceWithComplementVerification'
@@ -7,14 +7,20 @@ import { getReadingGuide } from '../domain/readingGuideService'
 import { getPredicateStructure } from '../domain/predicateStructureService'
 import { startReadingSupport } from '../domain/readingSupportOrchestrator'
 import { mergeHybridPredicateStructure } from '../domain/hybridPredicateMerger'
+import { applyFocusedWhereClauseRepair } from '../domain/whereClauseRelocation'
 import { buildCoreOnlyTree, buildHybridStructureTree } from '../domain/structureTree'
 import { resolveSupplementSpan } from '../domain/supplementSpanResolution'
 import { StructureTreeView } from './StructureTreeView'
-import { prepareExpressionsForDisplay } from '../domain/expressionPresentation'
 import type { ReadingGuide } from '../schemas/readingGuide.schema'
 import type { PredicateStructure } from '../schemas/predicateStructure.schema'
 import type { GroundedRelativeLinkRelation } from '../domain/relativeLinkGrounding'
 import { isSentenceCoreFailure } from '../domain/sentenceCoreRecovery'
+import type { StructureTreeNode } from '../domain/structureTree'
+import { findReadingStepsForTreeNode, structureTreeNodeKey, structureTreeNodeSpan } from '../domain/treeReadingMatching'
+import { activeTreeNodeKey, EMPTY_TREE_READING_INTERACTION, reduceTreeReadingInteraction } from '../domain/treeReadingInteraction'
+import { findVocabularyForTreeNode, groundVocabularyForDisplay, vocabularyPartOfSpeechLabel } from '../domain/vocabularyPresentation'
+import { prepareExpressionsForDisplay } from '../domain/expressionPresentation'
+import { buildSourceHighlightSegments } from '../domain/sourceSentenceHighlight'
 import type {
   ClauseKind,
   GrammaticalRole,
@@ -55,18 +61,28 @@ const GRAMMATICAL_ROLE_LABEL: Record<GrammaticalRole, string> = {
   other: 'その他',
 }
 
-const MAX_READING_ADVICE_SHOWN = 3
-const MAX_STRUCTURE_POINTS_SHOWN = 2
-
 type AsyncStatus = 'idle' | 'loading' | 'success' | 'error'
 
 function spanText(span: Span | null, placeholder = '(検出されませんでした)'): string {
   return span ? span.text : placeholder
 }
 
+function findTreeNode(nodes: readonly StructureTreeNode[], key: string): StructureTreeNode | null {
+  for (const node of nodes) {
+    if (structureTreeNodeKey(node) === key) return node
+    const child = findTreeNode(node.children, key)
+    if (child) return child
+  }
+  return null
+}
+
 export function AnalysisResultPanel({ result, provider, model }: AnalysisResultPanelProps) {
   const { meta, analysis, rawCore, effectiveCore, verification, coreRepair } = result
   const [userNote, setUserNote] = useState('')
+  const [treeInteraction, dispatchTreeInteraction] = useReducer(
+    reduceTreeReadingInteraction,
+    EMPTY_TREE_READING_INTERACTION,
+  )
 
   // By the time this component renders, App.tsx's analyzeSentenceWithComplementVerification()
   // has already run any needed forced-core recovery (Prototype 2.2) AND, when the suspicious
@@ -119,6 +135,7 @@ export function AnalysisResultPanel({ result, provider, model }: AnalysisResultP
     structureGuardRef.current.next()
     setRelations([])
     relativeLinkGuardRef.current.next()
+    dispatchTreeInteraction({ type: 'clearPin' })
   }, [result, model])
 
   const handleStart = async () => {
@@ -157,10 +174,24 @@ export function AnalysisResultPanel({ result, provider, model }: AnalysisResultP
       })
 
     void structurePromise
-      .then((outcome) => {
+      .then(async (outcome) => {
         if (!structureGuardRef.current.isCurrent(structureRequestId)) return
         if (outcome.success) {
-          setStructure(outcome.structure)
+          // Prototype 2.5W Part B — applied BEFORE setStructure/mergeHybridPredicateStructure
+          // ever see this data (item 40: "Timing is critical"), using the same
+          // classifyAcceptedPredicates authority the merger itself uses moments later. A
+          // no-op (structure returned unchanged) whenever the gate doesn't fire, the model
+          // abstains, or the repair fails technically — see whereClauseRelocation.ts.
+          const repaired = await applyFocusedWhereClauseRepair({
+            provider,
+            model,
+            temperature: DEFAULT_TEMPERATURE,
+            sentence: analysis.normalizedText,
+            sentenceCore: core,
+            structure: outcome.structure,
+          })
+          if (!structureGuardRef.current.isCurrent(structureRequestId)) return
+          setStructure(repaired.structure)
           setStructureStatus('success')
         } else {
           setStructureStatus('error')
@@ -223,7 +254,16 @@ export function AnalysisResultPanel({ result, provider, model }: AnalysisResultP
       })
       if (!structureGuardRef.current.isCurrent(requestId)) return
       if (outcome.success) {
-        setStructure(outcome.structure)
+        const repaired = await applyFocusedWhereClauseRepair({
+          provider,
+          model,
+          temperature: DEFAULT_TEMPERATURE,
+          sentence: analysis.normalizedText,
+          sentenceCore: core,
+          structure: outcome.structure,
+        })
+        if (!structureGuardRef.current.isCurrent(requestId)) return
+        setStructure(repaired.structure)
         setStructureStatus('success')
       } else {
         setStructureStatus('error')
@@ -233,6 +273,14 @@ export function AnalysisResultPanel({ result, provider, model }: AnalysisResultP
       setStructureStatus('error')
     }
   }
+
+  // Prototype 2.5ZB: ReadingGuide/PredicateStructure are generated once with the sentence
+  // analysis. Hover, focus, and click below only select already-grounded data.
+  useEffect(() => {
+    if (model && !coreFailure) void handleStart()
+    // result/model are the analysis identity; provider is stable for one mounted App.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [result, model])
 
   const subjectHeadDiffers = core.subjectHead !== null && core.subject !== null && core.subjectHead.text !== core.subject.text
 
@@ -254,9 +302,19 @@ export function AnalysisResultPanel({ result, provider, model }: AnalysisResultP
   }
 
   const started = readingGuideStatus !== 'idle' || structureStatus !== 'idle'
-  const structurePoints = readingGuide ? readingGuide.connections.slice(0, MAX_STRUCTURE_POINTS_SHOWN) : []
-  const groupedExpressions = readingGuide ? prepareExpressionsForDisplay(readingGuide.expressions) : []
-  const readingAdvice = readingGuide ? readingGuide.readingAdvice.slice(0, MAX_READING_ADVICE_SHOWN) : []
+  const activeKey = activeTreeNodeKey(treeInteraction)
+  const activeNode = activeKey ? findTreeNode(tree, activeKey) : null
+  const activeSpan = activeNode ? structureTreeNodeSpan(activeNode) : null
+  const groundedReadingSteps = readingGuide?.readingSteps ?? []
+  const contextualSteps = activeSpan
+    ? findReadingStepsForTreeNode(activeSpan, groundedReadingSteps)
+    : []
+  const displayedExpressions = prepareExpressionsForDisplay(readingGuide?.expressions ?? [])
+  const groundedVocabulary = groundVocabularyForDisplay(analysis.vocabulary, analysis.normalizedText)
+  const displayedVocabulary = activeSpan
+    ? findVocabularyForTreeNode(activeSpan, groundedVocabulary)
+    : groundedVocabulary
+  const sourceHighlight = buildSourceHighlightSegments(analysis.normalizedText, activeSpan)
 
   return (
     <div className="analysis-result">
@@ -309,19 +367,39 @@ export function AnalysisResultPanel({ result, provider, model }: AnalysisResultP
               <dd>{coreUncertain ? '未確定' : core.pattern}</dd>
             </dl>
 
-            {!started && (
-              <button type="button" className="reveal-details-button" onClick={() => void handleStart()} disabled={!model}>
-                英語の語順で読む
-              </button>
-            )}
           </>
         )}
       </section>
 
       {!coreFailure && started && (
         <section>
+          <div className="source-reference">
+            <h2>英文</h2>
+            <p className="source-reference-text">
+              {sourceHighlight.active === null ? (
+                sourceHighlight.before
+              ) : (
+                <>
+                  {sourceHighlight.before}
+                  <mark className="source-active-span">{sourceHighlight.active}</mark>
+                  {sourceHighlight.after}
+                </>
+              )}
+            </p>
+            <p className="source-reference-note">文構造と同じ解析用表記です。</p>
+          </div>
           <h2>文の構造</h2>
-          <StructureTreeView nodes={tree} sentence={analysis.normalizedText} multipleRelations={relations.length > 1} />
+          <StructureTreeView
+            nodes={tree}
+            sentence={analysis.normalizedText}
+            multipleRelations={relations.length > 1}
+            activeNodeKey={activeKey}
+            pinnedNodeKey={treeInteraction.pinnedKey}
+            onPreview={(node) => dispatchTreeInteraction({ type: 'preview', key: structureTreeNodeKey(node) })}
+            onLeave={(node) => dispatchTreeInteraction({ type: 'leave', key: structureTreeNodeKey(node) })}
+            onTogglePin={(node) => dispatchTreeInteraction({ type: 'togglePin', key: structureTreeNodeKey(node) })}
+            onClearPin={() => dispatchTreeInteraction({ type: 'clearPin' })}
+          />
           {structureStatus === 'loading' && <p className="empty-note">構造を解析中…</p>}
           {structureStatus === 'error' && (
             <>
@@ -333,89 +411,84 @@ export function AnalysisResultPanel({ result, provider, model }: AnalysisResultP
               </button>
             </>
           )}
-        </section>
-      )}
-
-      {!coreFailure && started && (
-        <section>
-          <h2>英語の語順で読む</h2>
-          {readingGuideStatus === 'loading' && <p className="empty-note">読み方を解析中…</p>}
-          {readingGuideStatus === 'error' && (
-            <>
-              <p className="analysis-warning" role="alert">
-                読み方ガイドを作成できませんでした
-              </p>
-              <button type="button" onClick={() => void handleRetryReadingGuide()}>
-                再試行
-              </button>
-            </>
-          )}
-          {readingGuideStatus === 'success' && readingGuide && (
-            <>
-              {structurePoints.length > 0 && (
-                <ul className="structure-points">
-                  {structurePoints.map((c, i) => (
-                    <li key={i}>{c.explanation}</li>
-                  ))}
-                </ul>
-              )}
-              <ol className="reading-steps">
-                {readingGuide.readingSteps.map((step, i) => (
-                  <li key={i}>
+          <div className="tree-reading-context" aria-live="polite">
+            <h3>選択した部分の読み方</h3>
+            {!activeNode && (
+              <p className="empty-note">文の構造にカーソルを合わせると、その部分の読み方を確認できます。クリックすると固定できます。</p>
+            )}
+            {activeNode && readingGuideStatus === 'loading' && <p className="empty-note">読み方を解析中…</p>}
+            {activeNode && readingGuideStatus === 'error' && (
+              <>
+                <p className="analysis-warning" role="alert">読み方ガイドを作成できませんでした。</p>
+                <button type="button" onClick={() => void handleRetryReadingGuide()}>再試行</button>
+              </>
+            )}
+            {activeNode && readingGuideStatus === 'success' && contextualSteps.length === 0 && (
+              <p className="empty-note">この部分の読解メモはありません。</p>
+            )}
+            {contextualSteps.length > 0 && (
+              <ol className="reading-steps contextual-cards">
+                {contextualSteps.map((step) => (
+                  <li key={`${step.start}:${step.end}`} className="is-active">
                     <p className="card-title">{step.text}</p>
                     {step.cue && <p className="reading-step-cue">{step.cue}</p>}
                     {step.explanation && <p>{step.explanation}</p>}
                   </li>
                 ))}
               </ol>
-            </>
-          )}
+            )}
+          </div>
+
+          <div className="contextual-vocabulary">
+            <h3>{activeSpan ? 'この部分の語彙' : '語彙'}</h3>
+            {displayedVocabulary.length === 0 ? (
+              <p className="empty-note">
+                {activeSpan ? 'この部分には特に確認する語彙はありません。' : '重要語彙は検出されませんでした。'}
+              </p>
+            ) : (
+              <ul className="card-list vocabulary-cards">
+                {displayedVocabulary.map((v) => (
+                  <li key={`${v.start}:${v.end}`}>
+                    <p className="vocabulary-card-heading">
+                      <span className="card-title">{v.word}</span>
+                      <span className="vocabulary-pos">{vocabularyPartOfSpeechLabel(v.partOfSpeech)}</span>
+                    </p>
+                    <p>{v.contextualMeaning}</p>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
         </section>
       )}
 
-      {readingGuideStatus === 'success' && groupedExpressions.length > 0 && (
-        <section>
-          <h2>文法・言い回し</h2>
-          <ul className="card-list">
-            {groupedExpressions.map((g, i) => (
-              <li key={i}>
-                <p className="card-title">{g.pattern}</p>
-                <p>
-                  {g.meaning} — {g.function}
-                </p>
-                <p className="empty-note">例: {g.examples.join(' / ')}</p>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-
-      {readingGuideStatus === 'success' && readingAdvice.length > 0 && (
-        <section>
-          <h2>読み方のポイント</h2>
-          <ul>
-            {readingAdvice.map((advice, i) => (
-              <li key={i}>{advice}</li>
-            ))}
-          </ul>
-        </section>
-      )}
-
-      <details className="meta-details">
-        <summary>語彙（必要なら）</summary>
-        {analysis.vocabulary.length === 0 ? (
-          <p className="empty-note">重要語彙は検出されませんでした。</p>
-        ) : (
-          <ul className="card-list">
-            {analysis.vocabulary.map((v, i) => (
-              <li key={i}>
-                <p className="card-title">{v.word}</p>
-                <p>{v.contextualMeaning}</p>
+      <section className="expression-section">
+        <h2>表現・語法</h2>
+        {(readingGuideStatus === 'idle' || readingGuideStatus === 'loading') && (
+          <p className="empty-note">表現を解析中…</p>
+        )}
+        {readingGuideStatus === 'error' && (
+          <>
+            <p className="analysis-warning" role="alert">表現・語法を作成できませんでした。</p>
+            <button type="button" onClick={() => void handleRetryReadingGuide()}>再試行</button>
+          </>
+        )}
+        {readingGuideStatus === 'success' && displayedExpressions.length === 0 && (
+          <p className="empty-note">この文には特に取り上げる表現・語法はありません。</p>
+        )}
+        {displayedExpressions.length > 0 && (
+          <ul className="card-list expression-cards">
+            {displayedExpressions.map((expression) => (
+              <li key={expression.pattern}>
+                <p className="card-title">{expression.pattern}</p>
+                <p>{expression.meaning}</p>
+                <p className="empty-note">{expression.function}</p>
+                <p className="expression-examples">{expression.examples.join(' / ')}</p>
               </li>
             ))}
           </ul>
         )}
-      </details>
+      </section>
 
       <section>
         <h2>あなた自身の解釈（メモ）</h2>

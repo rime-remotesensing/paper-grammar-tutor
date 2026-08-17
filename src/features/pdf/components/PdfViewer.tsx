@@ -26,6 +26,7 @@ import {
   closeLayoutDocument,
   registerDocumentWithLayoutService,
   resolveSelectionWithLayoutService,
+  SelectionResolutionError,
   type SelectionEndpointInput,
 } from '../domain/pymupdfLayoutService'
 import { createRequestGuard } from '../../ocr/domain/requestGuard'
@@ -41,6 +42,15 @@ import { PdfPageView } from './PdfPageView'
  * reconstruction behavior; only reports what the existing code actually decided and why.
  */
 const TRACE_ENABLED = import.meta.env.DEV
+
+// Prototype 2.5B item 14: user-facing message when the layout service is unreachable or
+// erroring generically -- unchanged wording from R8, never names PyMuPDF/the service.
+const SERVICE_UNAVAILABLE_MESSAGE = '文の読み取りを確認できませんでした。レイアウトサービスが起動していることを確認してください。'
+// Prototype 2.5B item 14/25: distinct message for a selection that resolved to (or crosses)
+// content the layout service can't reliably extract -- an equation-number endpoint with no
+// recoverable prose, or a suspicious unextractable-glyph gap inside the selected text.
+// Deliberately never mentions "equation"/"glyph"/PyMuPDF -- item 14's own example wording.
+const UNREADABLE_SYMBOL_MESSAGE = '選択範囲に正確に読み取れない記号が含まれています。'
 
 // Vite resolves this to a hashed asset URL; pdf.js runs its parser/renderer in this
 // worker rather than the main thread. Must be set once, before the first getDocument().
@@ -593,7 +603,7 @@ export const PdfViewer = forwardRef<PdfViewerHandle, PdfViewerProps>(function Pd
 
         if (!docInfo) {
           if (TRACE_ENABLED) console.log('[PGT-TRACE] mode = SERVICE_UNAVAILABLE (no registered document)')
-          onSelectionFailed?.('文の読み取りを確認できませんでした。レイアウトサービスが起動していることを確認してください。')
+          onSelectionFailed?.(SERVICE_UNAVAILABLE_MESSAGE)
           return
         }
 
@@ -605,20 +615,32 @@ export const PdfViewer = forwardRef<PdfViewerHandle, PdfViewerProps>(function Pd
           response = await resolveSelectionWithLayoutService(docInfo.documentId, startEndpoint, endEndpoint)
         } catch (err) {
           if (!layoutRequestGuardRef.current.isCurrent(requestId)) return
-          if (TRACE_ENABLED) console.log('[PGT-TRACE] mode = SERVICE_UNAVAILABLE (request failed)', err)
-          onSelectionFailed?.('文の読み取りを確認できませんでした。レイアウトサービスが起動していることを確認してください。')
+          // Prototype 2.5B/E: a recognized service error code means the service is telling
+          // us THIS specific selection is unresolvable -- either "equation_endpoint_unresolved"
+          // (an equation-number endpoint with no recoverable prose) or "missing_glyph_unresolved"
+          // (a visually-present glyph the local OCR recovery couldn't confidently resolve) --
+          // distinct from the service being unreachable/erroring generically.
+          const isKnownUnresolvableSelection = err instanceof SelectionResolutionError && err.code !== null
+          if (TRACE_ENABLED) console.log('[PGT-TRACE] mode = SERVICE_UNAVAILABLE (request failed)', { isKnownUnresolvableSelection, err })
+          onSelectionFailed?.(isKnownUnresolvableSelection ? UNREADABLE_SYMBOL_MESSAGE : SERVICE_UNAVAILABLE_MESSAGE)
           return
         }
         if (!layoutRequestGuardRef.current.isCurrent(requestId)) return // superseded while awaiting resolution
 
-        if (response.sameBlock) {
+        // Prototype 2.5E item 38: sameBlock alone is no longer sufficient to trust native
+        // Range text -- a same-block selection that needed missing-glyph recovery now
+        // carries its OWN repaired reconstructedText/fragments (fragments.length > 0) even
+        // though sameBlock is still structurally true. Only the genuinely unaffected common
+        // case (no recovery involved at all) has an empty fragments array here.
+        if (response.sameBlock && response.fragments.length === 0) {
           if (TRACE_ENABLED) console.log('[PGT-TRACE] mode = SERVICE_SAME_BLOCK_NATIVE', { blockId: response.startBlockId })
           runNativePath()
           return
         }
 
         if (TRACE_ENABLED) {
-          console.log('[PGT-TRACE] mode = SERVICE_RECONSTRUCTION', { startBlockId: response.startBlockId, endBlockId: response.endBlockId })
+          const mode = response.sameBlock ? 'SERVICE_SAME_BLOCK_RECOVERED' : 'SERVICE_RECONSTRUCTION'
+          console.log(`[PGT-TRACE] mode = ${mode}`, { startBlockId: response.startBlockId, endBlockId: response.endBlockId })
           console.log('[PGT-TRACE] fragments (pre-filter):', response.fragments)
         }
 

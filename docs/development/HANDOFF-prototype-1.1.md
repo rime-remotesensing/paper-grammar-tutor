@@ -1,5 +1,7 @@
 # HANDOFF — Paper Grammar Tutor
 
+> **Archived development document:** この文書は Prototype 1.1 時点の引き継ぎ記録です。現在の導入手順は [README](../../README.md) と [Getting Started](../GETTING_STARTED.md) を参照してください。
+
 **この文書だけを読めば、過去の会話履歴が一切ない別PC・別のClaude Codeセッションでも
 プロジェクトを正確に理解し、作業を再開できることを目的としている。**
 
@@ -56,7 +58,7 @@
   (5) 14Bモデルを新規評価に追加。
 - **重要な知見**: 最初に書いた詳細版プロンプト（約90行）は7Bのsubject/verb精度をbaseline比で
   **悪化**させた（100%→61%、93%→61%）。約45行に圧縮したところ大幅に回復（82%/86%）。
-  「プロンプトは長ければ良いわけではない」という教訓（`docs/design-notes.md`に詳細記録）。
+  「プロンプトは長ければ良いわけではない」という教訓（`../design-notes.md`に詳細記録）。
   3Bはプロンプト改善後も改善せず、最終的に28/28文でsentenceCoreが崩壊。
 - **最終判断**: 7B級を最低推奨モデルとする方針を確認しつつ、B/Cの継続検討を提示。
 
@@ -221,7 +223,7 @@ PdfViewer.tsx (src/features/pdf/components/)
 
 ---
 
-## F. 重要な設計判断（要点。詳細な理由は`docs/design-notes.md`）
+## F. 重要な設計判断（要点。詳細な理由は`../design-notes.md`）
 
 1. LLMが返す`start`/`end`は信用せず、`text`を原文へ再照合してアプリ側で座標を検証・補正する
    （`resolveSpan`, `resolveAnalysisSpans.ts`）。
@@ -306,7 +308,7 @@ PdfViewer.tsx (src/features/pdf/components/)
 - **実機検証で発見・修正したバグ**: `<input type="file">`はブラウザの標準動作として、
   **同一ファイルを再選択しても`change`イベントが発火しない**ため、state resetが効かないことが
   あった。`onChange`ハンドラの末尾で`e.target.value = ''`することで解消済み
-  （`PdfViewer.tsx`、`docs/design-notes.md`のPrototype 1セクションに詳細記録）。
+  （`PdfViewer.tsx`、`../design-notes.md`のPrototype 1セクションに詳細記録）。
 
 ---
 
@@ -362,7 +364,7 @@ Playwright + 実ブラウザ(Edge)による自動操作で検証した結果:
 
 ## Status: **PASS WITH KNOWN LIMITATIONS**
 
-自作fixtureではなく実際の英語論文PDF（`D:\sugimoto\paper-grammar-tutor-test-pdfs`、
+自作fixtureではなく実際の英語論文PDF（repository外の個人fixture directory、
 リポジトリ外）を使い、「PDF表示→英文selection→text extraction→normalization→
 必要なら手修正→Ollama解析→右側パネル表示」という読書フローのacceptance testを実施した。
 
@@ -495,7 +497,7 @@ paper-grammar-tutor/
     baselines/prototype-0/      Prototype 0時点の3B/7B結果（凍結、比較用、Git管理対象）
     results/                    実行結果の出力先。.gitignore対象（.gitkeepのみ追跡）。
                                 重要な数値はこのHANDOFF.md C章とdesign-notes.mdに転記済み
-  docs/design-notes.md          全プロトタイプの設計判断の詳細記録（最新が先頭）
+  ../design-notes.md            全プロトタイプの設計判断の詳細記録（最新が先頭）
 ```
 
 ---
@@ -570,4 +572,4 @@ Prototype 1完了時に専用リポジトリへ移行済み）。**
 
 `benchmark/results/`配下は引き続き`.gitignore`対象（`.gitkeep`のみ追跡）。重要な数値は
 このHANDOFF.md（C章・J章）と`benchmark/baselines/prototype-0/`（Git管理下）と
-`docs/design-notes.md`に転記済み。
+`../design-notes.md`に転記済み。

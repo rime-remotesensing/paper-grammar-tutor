@@ -67,7 +67,7 @@ describe('analyzeReadingGuide — Prototype 2.3C (no sentenceCore dependency)', 
       'every 1 nm',
       'in the 0.4 to 0.8 μm region',
     ])
-    expect(result.readingGuide.expressions).toHaveLength(2)
+    expect(result.readingGuide.expressions.map(({ text }) => text)).toEqual(['every 1 nm'])
     expect(result.readingGuide.connections).toHaveLength(1)
   })
 

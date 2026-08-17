@@ -377,7 +377,7 @@ describe('buildHybridStructureTree — Prototype 2.3M: flat-sibling relative cla
     expect(supplement.children.map((n) => n.text)).toEqual(['those aspects'])
     const thoseAspects = supplement.children[0]
     expect(thoseAspects.role).toBe('object')
-    expect(thoseAspects.children).toEqual([{ text: 'that have changed since Collection 5', role: 'relativeClause', start: 71, children: [] }])
+    expect(thoseAspects.children).toEqual([{ text: 'that have changed since Collection 5', role: 'relativeClause', start: 71, end: 107, children: [] }])
   })
 })
 
@@ -419,7 +419,7 @@ describe('buildHybridStructureTree — Prototype 2.3O item 55: Focused Relative-
     const supplement = tree.find((n) => n.role === 'supplement')!
     const thoseAspects = supplement.children.find((n) => n.text === 'those aspects')!
     expect(thoseAspects.children).toEqual([
-      { text: 'that have changed since Collection 5', role: 'relativeClause', start: 66, children: [], relationIndex: 0 },
+      { text: 'that have changed since Collection 5', role: 'relativeClause', start: 66, end: 102, children: [], relationIndex: 0 },
     ])
     expect(thoseAspects.relationIndex).toBe(0)
     // "that" is never dropped (item 12/28).
@@ -459,7 +459,7 @@ describe('buildHybridStructureTree — Prototype 2.3O item 56: multiple relation
     const producedNode = subjectNode.children.find((n) => n.text === 'produced')!
     const valuesNode = producedNode.children.find((n) => n.text === 'values')!
     expect(valuesNode.children).toEqual([
-      { text: 'that agreed with the observations', role: 'relativeClause', start: 40, children: [], relationIndex: 1 },
+      { text: 'that agreed with the observations', role: 'relativeClause', start: 40, end: 73, children: [], relationIndex: 1 },
     ])
     expect(valuesNode.relationIndex).toBe(1)
 
@@ -510,7 +510,7 @@ describe('buildHybridStructureTree — Prototype 2.3O item 59: coordination-box 
 
 describe('applyFocusedRelativeLinks — item 44: a relation whose antecedent matches no tree node is left unapplied', () => {
   it('does not invent a new floating node when the antecedent cannot be located', () => {
-    const tree = [{ text: 'we', role: 'subject' as const, start: 0, children: [] }]
+    const tree = [{ text: 'we', role: 'subject' as const, start: 0, end: 2, children: [] }]
     const orphanRelation = groundRelativeLinkRelation('we describe things that changed.', {
       antecedent: 'nonexistent phrase',
       relativeWord: 'that',
@@ -519,5 +519,104 @@ describe('applyFocusedRelativeLinks — item 44: a relation whose antecedent mat
     expect(orphanRelation).toBeNull() // not even groundable -- antecedent isn't a literal substring
     const result = applyFocusedRelativeLinks(tree, [])
     expect(result).toEqual(tree)
+  })
+})
+
+// Prototype 2.5X — Rule 4 (sole-predicate sentenceModifier folding for source-order).
+
+describe('buildHybridStructureTree — Prototype 2.5X item 24: source-order test', () => {
+  it('renders a later-source-position sentenceModifier AFTER an earlier one, even when incoming array order is reversed (exact CASE B shape)', () => {
+    const c = core('SV', { subject: span('This regression line', 0), verb: span('can be rotated', 21) })
+    const h = hybrid({
+      predicates: [
+        predicate('can be rotated', 21, 'main', [
+          dependent('to the horizontal', 36, 'object'),
+          dependent('to normalize the data', 54, 'condition'),
+        ]),
+      ],
+      // Deliberately reversed incoming order: where-clause (later source position) listed
+      // BEFORE the equation (earlier source position) -- the fix must not depend on array order.
+      sentenceModifiers: [
+        modifierLeaf('where Ln is the normalized radiance', 108, 'clause'),
+        modifierLeaf('the equation [EQUATION_6]', 82, 'object'),
+      ],
+    })
+    const tree = buildHybridStructureTree(c, h)
+    expect(tree).toHaveLength(1) // both modifiers folded into the sole predicate -- no top-level sentenceModifier siblings
+    const predicateNode = tree[0].children[0]
+    expect(predicateNode.children.map((child) => child.text)).toEqual([
+      'to the horizontal',
+      'to normalize the data',
+      'the equation [EQUATION_6]', // start=82, before...
+      'where Ln is the normalized radiance', // ...start=108
+    ])
+  })
+
+  it('does not fold a sentenceModifier positioned BEFORE the sole predicate (preposed opener stays top-level)', () => {
+    const c = core('SV', { subject: span('the sensor', 25), verb: span('remained', 34) })
+    const h = hybrid({
+      predicates: [predicate('remained', 34, 'main', [dependent('stable', 43, 'complement')])],
+      sentenceModifiers: [
+        modifierLeaf('Although temperatures increased', 0, 'clause'), // before the predicate
+        modifierLeaf('as expected', 50, 'clause'), // after the predicate -- foldable
+      ],
+    })
+    const tree = buildHybridStructureTree(c, h)
+    expect(tree).toHaveLength(2) // preposed opener remains a top-level sibling
+    expect(tree[1]).toMatchObject({ text: 'Although temperatures increased' })
+    const predicateNode = tree[0].children[0]
+    expect(predicateNode.children.map((child) => child.text)).toEqual(['stable', 'as expected'])
+  })
+})
+
+describe('buildHybridStructureTree — Prototype 2.5X item 25: coordination negative control', () => {
+  it('does NOT fold sentenceModifiers when 2+ predicates are coordinated -- coordination ambiguity keeps them top-level, unchanged', () => {
+    const c = core('SV', { subject: span('The parameter C', 0), verb: span('is a function', 16) })
+    const h = hybrid({
+      predicates: [
+        predicate('is a function', 16, 'main', [dependent('of the regression slope', 30, 'object')]),
+        predicate('is introduced', 93, 'coordinated', [dependent('to the model', 107, 'object')]),
+      ],
+      sentenceModifiers: [modifierLeaf('[EQUATION_8]', 76, 'other'), modifierLeaf('[EQUATION_9]', 158, 'other')],
+    })
+    const tree = buildHybridStructureTree(c, h)
+    // Subject node + two top-level sentenceModifier siblings -- exactly as before 2.5X.
+    expect(tree).toHaveLength(3)
+    expect(tree[0].role).toBe('subject')
+    expect(tree[0].children.map((child) => child.text)).toEqual(['is a function', 'is introduced'])
+    expect(tree[0].children[0].children.map((child) => child.text)).toEqual(['of the regression slope'])
+    expect(tree[0].children[1].children.map((child) => child.text)).toEqual(['to the model'])
+    expect(tree[1]).toMatchObject({ text: '[EQUATION_8]' })
+    expect(tree[2]).toMatchObject({ text: '[EQUATION_9]' })
+  })
+})
+
+describe('buildHybridStructureTree — Prototype 2.5X item 29: CASE A regression (equation 8/9 attachment + predicate coordination untouched)', () => {
+  it('renders the exact CASE A shape identically to pre-2.5X behavior (no sole predicate, no folding)', () => {
+    const c = core('SV', { subject: span('The parameter C', 0), verb: span('is introduced', 93) })
+    const h = hybrid({
+      predicates: [
+        predicate('is a function', 16, 'main', [
+          dependent('of the regression slope (b) and intercept (a)', 30, 'object'),
+          dependent('[EQUATION_8]', 76, 'clause'),
+        ]),
+        predicate('is introduced', 93, 'coordinated', [
+          dependent('to the cosine correction model as an additive term', 107, 'object'),
+          dependent('[EQUATION_9]', 158, 'clause'),
+        ]),
+      ],
+      sentenceModifiers: [],
+    })
+    const tree = buildHybridStructureTree(c, h)
+    expect(tree).toHaveLength(1)
+    expect(tree[0].children.map((p) => p.text)).toEqual(['is a function', 'is introduced'])
+    expect(tree[0].children[0].children.map((d) => d.text)).toEqual([
+      'of the regression slope (b) and intercept (a)',
+      '[EQUATION_8]',
+    ])
+    expect(tree[0].children[1].children.map((d) => d.text)).toEqual([
+      'to the cosine correction model as an additive term',
+      '[EQUATION_9]',
+    ])
   })
 })

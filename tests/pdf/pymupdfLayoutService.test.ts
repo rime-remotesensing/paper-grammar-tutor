@@ -1,17 +1,22 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('../../src/features/pdf/domain/pymupdfLayoutClient', () => ({
-  checkPymupdfHealth: vi.fn(),
-  registerDocument: vi.fn(),
-  closeDocument: vi.fn(),
-  requestSelectionResolution: vi.fn(),
-}))
+vi.mock('../../src/features/pdf/domain/pymupdfLayoutClient', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/features/pdf/domain/pymupdfLayoutClient')>()
+  return {
+    ...actual,
+    checkPymupdfHealth: vi.fn(),
+    registerDocument: vi.fn(),
+    closeDocument: vi.fn(),
+    requestSelectionResolution: vi.fn(),
+  }
+})
 
 import {
   checkPymupdfHealth,
   closeDocument,
   registerDocument,
   requestSelectionResolution,
+  SelectionResolutionError,
 } from '../../src/features/pdf/domain/pymupdfLayoutClient'
 import {
   checkPymupdfAvailability,
@@ -106,5 +111,36 @@ describe('resolveSelectionWithLayoutService', () => {
   it('throws when the response fails schema validation, instead of silently coercing it', async () => {
     requestSelectionResolutionMock.mockResolvedValue({ sameBlock: 'not-a-boolean' })
     await expect(resolveSelectionWithLayoutService('doc-1', endpoint, endpoint)).rejects.toThrow()
+  })
+
+  it('parses a same-block response WITH recovered fragments (Prototype 2.5E missing-glyph recovery)', async () => {
+    requestSelectionResolutionMock.mockResolvedValue({
+      startBlockId: '1:0',
+      endBlockId: '1:0',
+      sameBlock: true,
+      reconstructedText: 'of\nk\ncan then be used',
+      fragments: [{ pageNumber: 1, text: 'of\nk\ncan then be used' }],
+    })
+    const result = await resolveSelectionWithLayoutService('doc-1', endpoint, endpoint)
+    expect(result.sameBlock).toBe(true)
+    expect(result.fragments).toHaveLength(1)
+  })
+
+  it('parses the fast same-block-no-recovery response (empty fragments, null reconstructedText)', async () => {
+    requestSelectionResolutionMock.mockResolvedValue({
+      startBlockId: '1:0',
+      endBlockId: '1:0',
+      sameBlock: true,
+      reconstructedText: null,
+      fragments: [],
+    })
+    const result = await resolveSelectionWithLayoutService('doc-1', endpoint, endpoint)
+    expect(result.reconstructedText).toBeNull()
+    expect(result.fragments).toEqual([])
+  })
+
+  it('propagates a SelectionResolutionError from the client unchanged (never swallowed/wrapped)', async () => {
+    requestSelectionResolutionMock.mockRejectedValue(new SelectionResolutionError('equation_endpoint_unresolved', 'no recoverable prose'))
+    await expect(resolveSelectionWithLayoutService('doc-1', endpoint, endpoint)).rejects.toMatchObject({ code: 'equation_endpoint_unresolved' })
   })
 })

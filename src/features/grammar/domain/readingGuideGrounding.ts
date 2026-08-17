@@ -1,4 +1,4 @@
-import { resolveSpan } from '../../../utils/spanMatch.ts'
+import { resolveSpanAfter } from '../../../utils/spanMatch.ts'
 import type { LlmReadingGuide, ReadingGuide, ResolvedReadingStep } from '../schemas/readingGuide.schema.ts'
 import { containsSimplifiedChineseCharacters } from './japaneseLanguagePurity.ts'
 
@@ -21,18 +21,12 @@ export type GroundReadingGuideResult =
  */
 export function groundReadingGuide(llm: LlmReadingGuide, sentence: string): GroundReadingGuideResult {
   const resolvedSteps: ResolvedReadingStep[] = []
-  let lastStart = -1
+  let nextStart = 0
 
   for (const step of llm.readingSteps) {
-    const resolved = resolveSpan(sentence, { text: step.text, start: -1, end: -1 })
+    const resolved = resolveSpanAfter(sentence, step.text, nextStart)
     if (!resolved.resolved) {
-      return { success: false, error: `readingStep「${step.text}」が原文中に見つかりませんでした。` }
-    }
-    if (resolved.start <= lastStart) {
-      return {
-        success: false,
-        error: `readingStepが英文中の左から右への順序と一致しません（「${step.text}」）。`,
-      }
+      return { success: false, error: `readingStep「${step.text}」が原文中に見つからないか、左から右への順序と一致しません。` }
     }
     resolvedSteps.push({
       text: resolved.text,
@@ -47,7 +41,7 @@ export function groundReadingGuide(llm: LlmReadingGuide, sentence: string): Grou
       start: resolved.start,
       end: resolved.end,
     })
-    lastStart = resolved.start
+    nextStart = resolved.end
   }
 
   return {
@@ -81,22 +75,35 @@ function groundExpressions(
 ): ReadingGuide['expressions'] {
   const seenSpans = new Set<string>()
   const grounded: ReadingGuide['expressions'] = []
+  let nextStart = 0
   for (const expr of expressions) {
     if (!expr.pattern.trim() || !expr.meaning.trim() || !expr.function.trim()) continue
+    if (!isReusableExpression(expr.text, expr.pattern)) continue
     if (
       containsSimplifiedChineseCharacters(expr.pattern) ||
       containsSimplifiedChineseCharacters(expr.meaning) ||
       containsSimplifiedChineseCharacters(expr.function)
     )
       continue
-    const resolved = resolveSpan(sentence, { text: expr.text, start: -1, end: -1 })
+    const resolved = resolveSpanAfter(sentence, expr.text, nextStart)
     if (!resolved.resolved) continue
     const spanKey = `${resolved.start}:${resolved.end}`
     if (seenSpans.has(spanKey)) continue
     seenSpans.add(spanKey)
-    grounded.push({ ...expr, text: resolved.text })
+    grounded.push({ ...expr, text: resolved.text, start: resolved.start, end: resolved.end })
+    nextStart = resolved.end
   }
   return grounded
+}
+
+/** Structure Tree already teaches these elementary shapes; keep the expression panel for
+ * reusable lexical usage. Preposition-bearing combinations remain eligible. */
+function isReusableExpression(text: string, pattern: string): boolean {
+  const normalizedText = text.trim()
+  if (/^where\b/i.test(normalizedText)) return false
+  if (/^be\s*\+\s*past participle$/i.test(pattern.trim())) return false
+  if (/^(?:can|may|must|should|could)\s+be\s+\w+(?:ed|en)$/i.test(normalizedText)) return false
+  return true
 }
 
 /** Drops a connection entry if either field came back blank, OR if the explanation contains

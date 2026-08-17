@@ -260,6 +260,36 @@
   overflow-wrap: anywhere;
 }
 
+.structure-tree-node {
+  width: auto;
+  max-width: 100%;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  padding: 0.15rem 0.3rem;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.structure-tree-node:disabled {
+  opacity: 1;
+  cursor: default;
+}
+
+.structure-tree-node:not(:disabled):hover,
+.structure-tree-node:not(:disabled):focus-visible,
+.structure-tree-node.is-active {
+  background: var(--bg-subtle);
+  border-color: var(--border);
+  outline: none;
+}
+
+.structure-tree-node.is-pinned {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
 .structure-tree-text {
   font-weight: 600;
 }
@@ -308,12 +338,20 @@
 /* Prototype 2.3E — visual coordination groups (presentation-only; no new semantic tree
    field). One light box holds ALL of a coordination group's full member subtrees (item 5:
    whole subtrees, not just the top text) — never split into separate cards per member
-   (item 16). The connector ("and"/"or"/"but"/"nor"/"yet") is the box's own corner badge,
-   legend-style, overlapping the top border — group-level metadata, never a sibling row or
-   an inline token between members (item 4/27/28). Used identically for predicate/
-   dependent coordination AND the internal subject-modifier list (item 11 — same visual
-   language everywhere), so nested indentation/border-left guides (.structure-tree ul)
-   still read correctly inside a group (item 18). */
+   (item 16). Used identically for predicate/dependent coordination AND the internal
+   subject-modifier list (item 11 — same visual language everywhere), so nested
+   indentation/border-left guides (.structure-tree ul) still read correctly inside a group
+   (item 18).
+
+   Two connector presentations share this same box, depending on caller (Prototype 2.5ZA):
+   - CoordinationGroupView (NodeText's own single-node-text coordination list, e.g. "of X, Y
+     and Z" inside one leaf's text): the connector is a corner badge, legend-style,
+     overlapping the top border — group-level metadata (.coordination-group-badge below).
+   - StructureTreeView's own sibling-group rendering (predicate/dependent/clause-child
+     coordination): the connector renders as its own small row immediately before the
+     member it precedes (.coordination-group-connector below) — accurate for 3+ members,
+     where a single corner badge would wrongly read as labelling the whole group "and"
+     rather than just the final boundary. */
 .coordination-group {
   position: relative;
   background: var(--bg-subtle);
@@ -352,10 +390,21 @@
   padding: 0.1rem 0;
 }
 
-/* A little vertical breathing room between members (item 19) — the connector itself is
-   never placed between them (it's the box's corner badge instead). */
+/* A little vertical breathing room between members (item 19). */
 .coordination-group-members > li + li {
   margin-top: 0.35rem;
+}
+
+/* Prototype 2.5ZA — the connector word as its own small row, immediately before the member
+   it precedes (StructureTreeView's sibling-group rendering only — see the box comment
+   above). Distinct from a member row: smaller, muted, no role label, no children — reads as
+   a joining word, not tree content, while staying real visible DOM text (item 32:
+   accessibility — never CSS-only). */
+.coordination-group-connector {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  font-style: italic;
+  padding: 0.05rem 0;
 }
 
 /* Up to MAX_STRUCTURE_POINTS_SHOWN short bullets directly under the tree — replaces the
@@ -411,6 +460,91 @@
   color: var(--text-muted);
 }
 
+.tree-reading-context {
+  margin-top: 0.75rem;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-subtle);
+}
+
+.source-reference {
+  margin-bottom: 0.9rem;
+}
+
+.source-reference-text {
+  margin: 0.35rem 0 0;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  line-height: 1.7;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.source-active-span {
+  padding: 0.05em 0.12em;
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  background: var(--bg-subtle);
+  color: inherit;
+}
+
+.source-reference-note {
+  margin: 0.2rem 0 0;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+.tree-reading-context h3 {
+  margin: 0.2rem 0 0.45rem;
+  font-size: 0.95rem;
+}
+
+.contextual-cards .is-active {
+  border-color: var(--accent);
+}
+
+.expression-cards li {
+  padding: 0.4rem 0.6rem;
+}
+
+.expression-examples {
+  margin-top: 0.15rem;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.contextual-vocabulary {
+  margin-top: 0.75rem;
+}
+
+.contextual-vocabulary h3 {
+  margin: 0 0 0.45rem;
+  font-size: 0.95rem;
+}
+
+.vocabulary-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  gap: 0.4rem;
+}
+
+.vocabulary-card-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.vocabulary-pos {
+  flex: none;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 500;
+}
+
 .reading-advice {
   margin: 0.5rem 0 0;
   padding-left: 1.25rem;
@@ -449,10 +583,24 @@
   padding-top: 0.5rem;
   font-size: 0.8rem;
   color: var(--text-muted);
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.4rem 1rem;
 }
 
 .app-footer p {
   margin: 0;
+}
+
+.legal-links {
+  display: flex;
+  gap: 0.75rem;
+}
+
+.legal-links a {
+  color: inherit;
 }
 
 /* --- PDF integration (Prototype 1) --- */

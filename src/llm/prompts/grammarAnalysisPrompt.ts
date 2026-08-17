@@ -26,9 +26,11 @@ apposition, other. Put any further Japanese explanation in roleExplanation, not 
 grammaticalRole.
 
 Other rules:
+- "[EQUATION]" or "[EQUATION_n]" represents one opaque displayed mathematical expression.
+  Treat it as one indivisible structural unit; do not classify it as a clause and do not
+  analyze its internal mathematics.
 - Spans ("text") must be exact substrings of the given sentence; start/end are best-effort,
   the app corrects them.
-- Only list genuinely useful items in modifiers/clauses/phrases/vocabulary; don't pad.
 - If something is ambiguous or needs surrounding context, lower "confidence", set
   "needsMoreContext" true, and explain in "uncertainties" (Japanese) — but this is about
   interpretation ambiguity, not an excuse to leave sentenceCore null.
@@ -48,7 +50,28 @@ Examples (sentenceCore only):
    object="the proposal", complement="convincing" (SVOC).
 3. "Reducing measurement error remains a major challenge in this field." -> subject=
    "Reducing measurement error" (gerund phrase, still goes in subject — do not leave this
-   null), verb="remains", complement="a major challenge in this field", object=null.`
+   null), verb="remains", complement="a major challenge in this field", object=null.
+4. "The parameter C is a function of the regression slope." -> subject="The parameter C",
+   verb="is", complement="a function of the regression slope", object=null (SVC) — a noun
+   phrase right after bare copular "be" that identifies/describes the subject is a
+   complement, never an object, even though it has its own trailing "of ..." phrase.
+   Contrast: "The method is applied to the data." -> verb="is applied" (a passive verb, not
+   bare "be"), object=null, complement=null — "to the data" is only a modifier here.`
+
+const VOCABULARY_RULE = `Vocabulary: include exact-source useful technical terms AND reusable academic content words
+(important nouns, verbs, adjectives, adverbs, and meaningful technical phrases) in source order;
+exclude basic function words, variables/symbols, whole clauses, and Expression-like verb +
+preposition items. Assign partOfSpeech as noun, verb, adjective, adverb, nounPhrase, verbPhrase,
+adjectivePhrase, adverbialPhrase, or other; use a Phrase value only for a meaningful multiword unit.
+Also include academically important adverbs or relational words when they materially affect
+interpretation (correspondence, degree, sequence, or logical relation), as their own lexical item
+rather than burying them inside a surrounding phrase.
+Example: in "Lavg is the average of the measured radiance data", return average/noun,
+measured/adjective, radiance/noun — never the whole clause.`
+
+const RESPECTIVELY_VOCABULARY_REQUIREMENT = `If the exact word "respectively" occurs, always
+include it separately as respectively/adverb with the concise contextual meaning
+「それぞれ」「各々その順に」.`
 
 export interface PromptPair {
   system: string
@@ -57,8 +80,8 @@ export interface PromptPair {
 
 export function buildGrammarAnalysisPrompt(sentence: string): PromptPair {
   return {
-    system: SYSTEM_PROMPT,
-    user: `Analyze the grammatical structure of this sentence:\n\n${sentence}`,
+    system: `${SYSTEM_PROMPT}\n\n${VOCABULARY_RULE}`,
+    user: `Analyze the grammatical structure of this sentence:\n\n${sentence}\n\n${RESPECTIVELY_VOCABULARY_REQUIREMENT}`,
   }
 }
 
@@ -68,7 +91,7 @@ export function buildRepairPrompt(
   validationError: string,
 ): PromptPair {
   return {
-    system: SYSTEM_PROMPT,
+    system: `${SYSTEM_PROMPT}\n\n${VOCABULARY_RULE}`,
     user: `Your previous response for the sentence below did not match the required JSON schema.
 
 Sentence:
@@ -79,6 +102,8 @@ ${previousRawText}
 
 Validation error:
 ${validationError}
+
+${RESPECTIVELY_VOCABULARY_REQUIREMENT}
 
 Return a corrected JSON object only, matching the schema exactly. Do not include any explanation outside the JSON.`,
   }

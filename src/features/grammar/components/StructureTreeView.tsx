@@ -1,7 +1,10 @@
+import { Fragment } from 'react'
 import { layoutSiblingsWithCoordinationGroups } from '../domain/coordinationGroupPresentation'
 import { parseSimpleCoordinationList } from '../domain/coordinationListParser'
+import { deriveClauseDisplayLabel } from '../domain/clauseDisplayLabel'
 import type { StructureDisplayRole, StructureTreeNode } from '../domain/structureTree'
 import { CoordinationGroupView } from './CoordinationGroupView'
+import { structureTreeNodeKey } from '../domain/treeReadingMatching'
 
 const STRUCTURE_NODE_ROLE_LABEL: Record<StructureDisplayRole, string> = {
   subject: '主語',
@@ -70,11 +73,18 @@ function NodeText({
     )
   }
 
-  const parsed = parseSimpleCoordinationList(node.text)
+  // Prototype 2.5X item 11/12: for a "clause" node whose grounded children already
+  // decompose its own text (e.g. "where Ln is..., a and b are..." with those exact
+  // propositions rendered as children right below), show only the structural prefix
+  // ("where") instead of the full text again — the full text remains the node's own
+  // authoritative `.text` for grounding/provenance, this only changes what's displayed.
+  const displayText = deriveClauseDisplayLabel(node)
+
+  const parsed = parseSimpleCoordinationList(displayText)
   if (!parsed) {
     return (
       <span className={isAntecedent ? 'structure-tree-text relative-antecedent' : 'structure-tree-text'}>
-        {node.text}
+        {displayText}
         {isAntecedent && relationMarkerIndex(node, showRelationIndex)}
       </span>
     )
@@ -105,11 +115,22 @@ function NodeText({
  * Prototype 2.3D/2.3E: siblings the hybrid merger already validated as coordinated (main +
  * coordinated predicates sharing a subject) or that share a role and are joined by an
  * explicit connector in the source text (e.g. two "condition" dependents) are wrapped in a
- * CoordinationGroupView box instead of a flat list — PURELY a rendering decision
+ * shared box instead of a flat list — PURELY a rendering decision
  * (layoutSiblingsWithCoordinationGroups), no new field on StructureTreeNode itself. Each
  * group's members still render as ordinary tree rows inside the box (item 16: one group,
  * not N separate cards) — nested indentation/border-left guides remain visible at every
  * depth (item 18).
+ *
+ * Prototype 2.5ZA (item 9/11/17/18): for N members ("A, B, and C") the connector is NOT a
+ * single badge implying the whole group is "labelled and" — it renders as its own small row
+ * immediately before the specific member it precedes (`group.boundaryConnectors`, index 0
+ * always null), matching where the source coordinator actually sits (the B→C boundary, not
+ * the group as a whole). A 2-member group ("A and B") uses the exact same mechanism —
+ * boundaryConnectors is [null, "and"] — so there is only one rendering path for every group
+ * size, never a special-cased 3+ branch. This box intentionally does NOT reuse
+ * CoordinationGroupView (that component's single corner-badge design remains exactly as-is
+ * for NodeText's own separate single-node-text coordination list below, e.g. "of X, Y and
+ * Z" inside one leaf's own text — untouched by this prototype).
  *
  * `multipleRelations` (Prototype 2.3O item 20, default false) is threaded unchanged through
  * every recursive call — it never varies within one tree render, only whether the caller's
@@ -119,10 +140,22 @@ export function StructureTreeView({
   nodes,
   sentence,
   multipleRelations = false,
+  activeNodeKey = null,
+  pinnedNodeKey = null,
+  onPreview,
+  onLeave,
+  onTogglePin,
+  onClearPin,
 }: {
   nodes: StructureTreeNode[]
   sentence: string
   multipleRelations?: boolean
+  activeNodeKey?: string | null
+  pinnedNodeKey?: string | null
+  onPreview?: (node: StructureTreeNode) => void
+  onLeave?: (node: StructureTreeNode) => void
+  onTogglePin?: (node: StructureTreeNode) => void
+  onClearPin?: () => void
 }) {
   if (nodes.length === 0) return null
   const items = layoutSiblingsWithCoordinationGroups(sentence, nodes)
@@ -131,34 +164,94 @@ export function StructureTreeView({
       {items.map((item, i) =>
         item.kind === 'node' ? (
           <li key={i}>
-            <NodeText
+            <TreeNodeButton
               node={item.node}
-              isAntecedent={item.node.relationIndex !== undefined || item.node.children.some((c) => c.role === 'relativeClause')}
-              showRelationIndex={multipleRelations}
+              active={activeNodeKey === structureTreeNodeKey(item.node)}
+              pinned={pinnedNodeKey === structureTreeNodeKey(item.node)}
+              multipleRelations={multipleRelations}
+              onPreview={onPreview}
+              onLeave={onLeave}
+              onTogglePin={onTogglePin}
+              onClearPin={onClearPin}
             />
-            <span className="structure-tree-role">{STRUCTURE_NODE_ROLE_LABEL[item.node.role]}</span>
-            <StructureTreeView nodes={item.node.children} sentence={sentence} multipleRelations={multipleRelations} />
+            <StructureTreeView nodes={item.node.children} sentence={sentence} multipleRelations={multipleRelations} activeNodeKey={activeNodeKey} pinnedNodeKey={pinnedNodeKey} onPreview={onPreview} onLeave={onLeave} onTogglePin={onTogglePin} onClearPin={onClearPin} />
           </li>
         ) : (
           <li key={i} className="coordination-group-item">
-            <CoordinationGroupView connector={item.group.connectorText}>
+            <div className="coordination-group" aria-label="並列関係">
               <ul className="coordination-group-members">
                 {item.group.members.map((member, mi) => (
-                  <li key={mi}>
-                    <NodeText
-                      node={member}
-                      isAntecedent={member.relationIndex !== undefined || member.children.some((c) => c.role === 'relativeClause')}
-                      showRelationIndex={multipleRelations}
-                    />
-                    <span className="structure-tree-role">{STRUCTURE_NODE_ROLE_LABEL[member.role]}</span>
-                    <StructureTreeView nodes={member.children} sentence={sentence} multipleRelations={multipleRelations} />
-                  </li>
+                  <Fragment key={mi}>
+                    {item.group.boundaryConnectors[mi] && <li className="coordination-group-connector">{item.group.boundaryConnectors[mi]}</li>}
+                    <li>
+                      <TreeNodeButton
+                        node={member}
+                        active={activeNodeKey === structureTreeNodeKey(member)}
+                        pinned={pinnedNodeKey === structureTreeNodeKey(member)}
+                        multipleRelations={multipleRelations}
+                        onPreview={onPreview}
+                        onLeave={onLeave}
+                        onTogglePin={onTogglePin}
+                        onClearPin={onClearPin}
+                      />
+                      <StructureTreeView nodes={member.children} sentence={sentence} multipleRelations={multipleRelations} activeNodeKey={activeNodeKey} pinnedNodeKey={pinnedNodeKey} onPreview={onPreview} onLeave={onLeave} onTogglePin={onTogglePin} onClearPin={onClearPin} />
+                    </li>
+                  </Fragment>
                 ))}
               </ul>
-            </CoordinationGroupView>
+            </div>
           </li>
         ),
       )}
     </ul>
+  )
+}
+
+function TreeNodeButton({
+  node,
+  active,
+  pinned,
+  multipleRelations,
+  onPreview,
+  onLeave,
+  onTogglePin,
+  onClearPin,
+}: {
+  node: StructureTreeNode
+  active: boolean
+  pinned: boolean
+  multipleRelations: boolean
+  onPreview?: (node: StructureTreeNode) => void
+  onLeave?: (node: StructureTreeNode) => void
+  onTogglePin?: (node: StructureTreeNode) => void
+  onClearPin?: () => void
+}) {
+  const interactive = Boolean(onPreview || onTogglePin)
+  return (
+    <button
+      type="button"
+      className={`structure-tree-node${active ? ' is-active' : ''}${pinned ? ' is-pinned' : ''}`}
+      aria-pressed={pinned}
+      disabled={!interactive}
+      onMouseEnter={() => onPreview?.(node)}
+      onMouseLeave={() => onLeave?.(node)}
+      onFocus={() => onPreview?.(node)}
+      onBlur={() => onLeave?.(node)}
+      onClick={() => onTogglePin?.(node)}
+      onKeyDown={(event) => {
+        if (event.key === 'Escape') {
+          event.preventDefault()
+          onClearPin?.()
+        }
+      }}
+      aria-label={`${node.text}（${STRUCTURE_NODE_ROLE_LABEL[node.role]}）${pinned ? '、選択固定中' : ''}`}
+    >
+      <NodeText
+        node={node}
+        isAntecedent={node.relationIndex !== undefined || node.children.some((c) => c.role === 'relativeClause')}
+        showRelationIndex={multipleRelations}
+      />
+      <span className="structure-tree-role">{STRUCTURE_NODE_ROLE_LABEL[node.role]}</span>
+    </button>
   )
 }

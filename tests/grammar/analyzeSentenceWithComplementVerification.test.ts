@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { analyzeSentenceWithComplementVerification } from '../../src/features/grammar/domain/analyzeSentenceWithComplementVerification'
 import { resetFocusedComplementVerifierCache } from '../../src/features/grammar/domain/focusedComplementVerifierService'
 import { resetFocusedSubjectVerbRepairCache } from '../../src/features/grammar/domain/focusedSubjectVerbRepairService'
+import { resetFocusedCopularCoreRepairCache } from '../../src/features/grammar/domain/focusedCopularCoreRepairService'
+import { resetFocusedPassiveCoreRepairCache } from '../../src/features/grammar/domain/focusedPassiveCoreRepairService'
 import type { LlmGrammarAnalysis } from '../../src/features/grammar/schemas/grammarAnalysis.schema'
 import type {
   GenerateStructuredRequest,
@@ -86,14 +88,29 @@ class RoutingProvider implements LLMProvider {
   forcedCoreCalls = 0
   focusedVerifierCalls = 0
   focusedSvCalls = 0
+  focusedCopularCalls = 0
+  focusedPassiveCalls = 0
   private readonly grammarAnalysisResponse: string
   private readonly focusedVerifierResponse: string | null
   private readonly focusedSvResponse: string | null
+  private readonly focusedCopularResponse: string | null
+  private readonly forcedCoreResponse: string | null
+  private readonly focusedPassiveResponse: string | null
 
-  constructor(grammarAnalysisResponse: string, focusedVerifierResponse: string | null, focusedSvResponse: string | null = null) {
+  constructor(
+    grammarAnalysisResponse: string,
+    focusedVerifierResponse: string | null,
+    focusedSvResponse: string | null = null,
+    focusedCopularResponse: string | null = null,
+    forcedCoreResponse: string | null = null,
+    focusedPassiveResponse: string | null = null,
+  ) {
     this.grammarAnalysisResponse = grammarAnalysisResponse
     this.focusedVerifierResponse = focusedVerifierResponse
     this.focusedSvResponse = focusedSvResponse
+    this.focusedCopularResponse = focusedCopularResponse
+    this.forcedCoreResponse = forcedCoreResponse
+    this.focusedPassiveResponse = focusedPassiveResponse
   }
 
   async listModels(): Promise<ModelInfo[]> {
@@ -105,6 +122,16 @@ class RoutingProvider implements LLMProvider {
   }
 
   async generateStructured(request: GenerateStructuredRequest): Promise<GenerateStructuredResult> {
+    if (request.systemPrompt.includes("Identify ONLY the sentence's PRIMARY clause subject")) {
+      this.focusedCopularCalls++
+      if (this.focusedCopularResponse === null) throw new Error('Focused Copular Core Repair should not have been called')
+      return { rawText: this.focusedCopularResponse, elapsedMs: 1 }
+    }
+    if (request.systemPrompt.includes('Given the sentence and its primary clause')) {
+      this.focusedPassiveCalls++
+      if (this.focusedPassiveResponse === null) throw new Error('Focused Passive-Core Repair should not have been called')
+      return { rawText: this.focusedPassiveResponse, elapsedMs: 1 }
+    }
     if (request.systemPrompt.includes('Decide ONE thing')) {
       this.focusedVerifierCalls++
       if (this.focusedVerifierResponse === null) throw new Error('focused verifier should not have been called')
@@ -117,7 +144,8 @@ class RoutingProvider implements LLMProvider {
     }
     if (request.systemPrompt.includes('already confirmed is a full sentence')) {
       this.forcedCoreCalls++
-      throw new Error('forced-core recovery should not have been called in this test')
+      if (this.forcedCoreResponse === null) throw new Error('forced-core recovery should not have been called in this test')
+      return { rawText: this.forcedCoreResponse, elapsedMs: 1 }
     }
     this.grammarAnalysisCalls++
     return { rawText: this.grammarAnalysisResponse, elapsedMs: 1 }
@@ -127,6 +155,8 @@ class RoutingProvider implements LLMProvider {
 beforeEach(() => {
   resetFocusedComplementVerifierCache()
   resetFocusedSubjectVerbRepairCache()
+  resetFocusedCopularCoreRepairCache()
+  resetFocusedPassiveCoreRepairCache()
 })
 
 describe('analyzeSentenceWithComplementVerification — effective core derivation', () => {
@@ -299,5 +329,260 @@ describe('analyzeSentenceWithComplementVerification — Focused S/V + Focused Co
     expect(outcome.result.coreRepair).toEqual({ failureReason: 'NONE', strategy: 'none', status: 'not-needed' })
     expect(outcome.result.verification.status).toBe('confirmed_supplementary_ing')
     expect(outcome.result.effectiveCore.pattern).toBe('SVO')
+  })
+})
+
+// Prototype 2.5W — Focused Copular Core Repair integration tests.
+
+const COPULAR_SENTENCE = 'The parameter C is a function of the regression slope.'
+const COPULAR_ANALYSIS: LlmGrammarAnalysis = {
+  ...SVOC_ANALYSIS,
+  sentenceCore: {
+    subject: { text: 'The parameter C', start: 0, end: 16 },
+    subjectHead: { text: 'parameter C', start: 4, end: 16 },
+    verb: { text: 'is', start: 17, end: 19 },
+    indirectObject: null,
+    object: { text: 'a function of the regression slope', start: 20, end: 55 },
+    complement: null,
+  },
+}
+const COPULAR_RESPONSE = JSON.stringify({ subject: 'The parameter C', verb: 'is', complement: 'a function of the regression slope' })
+
+const PASSIVE_SENTENCE = 'The method is applied to the data.'
+const PASSIVE_ANALYSIS: LlmGrammarAnalysis = {
+  ...SVOC_ANALYSIS,
+  sentenceCore: {
+    subject: { text: 'The method', start: 0, end: 10 },
+    subjectHead: { text: 'The method', start: 0, end: 10 },
+    verb: { text: 'is applied', start: 11, end: 21 },
+    indirectObject: null,
+    object: null,
+    complement: null,
+  },
+}
+
+describe('analyzeSentenceWithComplementVerification — Prototype 2.5W copular gate integration', () => {
+  it('fires the copular gate and repairs a bare-be O-vs-C misclassification to SVC', async () => {
+    const provider = new RoutingProvider(JSON.stringify(COPULAR_ANALYSIS), null, null, COPULAR_RESPONSE)
+    const outcome = await analyzeSentenceWithComplementVerification({
+      provider,
+      model: 'test-model',
+      sentence: COPULAR_SENTENCE,
+      temperature: 0.1,
+    })
+    expect(outcome.success).toBe(true)
+    if (!outcome.success) return
+    expect(provider.focusedCopularCalls).toBe(1)
+    expect(provider.focusedVerifierCalls).toBe(0)
+    expect(outcome.result.copularRepair.status).toBe('repaired')
+    expect(outcome.result.effectiveCore.pattern).toBe('SVC')
+    expect(outcome.result.effectiveCore.verb?.text).toBe('is')
+    expect(outcome.result.effectiveCore.complement?.text).toBe('a function of the regression slope')
+    expect(outcome.result.effectiveCore.object).toBeNull()
+    expect(outcome.result.effectiveCore.indirectObject).toBeNull()
+    // rawCore is untouched (the original SVO misclassification is still there for debug).
+    expect(outcome.result.rawCore.pattern).toBe('SVO')
+    expect(outcome.result.rawCore.object?.text).toBe('a function of the regression slope')
+    expect(outcome.result.analysis.sentenceCore.pattern).toBe('SVO')
+  })
+
+  it('does NOT fire the copular gate for a passive sentence — 0 focused copular calls', async () => {
+    const provider = new RoutingProvider(JSON.stringify(PASSIVE_ANALYSIS), null, null, null)
+    const outcome = await analyzeSentenceWithComplementVerification({
+      provider,
+      model: 'test-model',
+      sentence: PASSIVE_SENTENCE,
+      temperature: 0.1,
+    })
+    expect(outcome.success).toBe(true)
+    if (!outcome.success) return
+    expect(provider.focusedCopularCalls).toBe(0)
+    expect(outcome.result.copularRepair.status).toBe('not_applicable')
+    expect(outcome.result.effectiveCore).toEqual(outcome.result.rawCore)
+  })
+
+  it('falls back to rawCore safely when the focused copular repair fails technically', async () => {
+    const provider = new RoutingProvider(JSON.stringify(COPULAR_ANALYSIS), null, null, 'not valid json')
+    const outcome = await analyzeSentenceWithComplementVerification({
+      provider,
+      model: 'test-model',
+      sentence: COPULAR_SENTENCE,
+      temperature: 0.1,
+    })
+    expect(outcome.success).toBe(true)
+    if (!outcome.success) return
+    expect(outcome.result.copularRepair.status).toBe('failed')
+    expect(outcome.result.effectiveCore).toEqual(outcome.result.rawCore)
+    expect(outcome.result.effectiveCore.pattern).toBe('SVO')
+    // The comma-ing gate still runs normally afterward (never blocked by a copular failure).
+    expect(outcome.result.verification.status).toBe('not_applicable')
+  })
+
+  it('a normal SVO sentence with no copula-led verb never triggers the copular gate', async () => {
+    const provider = new RoutingProvider(JSON.stringify(SVO_ANALYSIS), null, null, null)
+    const outcome = await analyzeSentenceWithComplementVerification({ provider, model: 'test-model', sentence: SENTENCE, temperature: 0.1 })
+    expect(outcome.success).toBe(true)
+    if (!outcome.success) return
+    expect(provider.focusedCopularCalls).toBe(0)
+    expect(outcome.result.copularRepair.status).toBe('not_applicable')
+  })
+})
+
+// Prototype 2.5Z — Focused Passive-Core Overcomplement Repair integration tests.
+
+const CASE_B_SENTENCE =
+  'This regression line can be rotated to the horizontal to normalize the data using the equation [EQUATION_6] where Ln is the normalized radiance, a and b are the y-intercept and slope of the regression line, respectively, and Lavg is the average of the measured radiance data.'
+const CASE_B_HUGE_COMPLEMENT =
+  'to the horizontal to normalize the data using the equation [EQUATION_6] where Ln is the normalized radiance, a and b are the y-intercept and slope of the regression line, respectively, and Lavg is the average of the measured radiance data'
+
+// A primary GrammarAnalysis response with subject=null -- triggers NULL_SUBJECT, routing to
+// forced-core recovery (the exact live CASE B failure path per Prototype 2.5Y).
+const NULL_SUBJECT_ANALYSIS: LlmGrammarAnalysis = {
+  ...SVOC_ANALYSIS,
+  sentenceCore: { subject: null, subjectHead: null, verb: null, indirectObject: null, object: null, complement: null },
+}
+
+// The forced-core recovery's own malformed response -- exactly the 2.5Y-confirmed shape
+// (huge complement swallowing everything after the passive verb).
+const FORCED_CORE_MALFORMED_RESPONSE = JSON.stringify({
+  subject: { text: 'This regression line', start: 0, end: 21 },
+  subjectHead: { text: 'regression line', start: 5, end: 21 },
+  verb: { text: 'can be rotated', start: 21, end: 35 },
+  indirectObject: null,
+  object: null,
+  complement: { text: CASE_B_HUGE_COMPLEMENT, start: 36, end: 274 },
+})
+
+const PASSIVE_REPAIR_SV_RESPONSE = JSON.stringify({ pattern: 'SV', complement: null })
+
+// A primary GrammarAnalysis response that itself (no forced-core needed) produces the
+// malformed SVOC/suspicious-complement shape -- the "passive+infinitive" failure family
+// confirmed in Prototype 2.5Y (3/5 runs handled entirely by the primary call).
+const PRIMARY_MALFORMED_ANALYSIS: LlmGrammarAnalysis = {
+  ...SVOC_ANALYSIS,
+  sentenceCore: {
+    subject: { text: 'This regression line', start: 0, end: 21 },
+    subjectHead: { text: 'regression line', start: 5, end: 21 },
+    verb: { text: 'can be rotated', start: 21, end: 35 },
+    indirectObject: null,
+    object: { text: 'the horizontal', start: 39, end: 53 },
+    complement: { text: 'to normalize the data', start: 54, end: 75 },
+  },
+}
+const PRIMARY_MALFORMED_SENTENCE = 'This regression line can be rotated to the horizontal to normalize the data.'
+
+// Already-correct raw core (the 1/10 shape 2.5Y also observed) -- gate must not fire at all.
+const ALREADY_CORRECT_SV_ANALYSIS: LlmGrammarAnalysis = {
+  ...SVOC_ANALYSIS,
+  sentenceCore: {
+    subject: { text: 'This regression line', start: 0, end: 21 },
+    subjectHead: { text: 'regression line', start: 5, end: 21 },
+    verb: { text: 'can be rotated', start: 21, end: 35 },
+    indirectObject: null,
+    object: null,
+    complement: null,
+  },
+}
+
+describe('analyzeSentenceWithComplementVerification — Prototype 2.5Z passive-core gate integration', () => {
+  it('item 31: NULL_SUBJECT -> forced-core malformed (SVC + huge complement) -> passive repair corrects to SV/null (exact live CASE B path)', async () => {
+    const provider = new RoutingProvider(
+      JSON.stringify(NULL_SUBJECT_ANALYSIS),
+      null,
+      null,
+      null,
+      FORCED_CORE_MALFORMED_RESPONSE,
+      PASSIVE_REPAIR_SV_RESPONSE,
+    )
+    const outcome = await analyzeSentenceWithComplementVerification({
+      provider,
+      model: 'test-model',
+      sentence: CASE_B_SENTENCE,
+      temperature: 0.1,
+    })
+    expect(outcome.success).toBe(true)
+    if (!outcome.success) return
+    expect(provider.forcedCoreCalls).toBe(1)
+    expect(provider.focusedPassiveCalls).toBe(1)
+    expect(provider.focusedCopularCalls).toBe(0)
+    expect(outcome.result.passiveRepair.status).toBe('repaired')
+    expect(outcome.result.effectiveCore.pattern).toBe('SV')
+    expect(outcome.result.effectiveCore.verb?.text).toBe('can be rotated')
+    expect(outcome.result.effectiveCore.complement).toBeNull()
+    expect(outcome.result.effectiveCore.object).toBeNull()
+    // rawCore is untouched -- the original malformed forced-core result is still there for debug.
+    expect(outcome.result.rawCore.pattern).toBe('SVC')
+    expect(outcome.result.rawCore.complement?.text).toBe(CASE_B_HUGE_COMPLEMENT)
+  })
+
+  it('item 32: primary GrammarAnalysis itself malformed (SVOC, no forced-core needed) -> passive repair corrects it', async () => {
+    const provider = new RoutingProvider(JSON.stringify(PRIMARY_MALFORMED_ANALYSIS), null, null, null, null, PASSIVE_REPAIR_SV_RESPONSE)
+    const outcome = await analyzeSentenceWithComplementVerification({
+      provider,
+      model: 'test-model',
+      sentence: PRIMARY_MALFORMED_SENTENCE,
+      temperature: 0.1,
+    })
+    expect(outcome.success).toBe(true)
+    if (!outcome.success) return
+    expect(provider.forcedCoreCalls).toBe(0)
+    expect(provider.focusedPassiveCalls).toBe(1)
+    expect(outcome.result.passiveRepair.status).toBe('repaired')
+    expect(outcome.result.effectiveCore.pattern).toBe('SV')
+    expect(outcome.result.effectiveCore.object).toBeNull()
+    expect(outcome.result.effectiveCore.complement).toBeNull()
+  })
+
+  it('item 33: already-correct raw SV core never invokes the focused passive repair (0 calls)', async () => {
+    const provider = new RoutingProvider(JSON.stringify(ALREADY_CORRECT_SV_ANALYSIS), null, null, null, null, null)
+    const outcome = await analyzeSentenceWithComplementVerification({
+      provider,
+      model: 'test-model',
+      sentence: PRIMARY_MALFORMED_SENTENCE,
+      temperature: 0.1,
+    })
+    expect(outcome.success).toBe(true)
+    if (!outcome.success) return
+    expect(provider.focusedPassiveCalls).toBe(0)
+    expect(outcome.result.passiveRepair.status).toBe('not_applicable')
+    expect(outcome.result.effectiveCore).toEqual(outcome.result.rawCore)
+  })
+
+  it('item 28: genuine copular SVC never invokes the passive repair (0 calls) -- copular repair still runs', async () => {
+    const provider = new RoutingProvider(JSON.stringify(COPULAR_ANALYSIS), null, null, COPULAR_RESPONSE, null, null)
+    const outcome = await analyzeSentenceWithComplementVerification({
+      provider,
+      model: 'test-model',
+      sentence: COPULAR_SENTENCE,
+      temperature: 0.1,
+    })
+    expect(outcome.success).toBe(true)
+    if (!outcome.success) return
+    expect(provider.focusedCopularCalls).toBe(1)
+    expect(provider.focusedPassiveCalls).toBe(0)
+    expect(outcome.result.copularRepair.status).toBe('repaired')
+    expect(outcome.result.passiveRepair.status).toBe('not_applicable')
+  })
+
+  it('falls back to rawCore safely when the focused passive repair fails technically', async () => {
+    const provider = new RoutingProvider(
+      JSON.stringify(NULL_SUBJECT_ANALYSIS),
+      null,
+      null,
+      null,
+      FORCED_CORE_MALFORMED_RESPONSE,
+      'not valid json',
+    )
+    const outcome = await analyzeSentenceWithComplementVerification({
+      provider,
+      model: 'test-model',
+      sentence: CASE_B_SENTENCE,
+      temperature: 0.1,
+    })
+    expect(outcome.success).toBe(true)
+    if (!outcome.success) return
+    expect(outcome.result.passiveRepair.status).toBe('failed')
+    expect(outcome.result.effectiveCore).toEqual(outcome.result.rawCore)
+    expect(outcome.result.effectiveCore.pattern).toBe('SVC')
   })
 })

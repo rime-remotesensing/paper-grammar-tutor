@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { mergeHybridPredicateStructure } from '../../src/features/grammar/domain/hybridPredicateMerger'
+import { classifyAcceptedPredicates, mergeHybridPredicateStructure } from '../../src/features/grammar/domain/hybridPredicateMerger'
 import type { SentenceCore, Span } from '../../src/features/grammar/schemas/grammarAnalysis.schema'
 import type { PredicateStructure, ResolvedPredicate } from '../../src/features/grammar/schemas/predicateStructure.schema'
 
@@ -274,6 +274,87 @@ describe('mergeHybridPredicateStructure — true object preservation', () => {
   })
 })
 
+describe('mergeHybridPredicateStructure — Prototype 2.5U redundancy condition (item 14/18: core slot overlaps anchor text AND contains an existing dependent)', () => {
+  const SENTENCE = 'The parameter C is a function of the regression slope (b) and intercept (a).'
+
+  it('[18A] suppresses a core.object that overlaps the anchor predicate text AND fully contains an existing dependent (exact CASE A shape)', () => {
+    // Stage 1 folded "a function" (part of the predicate itself) into its object span;
+    // Stage 2 correctly scoped its own dependent to just "of the regression slope (b) and
+    // intercept (a)" starting further right. The core slot span (19-75) overlaps the anchor
+    // predicate "is a function" (16-29) and fully contains the Stage-2 dependent (30-75).
+    const core = coreOf({
+      subject: span('The parameter C', 0),
+      verb: span('is', 16),
+      object: span('a function of the regression slope (b) and intercept (a)', 19),
+      pattern: 'SVO',
+    })
+    const structure = structureOf([predicate('is a function', 16, 'main', [dependent('of the regression slope (b) and intercept (a)', 30, 'object')])])
+    const result = mergeHybridPredicateStructure(SENTENCE, core, structure)
+    expect(result.suppressedCoreDependents).toContainEqual({
+      slot: 'object',
+      text: 'a function of the regression slope (b) and intercept (a)',
+      reason: 'redundant with an existing dependent of the anchor predicate',
+    })
+    const anchor = result.predicates.find((p) => p.isCoreAnchor)
+    expect(anchor?.dependents).toHaveLength(1)
+    expect(anchor?.dependents[0].text).toBe('of the regression slope (b) and intercept (a)')
+  })
+
+  it('[18B] exact same-span core slot is deduped exactly as before (sameSpan short-circuit, unaffected by the new condition)', () => {
+    const sentence = 'The sensor collected data.'
+    const core = coreOf({ subject: span('The sensor', 0), verb: span('collected', 11), object: span('data', 21), pattern: 'SVO' })
+    const structure = structureOf([predicate('collected', 11, 'main', [dependent('data', 21, 'object')])])
+    const result = mergeHybridPredicateStructure(sentence, core, structure)
+    expect(result.suppressedCoreDependents).toEqual([])
+    const anchor = result.predicates.find((p) => p.isCoreAnchor)
+    expect(anchor?.dependents.filter((d) => d.text === 'data')).toHaveLength(1)
+  })
+
+  it('[18C] a legitimate non-overlapping core slot still attaches normally', () => {
+    const sentence = 'The sensor collected data reliably.'
+    const core = coreOf({ subject: span('The sensor', 0), verb: span('collected', 11), object: span('data', 21), pattern: 'SVO' })
+    const structure = structureOf([predicate('collected', 11, 'main', [dependent('reliably', 26, 'modifier')])])
+    const result = mergeHybridPredicateStructure(sentence, core, structure)
+    expect(result.suppressedCoreDependents).toEqual([])
+    const anchor = result.predicates.find((p) => p.isCoreAnchor)
+    expect(anchor?.dependents.some((d) => d.text === 'data')).toBe(true)
+  })
+
+  it('[18D] partial overlap without containment does NOT suppress (core slot overlaps a dependent but does not fully contain it)', () => {
+    // core.complement spans only "a function of the regression" (ends mid-dependent) —
+    // overlaps the anchor predicate AND overlaps the Stage-2 dependent, but does not fully
+    // CONTAIN it (the dependent extends past the core slot's own end). Must still attach.
+    const core = coreOf({
+      subject: span('The parameter C', 0),
+      verb: span('is', 16),
+      complement: span('a function of the regression', 19),
+      pattern: 'SVC',
+    })
+    const structure = structureOf([predicate('is a function', 16, 'main', [dependent('of the regression slope (b) and intercept (a)', 30, 'object')])])
+    const result = mergeHybridPredicateStructure(SENTENCE, core, structure)
+    expect(result.suppressedCoreDependents).toEqual([])
+    const anchor = result.predicates.find((p) => p.isCoreAnchor)
+    expect(anchor?.dependents.some((d) => d.text === 'a function of the regression')).toBe(true)
+  })
+
+  it('[18E] containment without anchor-predicate contamination does NOT suppress (core slot contains a dependent but never touches the anchor\'s own text)', () => {
+    // core.object fully contains the Stage-2 dependent's span, but starts well AFTER the
+    // anchor predicate's own text ends — no overlap with "is a function" itself — so the
+    // redundancy condition's first half (A) is false and injection must proceed normally.
+    const core = coreOf({
+      subject: span('The parameter C', 0),
+      verb: span('is', 16),
+      object: span('of the regression slope (b) and intercept (a) extra', 30),
+      pattern: 'SVO',
+    })
+    const structure = structureOf([predicate('is a function', 16, 'main', [dependent('of the regression slope (b) and intercept (a)', 30, 'object')])])
+    const result = mergeHybridPredicateStructure(SENTENCE, core, structure)
+    expect(result.suppressedCoreDependents).toEqual([])
+    const anchor = result.predicates.find((p) => p.isCoreAnchor)
+    expect(anchor?.dependents.some((d) => d.text === 'of the regression slope (b) and intercept (a) extra')).toBe(true)
+  })
+})
+
 describe('mergeHybridPredicateStructure — that-clause negative control (no false main coordination)', () => {
   it('never creates a top-level coordinated predicate for a that-clause\'s own subordinate verb', () => {
     const sentence = 'The study showed that temperature increased.'
@@ -320,5 +401,109 @@ describe('mergeHybridPredicateStructure — ungrounded core O/IO/C never enters 
     const structure = structureOf([predicate('collected', 11, 'main', [dependent('data', 21, 'object')])])
     const result = mergeHybridPredicateStructure(sentence, core, structure)
     expect(result.suppressedCoreDependents).toEqual([])
+  })
+})
+
+describe('mergeHybridPredicateStructure — Prototype 2.5S salvage fix: rejected coordination candidates keep their content', () => {
+  it('demotes a rejected candidate\'s dependents to sentenceModifiers instead of discarding them (CASE B "using" regression)', () => {
+    // Live shape: the raw model sometimes mistakes a participial phrase ("using the
+    // equation [EQUATION_6]") for a second coordinated predicate. The coordination-evidence
+    // chain is right to reject "using" (no and/or/comma before it) — but its equation
+    // dependent is real, grounded content that must survive as a sentence-level modifier
+    // rather than vanish along with the rejected candidate.
+    const sentence =
+      'This regression line can be rotated to the horizontal to normalize the data using the equation [EQUATION_6] where Ln is the normalized radiance.'
+    const core = coreOf({ subject: span('This regression line', 0), verb: span('can be rotated', 21), pattern: 'SVC' })
+    const structure = structureOf(
+      [
+        predicate('can be rotated', 21, 'main', [dependent('to the horizontal', 36, 'condition'), dependent('to normalize the data', 54, 'object')]),
+        predicate('using', 76, 'coordinated', [dependent('the equation [EQUATION_6]', 82, 'object')]),
+      ],
+      { sentenceModifiers: [{ text: 'where Ln is the normalized radiance', start: 108, end: 143, role: 'clause' }] },
+    )
+    const result = mergeHybridPredicateStructure(sentence, core, structure)
+    expect(result.predicates.map((p) => p.text)).toEqual(['can be rotated'])
+    expect(result.dropped).toContainEqual({ text: 'using', reason: 'no coordination evidence after "can be rotated"' })
+    const modifierTexts = result.sentenceModifiers.map((m) => m.text)
+    expect(modifierTexts).toContain('the equation [EQUATION_6]')
+    expect(modifierTexts).toContain('where Ln is the normalized radiance')
+  })
+
+  it('salvaged sentenceModifiers stay ordered by source position alongside pre-existing ones', () => {
+    const sentence = 'The model runs [EQUATION_1] and uses it where x is the input.'
+    const core = coreOf({ subject: span('The model', 0), verb: span('runs', 10), pattern: 'SVO' })
+    const structure = structureOf(
+      [
+        predicate('runs', 10, 'main', [dependent('[EQUATION_1]', 15, 'object')]),
+        predicate('uses', 32, 'coordinated', [dependent('it', 37, 'object')]),
+      ],
+      { sentenceModifiers: [{ text: 'where x is the input', start: 40, end: 60, role: 'clause' }] },
+    )
+    const result = mergeHybridPredicateStructure(sentence, core, structure)
+    // "uses" IS accepted here (genuine "and" before it) — nothing should be salvaged/dropped.
+    expect(result.dropped).toEqual([])
+    expect(result.predicates.map((p) => p.text)).toEqual(['runs', 'uses'])
+    expect(result.sentenceModifiers.map((m) => m.text)).toEqual(['where x is the input'])
+  })
+})
+
+describe('classifyAcceptedPredicates — Prototype 2.5W item 30: Steps 1–4 extraction regression suite', () => {
+  it('returns the same accepted set (by text) that mergeHybridPredicateStructure derives internally for a coordinated sentence', () => {
+    const sentence = 'The sensor collected data and analyzed the results.'
+    const core = coreOf({ subject: span('The sensor', 0), verb: span('collected', 11), pattern: 'other' })
+    const predicates = [
+      predicate('collected', 11, 'main', [dependent('data', 21, 'object')]),
+      predicate('analyzed', 30, 'coordinated', [dependent('the results', 39, 'object')]),
+    ]
+    const classification = classifyAcceptedPredicates(sentence, core, predicates)
+    expect(classification.accepted.map((p) => p.text)).toEqual(['collected', 'analyzed'])
+    expect(classification.rejected).toEqual([])
+    expect(classification.anchor?.text).toBe('collected')
+    expect(classification.dropped).toEqual([])
+    expect(classification.anchorInjected).toBe(false)
+
+    const merged = mergeHybridPredicateStructure(sentence, core, structureOf(predicates))
+    expect(merged.predicates.map((p) => p.text)).toEqual(classification.accepted.map((p) => p.text))
+  })
+
+  it('rejects an unsupported coordination candidate (no evidence), matching mergeHybridPredicateStructure\'s own dropped list', () => {
+    const sentence =
+      'This regression line can be rotated to the horizontal to normalize the data using the equation [EQUATION_6] where Ln is the normalized radiance.'
+    const core = coreOf({ subject: span('This regression line', 0), verb: span('can be rotated', 21), pattern: 'SVC' })
+    const predicates = [
+      predicate('can be rotated', 21, 'main', [dependent('to the horizontal', 36, 'condition'), dependent('to normalize the data', 54, 'object')]),
+      predicate('using', 76, 'coordinated', [dependent('the equation [EQUATION_6]', 82, 'object')]),
+    ]
+    const classification = classifyAcceptedPredicates(sentence, core, predicates)
+    expect(classification.accepted.map((p) => p.text)).toEqual(['can be rotated'])
+    expect(classification.rejected.map((p) => p.text)).toEqual(['using'])
+    expect(classification.dropped).toContainEqual({ text: 'using', reason: 'no coordination evidence after "can be rotated"' })
+
+    const merged = mergeHybridPredicateStructure(sentence, core, structureOf(predicates))
+    expect(merged.predicates.map((p) => p.text)).toEqual(classification.accepted.map((p) => p.text))
+    expect(merged.dropped).toEqual(classification.dropped)
+  })
+
+  it('reflects subject-containment filtering in `dropped` (item 12/13\'s Step 1, which runs before the accepted/rejected split)', () => {
+    const sentence = 'Collecting reliable field data takes considerable time.'
+    const core = coreOf({ subject: span('Collecting reliable field data', 0), verb: span('takes', 31), pattern: 'SVO' })
+    const predicates = [predicate('Collecting', 0, 'main'), predicate('takes', 31, 'main', [dependent('considerable time', 37, 'complement')])]
+    const classification = classifyAcceptedPredicates(sentence, core, predicates)
+    expect(classification.accepted.map((p) => p.text)).toEqual(['takes'])
+    // Step-1-filtered candidates never enter the accepted/rejected split at all -- only
+    // `dropped` records them (matching the merger's own equivalent behavior).
+    expect(classification.rejected).toEqual([])
+    expect(classification.dropped).toContainEqual({ text: 'Collecting', reason: 'subject-contained (e.g. gerund head)' })
+  })
+
+  it('injects a synthetic anchor from a grounded core.verb when no candidate is compatible, matching the merger\'s anchorInjected flag', () => {
+    const sentence = 'The sensor operated normally.'
+    const core = coreOf({ subject: span('The sensor', 0), verb: span('operated', 11), pattern: 'other' })
+    const classification = classifyAcceptedPredicates(sentence, core, [])
+    expect(classification.anchorInjected).toBe(true)
+    expect(classification.accepted.map((p) => p.text)).toEqual(['operated'])
+
+    const merged = mergeHybridPredicateStructure(sentence, core, structureOf([]))
+    expect(merged.anchorInjected).toBe(true)
   })
 })

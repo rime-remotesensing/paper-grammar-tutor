@@ -35,7 +35,7 @@ export const validAnalysisFixture: LlmGrammarAnalysis = {
     },
   ],
   phrases: [],
-  vocabulary: [{ word: 'indicate', contextualMeaning: '（データなどが）〜を示す' }],
+  vocabulary: [{ word: 'indicate', contextualMeaning: '（データなどが）〜を示す', partOfSpeech: 'verb' }],
   readingHint: ['まず主語のかたまりを読み、その後 indicate という動詞を見つけましょう。'],
   confidence: 0.9,
   uncertainties: [],

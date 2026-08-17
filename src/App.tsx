@@ -12,6 +12,8 @@ import { AnalysisResultPanel } from './features/grammar/components/AnalysisResul
 import { SentenceInputPanel, type AnalyzePhase } from './features/grammar/components/SentenceInputPanel'
 import type { VerifiedSentenceAnalysis } from './features/grammar/domain/analyzeSentenceWithComplementVerification'
 import { analyzeSentenceWithComplementVerification } from './features/grammar/domain/analyzeSentenceWithComplementVerification'
+import { restoreEquationPlaceholdersInFreeText } from './features/grammar/domain/equationPlaceholder'
+import { normalizeSentenceForGrammarAnalysis } from './features/grammar/domain/grammarInputNormalization'
 import { getModelSizeAdvisory } from './features/grammar/domain/modelSizeAdvisory'
 import { OcrFallbackPanel, type OcrStatus, type PaddleStatus, type HighResStatus } from './features/ocr/components/OcrFallbackPanel'
 import { matchWordsToRects, toPixelRect, joinOcrWords } from './features/ocr/domain/ocrGeometry'
@@ -145,10 +147,18 @@ export default function App() {
     const requestId = analyzeRequestGuardRef.current.next()
     setAnalyzeError(null)
     try {
+      // Prototype 2.5G item 9/10/49 + 2.5H item 5: the textarea's source/display text
+      // (equation placeholders as "[式 (N)]", citation markers like "[9]" fully visible)
+      // is converted to analysis form ONLY at this one grammar-input boundary -- citations
+      // removed entirely (metadata, not a grammatical constituent), equation placeholders
+      // normalized to "[EQUATION_N]" -- so the whole analysis pipeline (including span
+      // offset resolution) operates on one consistent representation. The textarea itself
+      // is never touched.
+      const analysisInput = normalizeSentenceForGrammarAnalysis(sentence)
       const outcome = await analyzeSentenceWithComplementVerification({
         provider,
         model: selectedModel,
-        sentence,
+        sentence: analysisInput,
         temperature: DEFAULT_TEMPERATURE,
         onPhaseChange: (phase) => {
           if (analyzeRequestGuardRef.current.isCurrent(requestId)) setAnalyzePhase(phase)
@@ -156,7 +166,10 @@ export default function App() {
       })
       if (!analyzeRequestGuardRef.current.isCurrent(requestId)) return
       if (outcome.success) {
-        setResult(outcome.result)
+        // Item 12/13: restore "[式 (N)]" for display, but ONLY within LLM-generated
+        // free-text explanation fields -- never the offset-derived span text (see
+        // equationPlaceholder.ts's own doc comment for why).
+        setResult({ ...outcome.result, analysis: restoreEquationPlaceholdersInFreeText(outcome.result.analysis) })
       } else {
         setResult(null)
         setAnalyzeError(outcome.error)
@@ -540,6 +553,18 @@ export default function App() {
           AIによる文法解析であり、常に正しいとは限りません。既知の限界は
           <code>README.md</code> を参照してください。
         </p>
+        <nav className="legal-links" aria-label="Legal and source links">
+          <a href="https://github.com/rime-remotesensing/paper-grammar-tutor" target="_blank" rel="noreferrer">
+            Source
+          </a>
+          <a
+            href="https://github.com/rime-remotesensing/paper-grammar-tutor/blob/main/LICENSE"
+            target="_blank"
+            rel="noreferrer"
+          >
+            License
+          </a>
+        </nav>
       </footer>
     </div>
   )

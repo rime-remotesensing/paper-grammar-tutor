@@ -116,10 +116,21 @@ export const GRAMMAR_ANALYSIS_JSON_SCHEMA = {
       items: {
         type: 'object',
         properties: {
-          word: { type: 'string' },
-          contextualMeaning: { type: 'string' },
+          word: {
+            type: 'string',
+            description: 'Exact source substring for one useful lexical item or established multiword technical term; never a clause or surrounding syntax.',
+          },
+          contextualMeaning: {
+            type: 'string',
+            description: 'Short contextual meaning in Japanese.',
+          },
+          partOfSpeech: {
+            type: 'string',
+            enum: ['noun', 'verb', 'adjective', 'adverb', 'nounPhrase', 'verbPhrase', 'adjectivePhrase', 'adverbialPhrase', 'other'],
+            description: 'Coarse POS; use a Phrase value only for a genuine multiword lexical unit.',
+          },
         },
-        required: ['word', 'contextualMeaning'],
+        required: ['word', 'contextualMeaning', 'partOfSpeech'],
         additionalProperties: false,
       },
     },

@@ -64,6 +64,20 @@ export async function closeDocument(baseUrl: string, documentId: string, timeout
   }
 }
 
+/** Prototype 2.5B: thrown when the service responds with a recognized `detail.error` code
+ * (e.g. `equation_endpoint_unresolved`) -- lets callers distinguish "the service told us
+ * this specific selection is unresolvable" from a generic connectivity failure, without the
+ * client itself knowing anything about what the codes mean. */
+export class SelectionResolutionError extends Error {
+  readonly code: string | null
+
+  constructor(code: string | null, message: string) {
+    super(message)
+    this.name = 'SelectionResolutionError'
+    this.code = code
+  }
+}
+
 export async function requestSelectionResolution(
   baseUrl: string,
   documentId: string,
@@ -79,7 +93,21 @@ export async function requestSelectionResolution(
       body: JSON.stringify({ documentId, start, end }),
       signal: innerSignal,
     })
-    if (!response.ok) throw new Error(`selection resolution returned HTTP ${response.status}`)
+    if (!response.ok) {
+      let code: string | null = null
+      try {
+        const body: unknown = await response.json()
+        if (body && typeof body === 'object' && 'detail' in body) {
+          const detail = (body as { detail?: unknown }).detail
+          if (detail && typeof detail === 'object' && 'error' in detail && typeof (detail as { error?: unknown }).error === 'string') {
+            code = (detail as { error: string }).error
+          }
+        }
+      } catch {
+        // Response body wasn't JSON (or already consumed) -- fall through with code=null.
+      }
+      throw new SelectionResolutionError(code, `selection resolution returned HTTP ${response.status}`)
+    }
     return await response.json()
   })
 }

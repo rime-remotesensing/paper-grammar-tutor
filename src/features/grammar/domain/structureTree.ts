@@ -21,9 +21,9 @@ export type StructureDisplayRole =
 export interface StructureTreeNode {
   text: string
   role: StructureDisplayRole
-  /** Source position, used only to keep sibling order visually stable (see sortByStart
-   * below) — not rendered. */
+  /** App-grounded span in the normalized analysis sentence. */
   start: number
+  end: number
   children: StructureTreeNode[]
   /** Prototype 2.3O: index of the Focused Relative-Link relation this node belongs to,
    * stamped on BOTH the antecedent host and its relativeClause child by
@@ -56,8 +56,8 @@ export function buildCoreOnlyTree(core: SentenceCore): StructureTreeNode[] {
   let verbChildren: StructureTreeNode[] = []
   if (core.pattern === 'SVOO' && core.indirectObject && core.object) {
     verbChildren = [
-      { text: core.indirectObject.text, role: 'indirectObject', start: core.indirectObject.start, children: [] },
-      { text: core.object.text, role: 'object', start: core.object.start, children: [] },
+      { text: core.indirectObject.text, role: 'indirectObject', start: core.indirectObject.start, end: core.indirectObject.end, children: [] },
+      { text: core.object.text, role: 'object', start: core.object.start, end: core.object.end, children: [] },
     ]
   } else if (core.pattern === 'SVOC' && core.object && core.complement) {
     verbChildren = [
@@ -65,17 +65,18 @@ export function buildCoreOnlyTree(core: SentenceCore): StructureTreeNode[] {
         text: core.object.text,
         role: 'object',
         start: core.object.start,
-        children: [{ text: core.complement.text, role: 'complement', start: core.complement.start, children: [] }],
+        end: core.object.end,
+        children: [{ text: core.complement.text, role: 'complement', start: core.complement.start, end: core.complement.end, children: [] }],
       },
     ]
   } else if (core.object) {
-    verbChildren = [{ text: core.object.text, role: 'object', start: core.object.start, children: [] }]
+    verbChildren = [{ text: core.object.text, role: 'object', start: core.object.start, end: core.object.end, children: [] }]
   } else if (core.complement) {
-    verbChildren = [{ text: core.complement.text, role: 'complement', start: core.complement.start, children: [] }]
+    verbChildren = [{ text: core.complement.text, role: 'complement', start: core.complement.start, end: core.complement.end, children: [] }]
   }
 
-  const verbNode: StructureTreeNode = { text: core.verb.text, role: 'predicate', start: core.verb.start, children: verbChildren }
-  const subjectNode: StructureTreeNode = { text: core.subject.text, role: 'subject', start: core.subject.start, children: [verbNode] }
+  const verbNode: StructureTreeNode = { text: core.verb.text, role: 'predicate', start: core.verb.start, end: core.verb.end, children: verbChildren }
+  const subjectNode: StructureTreeNode = { text: core.subject.text, role: 'subject', start: core.subject.start, end: core.subject.end, children: [verbNode] }
   return [subjectNode]
 }
 
@@ -154,6 +155,33 @@ export function buildHybridStructureTree(
   const mainPredicates = hybrid.predicates.filter((p) => p !== supplementPredicate)
   const mainPredicateNodes = mainPredicates.map(predicateToNode).map(applyRelativeClauseToPredicateSubtree)
 
+  // --- Rule 4 (Prototype 2.5X item 6/7/9): fold trailing sentenceModifiers into the SOLE
+  // predicate ---
+  // "sentenceModifiers" are phrases the structure analyzer could not tie to one specific
+  // predicate (predicateStructurePrompt.ts's own definition) — genuinely ambiguous when 2+
+  // predicates are coordinated (item 8: coordination stays the stronger authority, this rule
+  // never fires then). With exactly ONE predicate, a modifier positioned AT OR AFTER that
+  // predicate's own start is unambiguous by elimination (it can only belong to it) — but one
+  // positioned BEFORE the predicate is a preposed sentence-level opener (e.g. "Although
+  // temperatures increased, the sensor remained stable" — a live-diagnosed shape,
+  // structureTree.test.ts's own regression fixture) and must stay a top-level sibling, never
+  // folded under the predicate it precedes. Folded modifiers are merged with the predicate's
+  // existing dependents and reordered by the SAME sortByStart already used for ordinary
+  // dependents — this is what fixes CASE B's equation/where-clause visual ordering without
+  // any new sorting logic and without a global sort: content salvaged from a rejected
+  // coordination candidate (Prototype 2.5S) that would otherwise sit as a detached top-level
+  // sibling of the subject, appearing after the subject's entire subtree in render order
+  // regardless of its true source position, now renders as a true sibling of the predicate's
+  // other dependents and sorts correctly among them.
+  const soleMainPredicate = mainPredicates.length === 1 ? mainPredicates[0] : null
+  const isFoldable = (m: ResolvedLeaf) => soleMainPredicate !== null && m.start >= soleMainPredicate.start
+  const foldedSentenceModifiers = hybrid.sentenceModifiers.filter(isFoldable)
+  const topLevelSentenceModifiers = hybrid.sentenceModifiers.filter((m) => !isFoldable(m))
+  if (soleMainPredicate !== null && foldedSentenceModifiers.length > 0) {
+    const foldedNodes = foldedSentenceModifiers.map(leafToNode).map(relabelIfRelativeClauseModifier)
+    mainPredicateNodes[0] = { ...mainPredicateNodes[0], children: sortByStart([...mainPredicateNodes[0].children, ...foldedNodes]) }
+  }
+
   // --- Rule 3 (subject-specific case): relative clause folded into the subject's own text ---
   const subjectSplit = parseRelativeClauseSuffix(core.subject.text)
   const subjectRelativeClauseChild: StructureTreeNode[] = subjectSplit
@@ -162,6 +190,7 @@ export function buildHybridStructureTree(
           text: subjectSplit.relativeClauseText,
           role: 'relativeClause',
           start: core.subject.start + subjectSplit.antecedentText.length + 1,
+          end: core.subject.end,
           children: [],
         },
       ]
@@ -171,6 +200,7 @@ export function buildHybridStructureTree(
     text: subjectSplit ? subjectSplit.antecedentText : core.subject.text,
     role: 'subject',
     start: core.subject.start,
+    end: subjectSplit ? core.subject.start + subjectSplit.antecedentText.length : core.subject.end,
     children: sortByStart([...genuineSubjectModifierNodes, ...mainPredicateNodes, ...subjectRelativeClauseChild]),
   }
 
@@ -178,7 +208,7 @@ export function buildHybridStructureTree(
     ? [{ ...applyRelativeClauseToPredicateSubtree(predicateToNode(supplementPredicate)), role: 'supplement' }]
     : []
 
-  const sentenceModifierNodes = sortByStart(hybrid.sentenceModifiers.map(leafToNode).map(relabelIfRelativeClauseModifier))
+  const sentenceModifierNodes = sortByStart(topLevelSentenceModifiers.map(leafToNode).map(relabelIfRelativeClauseModifier))
 
   const tree = [...openingModifierNodes, subjectNode, ...supplementNode, ...sentenceModifierNodes]
   return applyFocusedRelativeLinks(tree, relations)
@@ -189,6 +219,7 @@ function predicateToNode(predicate: HybridPredicate): StructureTreeNode {
     text: predicate.text,
     role: predicate.relation === 'main' ? 'predicate' : 'coordinatedPredicate',
     start: predicate.start,
+    end: predicate.start + predicate.text.length,
     children: sortByStart(predicate.dependents.map(dependentToNode)),
   }
 }
@@ -198,12 +229,13 @@ function dependentToNode(dependent: HybridDependent): StructureTreeNode {
     text: dependent.text,
     role: dependent.role,
     start: dependent.start,
+    end: dependent.start + dependent.text.length,
     children: sortByStart(dependent.children.map(leafToNode)),
   }
 }
 
 function leafToNode(leaf: HybridLeaf | ResolvedLeaf): StructureTreeNode {
-  return { text: leaf.text, role: leaf.role, start: leaf.start, children: [] }
+  return { text: leaf.text, role: leaf.role, start: leaf.start, end: leaf.start + leaf.text.length, children: [] }
 }
 
 /** NP-like dependent roles that can plausibly be a relative-clause antecedent (item 19:
@@ -291,6 +323,7 @@ function applyRelativeClauseToPredicateSubtree(node: StructureTreeNode): Structu
         text: split.relativeClauseText,
         role: 'relativeClause',
         start: node.start + split.antecedentText.length + 1,
+        end: node.end,
         children: [],
       }
       return { ...node, text: split.antecedentText, children: [relativeClauseNode] }
@@ -301,7 +334,7 @@ function applyRelativeClauseToPredicateSubtree(node: StructureTreeNode): Structu
 }
 
 function nodeEnd(node: StructureTreeNode): number {
-  return node.start + node.text.length
+  return node.end
 }
 
 function spanContainedInNode(node: StructureTreeNode, span: Span): boolean {
@@ -384,12 +417,14 @@ export function applyFocusedRelativeLinks(
       text: relation.relativeClauseSpan.text,
       role: 'relativeClause',
       start: relation.relativeClauseSpan.start,
+      end: relation.relativeClauseSpan.end,
       children: [],
       relationIndex: index,
     }
     const replacement: StructureTreeNode = {
       ...host,
       text: relation.antecedentSpan.text,
+      end: relation.antecedentSpan.end,
       children: sortByStart([...host.children, relativeClauseNode]),
       relationIndex: index,
     }
