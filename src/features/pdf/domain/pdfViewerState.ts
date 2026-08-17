@@ -57,6 +57,15 @@ export interface PointerPoint {
   y: number
 }
 
+/** Returns the exact half-open substring between two DOM-style caret offsets. The caret
+ * passed first may be the focus of a backward drag; ordering the offsets never changes the
+ * half-open rule that the larger offset is the first character NOT selected. */
+export function sliceBetweenCaretOffsets(text: string, anchorOffset: number, focusOffset: number): string {
+  const start = Math.max(0, Math.min(text.length, Math.min(anchorOffset, focusOffset)))
+  const end = Math.max(start, Math.min(text.length, Math.max(anchorOffset, focusOffset)))
+  return text.slice(start, end)
+}
+
 /**
  * Reading-order comparison for two viewport points on the same text-layer page, used to
  * decide which end of a rebuilt selection range is the start vs. the end regardless of

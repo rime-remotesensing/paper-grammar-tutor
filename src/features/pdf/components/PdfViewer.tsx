@@ -15,6 +15,7 @@ import {
   findDigitMiddotMatches,
   isReadingOrderBefore,
   resetForNewDocument,
+  sliceBetweenCaretOffsets,
   type EmbeddedScientificToken,
   type PdfSelectionResult,
   type PointerPoint,
@@ -96,7 +97,7 @@ function extractScientificTokens(range: Range, layer: HTMLElement, canvasRect: D
       const text = node.textContent ?? ''
       const localStart = node === range.startContainer ? range.startOffset : 0
       const localEnd = node === range.endContainer ? range.endOffset : text.length
-      const selectedSlice = text.slice(localStart, localEnd)
+      const selectedSlice = sliceBetweenCaretOffsets(text, localStart, localEnd)
       for (const m of findDigitMiddotMatches(selectedSlice)) {
         const subRange = document.createRange()
         subRange.setStart(node, localStart + m.start)
@@ -206,7 +207,8 @@ function extractWithinLine(layer: HTMLElement, node: Text, offset: number, direc
   if (nodeIndex === -1) return node.textContent ?? ''
 
   if (direction === 'forward') {
-    let text = (node.textContent ?? '').slice(offset)
+    const nodeText = node.textContent ?? ''
+    let text = sliceBetweenCaretOffsets(nodeText, offset, nodeText.length)
     for (let i = nodeIndex + 1; i < flatNodes.length; i++) {
       const cur = flatNodes[i]
       if (cur.nodeType === Node.ELEMENT_NODE) break
@@ -220,7 +222,7 @@ function extractWithinLine(layer: HTMLElement, node: Text, offset: number, direc
     if (cur.nodeType === Node.ELEMENT_NODE) break
     prefixParts.unshift(cur.textContent ?? '')
   }
-  return prefixParts.join('') + (node.textContent ?? '').slice(0, offset)
+  return prefixParts.join('') + sliceBetweenCaretOffsets(node.textContent ?? '', 0, offset)
 }
 
 type LoadStatus = 'idle' | 'loading' | 'ready' | 'error'
@@ -476,15 +478,45 @@ export const PdfViewer = forwardRef<PdfViewerHandle, PdfViewerProps>(function Pd
         isTextNodeInsideAnyTextLayer(selection.anchorNode) && isTextNodeInsideAnyTextLayer(selection.focusNode)
 
       let range: Range
-      if (selectionLooksValid) {
+      const pointerStart = dragStartPointRef.current
+      const pointerEnd: PointerPoint = { x: e.clientX, y: e.clientY }
+      const pointerStartPageEl = pointerStart
+        ? document.elementFromPoint(pointerStart.x, pointerStart.y)?.closest('[data-page-number]') ?? null
+        : null
+      const pointerEndPageEl = document.elementFromPoint(pointerEnd.x, pointerEnd.y)?.closest('[data-page-number]') ?? null
+      const exactStartCaret = pointerStart
+        ? resolveCaretAtExactPoint(pointerStart, pointerStartPageEl ? textLayerOf(pointerStartPageEl) : null)
+        : null
+      const exactEndCaret = resolveCaretAtExactPoint(pointerEnd, pointerEndPageEl ? textLayerOf(pointerEndPageEl) : null)
+
+      // Browser drag selection can snap the native focus one glyph beyond the pointer
+      // (the real Springer case visually ended after "2022)." but Range.endOffset included
+      // the next sentence's "I"). Prefer exact pointer carets when both exist. DOM Range
+      // end offsets are half-open, so the caret after the period excludes that next glyph.
+      if (pointerStart && exactStartCaret && exactEndCaret) {
+        const startCaretPage = pageNumberOfNode(exactStartCaret.node)
+        const endCaretPage = pageNumberOfNode(exactEndCaret.node)
+        const startIsFirst =
+          startCaretPage !== null && endCaretPage !== null && startCaretPage !== endCaretPage
+            ? startCaretPage < endCaretPage
+            : isReadingOrderBefore(pointerStart, pointerEnd)
+        const [from, to] = startIsFirst ? [exactStartCaret, exactEndCaret] : [exactEndCaret, exactStartCaret]
+        const precise = document.createRange()
+        precise.setStart(from.node, from.offset)
+        precise.setEnd(to.node, to.offset)
+        if (precise.collapsed) return
+        selection.removeAllRanges()
+        selection.addRange(precise)
+        range = precise
+      } else if (selectionLooksValid) {
         range = selection.getRangeAt(0)
       } else {
         // Prototype 1.1/2.4A: pdf.js's absolutely-positioned line spans can make native
         // hit-testing land outside any text node when a drag passes through the gap
         // between two lines. Rebuild the range from the actual pointer positions instead.
-        const start = dragStartPointRef.current
+        const start = pointerStart
         if (!start) return
-        const end: PointerPoint = { x: e.clientX, y: e.clientY }
+        const end = pointerEnd
         const startPageEl = document.elementFromPoint(start.x, start.y)?.closest('[data-page-number]') ?? null
         const endPageEl = document.elementFromPoint(end.x, end.y)?.closest('[data-page-number]') ?? null
         const startCaret = resolveCaretInLayer(start, startPageEl ? textLayerOf(startPageEl) : null)
@@ -595,6 +627,14 @@ export const PdfViewer = forwardRef<PdfViewerHandle, PdfViewerProps>(function Pd
       const endPoint = normalizedPointOfBoundary(endContainer, endOffset, endCanvasRect)
       const startBoundaryText = extractWithinLine(startLayer, startContainer as Text, startOffset, 'forward')
       const endBoundaryText = extractWithinLine(endLayer, endContainer as Text, endOffset, 'backward')
+
+      if (TRACE_ENABLED) {
+        console.log('[PGT-TRACE] PDF.js selected text:', JSON.stringify(nativeText))
+        console.log('[PGT-TRACE] layout endpoints:', {
+          start: { pageNumber: startPage, xNorm: startPoint.x, yNorm: startPoint.y, boundaryText: startBoundaryText, offset: startOffset },
+          end: { pageNumber: endPage, xNorm: endPoint.x, yNorm: endPoint.y, boundaryText: endBoundaryText, offset: endOffset },
+        })
+      }
 
       void (async () => {
         const requestId = layoutRequestGuardRef.current.next()

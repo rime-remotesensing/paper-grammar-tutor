@@ -5,6 +5,7 @@ import { deriveClauseDisplayLabel } from '../domain/clauseDisplayLabel'
 import type { StructureDisplayRole, StructureTreeNode } from '../domain/structureTree'
 import { CoordinationGroupView } from './CoordinationGroupView'
 import { structureTreeNodeKey } from '../domain/treeReadingMatching'
+import { deriveStructureNodePresentation } from '../domain/structureNodePresentation'
 
 const STRUCTURE_NODE_ROLE_LABEL: Record<StructureDisplayRole, string> = {
   subject: '主語',
@@ -53,10 +54,12 @@ function relationMarkerIndex(node: StructureTreeNode, showRelationIndex: boolean
  * without a distracting block of color across the whole relative clause. */
 function NodeText({
   node,
+  displayText,
   isAntecedent = false,
   showRelationIndex = false,
 }: {
   node: StructureTreeNode
+  displayText: string
   isAntecedent?: boolean
   showRelationIndex?: boolean
 }) {
@@ -78,13 +81,13 @@ function NodeText({
   // propositions rendered as children right below), show only the structural prefix
   // ("where") instead of the full text again — the full text remains the node's own
   // authoritative `.text` for grounding/provenance, this only changes what's displayed.
-  const displayText = deriveClauseDisplayLabel(node)
+  const derivedText = node.role === 'clause' ? deriveClauseDisplayLabel(node) : displayText
 
-  const parsed = parseSimpleCoordinationList(displayText)
+  const parsed = parseSimpleCoordinationList(derivedText)
   if (!parsed) {
     return (
       <span className={isAntecedent ? 'structure-tree-text relative-antecedent' : 'structure-tree-text'}>
-        {displayText}
+        {derivedText}
         {isAntecedent && relationMarkerIndex(node, showRelationIndex)}
       </span>
     )
@@ -227,6 +230,7 @@ function TreeNodeButton({
   onClearPin?: () => void
 }) {
   const interactive = Boolean(onPreview || onTogglePin)
+  const presentation = deriveStructureNodePresentation(node)
   return (
     <button
       type="button"
@@ -244,10 +248,11 @@ function TreeNodeButton({
           onClearPin?.()
         }
       }}
-      aria-label={`${node.text}（${STRUCTURE_NODE_ROLE_LABEL[node.role]}）${pinned ? '、選択固定中' : ''}`}
+      aria-label={`${presentation.text}（${STRUCTURE_NODE_ROLE_LABEL[node.role]}）${pinned ? '、選択固定中' : ''}`}
     >
       <NodeText
         node={node}
+        displayText={presentation.text}
         isAntecedent={node.relationIndex !== undefined || node.children.some((c) => c.role === 'relativeClause')}
         showRelationIndex={multipleRelations}
       />

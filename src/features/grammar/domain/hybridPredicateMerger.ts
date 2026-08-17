@@ -25,6 +25,10 @@ export interface HybridLeaf {
   start: number
   end: number
   role: HybridDependentRole
+  /** Present only when an authoritative Stage-1 SVC complement adopts a Stage-2
+   * dependent as decomposition detail. PredicateStructure itself remains fixed-depth;
+   * this preserves that dependent's existing leaves while moving the whole subtree. */
+  children?: HybridLeaf[]
 }
 
 export interface HybridDependent {
@@ -60,6 +64,10 @@ export interface HybridMergedStructure {
   subjectModifiers: ResolvedLeaf[]
   predicates: HybridPredicate[]
   sentenceModifiers: ResolvedLeaf[]
+  /** Stage-2 sentence modifiers suppressed from visible sibling placement because a sole
+   * authoritative SVC complement owns their overlap. Retained as grounded presentation
+   * evidence (Prototype 2.6B4), never restored as independent Tree nodes. */
+  suppressedOverlappingModifiers?: ResolvedLeaf[]
   /** Structure-analyzer predicate candidates that did NOT make it into the final tree,
    * with why — for debugging/reporting (Prototype 2.3B item 26/Q), never shown to the user. */
   dropped: DroppedCandidate[]
@@ -254,14 +262,24 @@ export function mergeHybridPredicateStructure(
     p.dependents.flatMap((d) => [{ text: d.text, start: d.start, end: d.end, role: d.role }, ...d.children]),
   )
 
-  const finalPredicates: HybridPredicate[] = accepted.map((p) => ({
-    text: p.text,
-    start: p.start,
-    end: p.end,
-    relation: anchor && sameSpan(p, anchor) ? 'main' : 'coordinated',
-    dependents: p.dependents.map(toHybridDependent),
-    isCoreAnchor: anchor ? sameSpan(p, anchor) : false,
-  }))
+  const finalPredicates: HybridPredicate[] = accepted.map((p) => {
+    const isCoreAnchor = anchor ? sameSpan(p, anchor) : false
+    // Prototype 2.6B2: Stage 2 sometimes over-captures complement-prefix words into a
+    // copular predicate (e.g. "are the two types"). Once Stage 1 has accepted SVC and
+    // grounded its verb, that verb is the display/span authority for the anchor. Keep the
+    // Stage-2 candidate's dependents, but never let its broader predicate surface corrupt
+    // the pedagogical V node.
+    const displayedPredicate =
+      isCoreAnchor && sentenceCore.pattern === 'SVC' && isGrounded(sentenceCore.verb) ? sentenceCore.verb : p
+    return {
+      text: displayedPredicate.text,
+      start: displayedPredicate.start,
+      end: displayedPredicate.end,
+      relation: isCoreAnchor ? 'main' : 'coordinated',
+      dependents: p.dependents.map(toHybridDependent),
+      isCoreAnchor,
+    }
+  })
 
   // --- Step 5: core O/IO/C contamination check + attachment (item 18/19) ---
   const suppressed: SuppressedCoreDependent[] = []
@@ -280,6 +298,43 @@ export function mergeHybridPredicateStructure(
         continue
       }
       const alreadyPresent = anchorNode.dependents.some((d) => sameSpan(d, slotSpan))
+
+      // Prototype 2.6B: for an accepted SVC core, Stage 1's grounded complement is the
+      // top-level constituent authority. Stage 2 may decompose that complement, but a
+      // contained Stage-2 dependent (including a model-invented `object` under a copula)
+      // must not compete with the full C as its sibling. Re-parent only by source-span
+      // containment and only in the SVC/complement channel; SVO and SVOC ownership is
+      // deliberately untouched. Exact-span Stage-2 nodes become the authoritative C
+      // itself, preserving their children without nesting a node inside itself.
+      if (slotName === 'complement' && sentenceCore.pattern === 'SVC') {
+        const owned = anchorNode.dependents.filter((d) => fullyContains(slotSpan, d))
+        if (owned.length > 0) {
+          const exact = owned.find((d) => sameSpan(d, slotSpan))
+          const strictChildren = owned
+            .filter((d) => !sameSpan(d, slotSpan))
+            .flatMap((d) => {
+              // Prototype 2.6B2: SVC has no object slot. A Stage-2 `object` fully owned by
+              // authoritative C is only a redundant head/base wrapper, whether it starts
+              // with C ("the two types...") or follows words Stage 2 over-captured into
+              // the predicate ("of evaluation units"). Do not render that wrapper. Its
+              // already-grounded children, if any, still carry independent decomposition
+              // information and are therefore lifted rather than discarded.
+              if (d.role === 'object') return d.children
+              return [dependentToHybridLeaf(d)]
+            })
+          const exactChildren = exact?.children ?? []
+          anchorNode.dependents = anchorNode.dependents.filter((d) => !owned.includes(d))
+          anchorNode.dependents.push({
+            text: slotSpan.text,
+            start: slotSpan.start,
+            end: slotSpan.end,
+            role: 'complement',
+            children: [...exactChildren, ...strictChildren].sort((a, b) => a.start - b.start),
+          })
+          continue
+        }
+      }
+
       if (alreadyPresent) continue
 
       // Prototype 2.5U redundancy condition (item 14): a core slot whose span both (A)
@@ -305,13 +360,46 @@ export function mergeHybridPredicateStructure(
 
   finalPredicates.sort((a, b) => a.start - b.start)
 
-  const sentenceModifiers = [...structure.sentenceModifiers, ...salvagedModifiers].sort((a, b) => a.start - b.start)
+  let sentenceModifiers = [...structure.sentenceModifiers, ...salvagedModifiers].sort((a, b) => a.start - b.start)
+  const suppressedOverlappingModifiers: ResolvedLeaf[] = []
+
+  // Prototype 2.6B1: a sole accepted SVC predicate gives Stage 1's complement exclusive
+  // ownership of source that STARTS inside its grounded span. A Stage-2 sentenceModifier
+  // fully inside C can be retained as decomposition detail; one that crosses C's right
+  // boundary cannot be represented as its child without lying about containment, so use
+  // the requested safe simplified fallback and omit that redundant Tree fragment. This is
+  // intentionally directional and narrow: left-crossing/other partial overlaps, multiple
+  // predicates, SVO/SVOC, and ordinary predicate dependents are all left untouched.
+  if (anchorNode && finalPredicates.length === 1 && sentenceCore.pattern === 'SVC' && isGrounded(sentenceCore.complement)) {
+    const complementNode = anchorNode.dependents.find((d) => d.role === 'complement' && sameSpan(d, sentenceCore.complement!))
+    if (complementNode) {
+      const retained: ResolvedLeaf[] = []
+      for (const modifier of sentenceModifiers) {
+        const startsInsideComplement =
+          sentenceCore.complement.start <= modifier.start && modifier.start < sentenceCore.complement.end
+        if (!startsInsideComplement) {
+          retained.push(modifier)
+          continue
+        }
+        if (modifier.end <= sentenceCore.complement.end && !sameSpan(modifier, sentenceCore.complement)) {
+          complementNode.children.push(toHybridLeaf(modifier))
+        } else {
+          suppressedOverlappingModifiers.push(modifier)
+        }
+        // Exact-span and right-crossing fragments are already represented by the
+        // authoritative C and intentionally do not become competing Tree nodes.
+      }
+      complementNode.children.sort((a, b) => a.start - b.start)
+      sentenceModifiers = retained
+    }
+  }
 
   return {
     subject,
     subjectModifiers: structure.subjectModifiers,
     predicates: finalPredicates,
     sentenceModifiers,
+    suppressedOverlappingModifiers,
     dropped,
     suppressedCoreDependents: suppressed,
     anchorInjected,
@@ -330,4 +418,14 @@ function toHybridDependent(dep: ResolvedDependent): HybridDependent {
 
 function toHybridLeaf(leaf: ResolvedLeaf): HybridLeaf {
   return { text: leaf.text, start: leaf.start, end: leaf.end, role: leaf.role }
+}
+
+function dependentToHybridLeaf(dependent: HybridDependent): HybridLeaf {
+  return {
+    text: dependent.text,
+    start: dependent.start,
+    end: dependent.end,
+    role: dependent.role,
+    children: dependent.children,
+  }
 }

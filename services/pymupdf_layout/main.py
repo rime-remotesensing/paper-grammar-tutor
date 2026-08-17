@@ -629,10 +629,47 @@ def _line_texts_with_boundary(lines: list[Line], boundary_text: str, direction: 
     return texts
 
 
+def _looks_like_wrapped_url_or_doi(left: str) -> bool:
+    """True only when the final whitespace-delimited token is clearly URL/DOI-shaped.
+
+    A visual line wrap inside one of these identifiers is a true token continuation, not
+    prose.  Keeping the separator empty preserves the identifier; ordinary words and
+    punctuation still retain an explicit visual-line boundary for the frontend's existing
+    whitespace/hyphenation normalizer.
+    """
+    tail = left.rstrip().split()[-1] if left.rstrip() else ""
+    return bool(re.match(r"(?i)(?:https?://|www\.|doi:|10\.\d{4,9}/)\S*$", tail))
+
+
+def _join_prose_fragments(fragments: list[str]) -> str:
+    """Join visual-line fragments without losing lexical boundary provenance.
+
+    ``\n`` is deliberate: the frontend already owns the established wrap-hyphenation and
+    whitespace policy. Existing edge whitespace is not duplicated, URL/DOI continuations
+    remain one token, and an equation placeholder split across extraction fragments is
+    never separated internally.
+    """
+    result = ""
+    for fragment in (part for part in fragments if part):
+        if not result:
+            result = fragment
+            continue
+        if result[-1].isspace() or fragment[0].isspace():
+            separator = ""
+        elif _looks_like_wrapped_url_or_doi(result):
+            separator = ""
+        elif result.count("[") > result.count("]") and "]" in fragment:
+            separator = ""
+        else:
+            separator = "\n"
+        result += separator + fragment
+    return result
+
+
 def _assemble_lines_with_gap_recovery(doc: "pymupdf.Document", page_number: int, page_blocks: PageBlocks, lines: list[Line], line_texts: list[str]) -> str:
-    """Joins `line_texts` in order (still just '\\n'-joined -- the frontend's existing
-    normalizePdfSelectionText already collapses '\\n' runs to a single space, same as it
-    does for an ordinary line-wrap, so no special-casing is needed there); `lines` supplies
+    """Joins `line_texts` in order with `_join_prose_fragments` (ordinary visual prose
+    boundaries remain ``\\n`` so the frontend's existing normalizePdfSelectionText applies
+    its established whitespace/hyphenation policy); `lines` supplies
     the geometry for gap-detection in parallel (same length/order as `line_texts`, but the
     text actually emitted for each position comes from `line_texts` -- see
     _line_texts_with_boundary). Between each adjacent pair, checks for a real,
@@ -770,7 +807,7 @@ def _assemble_lines_with_gap_recovery(doc: "pymupdf.Document", page_number: int,
                     "ASSEMBLE_ITER_END", i=i, nextTrustedLineText=lines[i + 1].text, gapCandidate=True, isParenthesized=True, recovered=recovered,
                     branch="fallback_append_no_fuse_match", partsAfter=list(parts),
                 )
-    result = "\n".join(p for p in parts if p)
+    result = _join_prose_fragments(parts)
     _trace("ASSEMBLE_RESULT", result=result)
     return result
 
@@ -1398,11 +1435,15 @@ def _layout_selection_impl(req: SelectionRequest) -> "SelectionResponse":
         else:
             lo, hi, lo_boundary, hi_boundary = end_idx, start_idx, req.end.boundaryText, req.start.boundaryText
         selected_lines = start_block.lines[lo : hi + 1]
-        has_gap_candidate = any(_gap_between_lines(start_page, selected_lines[i], selected_lines[i + 1]) is not None for i in range(len(selected_lines) - 1))
-        if not has_gap_candidate:
+        if len(selected_lines) == 1:
             return SelectionResponse(startBlockId=start_block.blockId, endBlockId=end_block.blockId, sameBlock=True, reconstructedText=None, fragments=[])
         line_texts = [l.text for l in selected_lines]
-        line_texts[0], line_texts[-1] = lo_boundary, hi_boundary  # lo != hi is guaranteed here (a single line has no internal adjacent pair, so has_gap_candidate would be False)
+        # A native DOM Range omits pdf.js's visual <br> elements from Range.toString(), so
+        # same-block wrapped prose such as "used" / "in" otherwise becomes "usedin".
+        # Multi-line same-block selections therefore use the browser's exact edge-line
+        # boundaries plus PyMuPDF's trusted interior lines. A genuinely single-line
+        # selection keeps the unchanged native fast path above.
+        line_texts[0], line_texts[-1] = lo_boundary, hi_boundary
         repaired = _assemble_lines_with_gap_recovery(doc_state.doc, req.start.pageNumber, start_page, selected_lines, line_texts)
         return SelectionResponse(
             startBlockId=start_block.blockId, endBlockId=end_block.blockId, sameBlock=True, reconstructedText=repaired, fragments=[Fragment(pageNumber=req.start.pageNumber, text=repaired)]

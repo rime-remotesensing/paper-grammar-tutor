@@ -5,6 +5,7 @@ import {
   isReadingOrderBefore,
   pageNumbersInRange,
   resetForNewDocument,
+  sliceBetweenCaretOffsets,
 } from '../../src/features/pdf/domain/pdfViewerState'
 import { PDF_DEFAULT_SCALE } from '../../src/config/settings'
 
@@ -127,5 +128,43 @@ describe('isReadingOrderBefore', () => {
     // even though the right-hand point has a smaller X (as it would for a line-end point
     // being compared against the start of a lower, wrapped line).
     expect(isReadingOrderBefore({ x: 700, y: 500 }, { x: 120, y: 505 }, 2)).toBe(true)
+  })
+})
+
+describe('sliceBetweenCaretOffsets — Prototype 2.6A half-open endpoints', () => {
+  const line = 'in LSM (Lima et al. 2022). In the present study'
+  const citationEnd = line.indexOf(' In the present study')
+
+  it('stops before the next sentence capital', () => {
+    expect(sliceBetweenCaretOffsets(line, 0, citationEnd)).toBe('in LSM (Lima et al. 2022).')
+  })
+
+  it('can end at the entire line', () => {
+    expect(sliceBetweenCaretOffsets(line, 0, line.length)).toBe(line)
+  })
+
+  it('includes the next sentence when its endpoint actually reaches it', () => {
+    const intentionalEnd = line.indexOf(' study')
+    expect(sliceBetweenCaretOffsets(line, 0, intentionalEnd)).toBe('in LSM (Lima et al. 2022). In the present')
+  })
+
+  it('preserves intentional multiple-sentence selections', () => {
+    expect(sliceBetweenCaretOffsets('First. Second. Third.', 0, 14)).toBe('First. Second.')
+  })
+
+  it('preserves a legitimate isolated capital ending', () => {
+    expect(sliceBetweenCaretOffsets('parameter I', 0, 11)).toBe('parameter I')
+  })
+
+  it('uses offsets rather than searching repeated text', () => {
+    expect(sliceBetweenCaretOffsets('In result. In result.', 11, 20)).toBe('In result')
+  })
+
+  it('uses the same half-open span for forward and backward drags', () => {
+    expect(sliceBetweenCaretOffsets(line, 0, citationEnd)).toBe(sliceBetweenCaretOffsets(line, citationEnd, 0))
+  })
+
+  it('clamps offsets without including an extra character', () => {
+    expect(sliceBetweenCaretOffsets('case B', -5, 99)).toBe('case B')
   })
 })

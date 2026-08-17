@@ -7,7 +7,9 @@ export interface SourceSpan {
 }
 
 export function structureTreeNodeSpan(node: StructureTreeNode): SourceSpan {
-  return { start: node.start, end: node.end }
+  return node.presentationSpan
+    ? { start: node.presentationSpan.start, end: node.presentationSpan.end }
+    : { start: node.start, end: node.end }
 }
 
 export function structureTreeNodeKey(node: StructureTreeNode): string {

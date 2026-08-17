@@ -3,6 +3,7 @@ import type { ResolvedLeaf } from '../schemas/predicateStructure.schema.ts'
 import type { HybridDependent, HybridDependentRole, HybridLeaf, HybridMergedStructure, HybridPredicate } from './hybridPredicateMerger.ts'
 import { parseRelativeClauseSuffix, startsWithRelativePronoun } from './relativeClausePresentation.ts'
 import type { GroundedRelativeLinkRelation } from './relativeLinkGrounding.ts'
+import { prepareLosslessComplementPresentation } from './structureNodePresentation.ts'
 
 /** Role shown in the tree UI — the core-slot roles sentenceCore/hybridPredicateMerger own
  * (subject/predicate/coordinatedPredicate/indirectObject/object/complement) plus the
@@ -25,6 +26,9 @@ export interface StructureTreeNode {
   start: number
   end: number
   children: StructureTreeNode[]
+  /** Optional display/interaction ownership derived from grounded presentation evidence.
+   * The node's own text/start/end remain its original grammatical authority. */
+  presentationSpan?: Span
   /** Prototype 2.3O: index of the Focused Relative-Link relation this node belongs to,
    * stamped on BOTH the antecedent host and its relativeClause child by
    * applyFocusedRelativeLinks — lets multi-relation sentences (item 20/40) render each
@@ -182,6 +186,11 @@ export function buildHybridStructureTree(
     mainPredicateNodes[0] = { ...mainPredicateNodes[0], children: sortByStart([...mainPredicateNodes[0].children, ...foldedNodes]) }
   }
 
+  const presentationEvidence = hybrid.suppressedOverlappingModifiers ?? []
+  for (let i = 0; i < mainPredicateNodes.length; i++) {
+    mainPredicateNodes[i] = prepareLosslessComplementPresentation(mainPredicateNodes[i], presentationEvidence)
+  }
+
   // --- Rule 3 (subject-specific case): relative clause folded into the subject's own text ---
   const subjectSplit = parseRelativeClauseSuffix(core.subject.text)
   const subjectRelativeClauseChild: StructureTreeNode[] = subjectSplit
@@ -235,7 +244,15 @@ function dependentToNode(dependent: HybridDependent): StructureTreeNode {
 }
 
 function leafToNode(leaf: HybridLeaf | ResolvedLeaf): StructureTreeNode {
-  return { text: leaf.text, role: leaf.role, start: leaf.start, end: leaf.start + leaf.text.length, children: [] }
+  const children = 'children' in leaf && leaf.children ? leaf.children.map(leafToNode) : []
+  return {
+    text: leaf.text,
+    role: leaf.role,
+    start: leaf.start,
+    end: leaf.start + leaf.text.length,
+    children: sortByStart(children),
+  }
+
 }
 
 /** NP-like dependent roles that can plausibly be a relative-clause antecedent (item 19:
