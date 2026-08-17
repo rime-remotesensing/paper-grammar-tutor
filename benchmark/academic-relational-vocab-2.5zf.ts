@@ -6,6 +6,15 @@ import {
   prepareVocabularyForDisplay,
 } from '../src/features/grammar/domain/vocabularyPresentation.ts'
 import { prepareExpressionsForDisplay } from '../src/features/grammar/domain/expressionPresentation.ts'
+import type { TreeReadingTarget } from '../src/features/grammar/domain/treeReadingTargets.ts'
+
+function wholeSentenceTarget(sentence: string): TreeReadingTarget[] {
+  return [{
+    targetId: 'tree-0', nodeKey: `0:${sentence.length}:clause`, authoritativeStart: 0, authoritativeEnd: sentence.length,
+    interactionStart: 0, interactionEnd: sentence.length, displayText: sentence, authorityText: sentence,
+    interactionText: sentence, role: 'clause', parentTargetId: null, parentDisplayText: null,
+  }]
+}
 
 const provider = new OllamaProvider('http://localhost:11434')
 const model = 'qwen2.5:7b-instruct'
@@ -80,6 +89,7 @@ for (let round = 1; round <= 2; round++) {
         provider,
         model,
         sentence: grammar.analysis.normalizedText,
+        targets: wholeSentenceTarget(grammar.analysis.normalizedText),
         temperature: 0.1,
       })
       if (!readingGuide.success) {
@@ -88,7 +98,7 @@ for (let round = 1; round <= 2; round++) {
         const guide = readingGuide.readingGuide
         const displayedExpressions = prepareExpressionsForDisplay(guide.expressions)
         const readingStepText = guide.readingSteps
-          .flatMap(({ cue, explanation }) => [cue, explanation])
+          .map(({ guidance }) => guidance)
           .join('\n')
         const expectedTokens = sentence.startsWith('The values')
           ? [['a'], ['b'], ['10'], ['20']]

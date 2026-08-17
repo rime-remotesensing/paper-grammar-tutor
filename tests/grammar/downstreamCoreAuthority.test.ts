@@ -66,11 +66,15 @@ const VALID_STRUCTURE_RESPONSE = JSON.stringify({
 })
 
 const VALID_READING_GUIDE_RESPONSE = JSON.stringify({
-  readingSteps: [{ text: 'We', cue: 'x', explanation: 'x' }],
-  connections: [],
+  readingSteps: [{ targetId: 'tree-0', guidance: 'Weを先に受け取る。' }],
   expressions: [],
-  readingAdvice: [],
 })
+
+const TARGETS = [{
+  targetId: 'tree-0', nodeKey: '0:2:subject', authoritativeStart: 0, authoritativeEnd: 2,
+  interactionStart: 0, interactionEnd: 2, displayText: 'We', authorityText: 'We', interactionText: 'We',
+  role: 'subject' as const, parentTargetId: null, parentDisplayText: null,
+}]
 
 beforeEach(() => {
   resetPredicateStructureCache()
@@ -96,8 +100,8 @@ describe('predicateStructureService — rawCore vs effectiveCore never share a c
 describe('readingGuideService — rawCore vs effectiveCore never share a cache entry', () => {
   it('calling with rawCore then effectiveCore triggers TWO separate LLM calls (different cache keys)', async () => {
     const provider = new CountingProvider(VALID_READING_GUIDE_RESPONSE)
-    await getReadingGuide({ provider, model: 'test-model', originalText: SENTENCE, sentenceCore: RAW_SVOC_CORE, temperature: 0.1 })
-    await getReadingGuide({ provider, model: 'test-model', originalText: SENTENCE, sentenceCore: EFFECTIVE_SVO_CORE, temperature: 0.1 })
+    await getReadingGuide({ provider, model: 'test-model', originalText: SENTENCE, sentenceCore: RAW_SVOC_CORE, targets: TARGETS, temperature: 0.1 })
+    await getReadingGuide({ provider, model: 'test-model', originalText: SENTENCE, sentenceCore: EFFECTIVE_SVO_CORE, targets: TARGETS, temperature: 0.1 })
     expect(provider.callCount).toBe(2)
   })
 })

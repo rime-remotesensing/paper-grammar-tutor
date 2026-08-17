@@ -6,6 +6,15 @@ import { groundReadingGuide } from '../src/features/grammar/domain/readingGuideG
 import { analyzeSentence } from '../src/features/grammar/domain/GrammarAnalyzer.ts'
 import { tryParseJson } from '../src/utils/jsonExtract.ts'
 import { prepareVocabularyForDisplay } from '../src/features/grammar/domain/vocabularyPresentation.ts'
+import type { TreeReadingTarget } from '../src/features/grammar/domain/treeReadingTargets.ts'
+
+function wholeSentenceTarget(sentence: string): TreeReadingTarget[] {
+  return [{
+    targetId: 'tree-0', nodeKey: `0:${sentence.length}:clause`, authoritativeStart: 0, authoritativeEnd: sentence.length,
+    interactionStart: 0, interactionEnd: sentence.length, displayText: sentence, authorityText: sentence,
+    interactionText: sentence, role: 'clause', parentTargetId: null, parentDisplayText: null,
+  }]
+}
 
 const model = 'qwen2.5:7b-instruct'
 const provider = new OllamaProvider('http://localhost:11434')
@@ -31,7 +40,8 @@ let basicGrammarNoteCount = 0
 
 for (let round = 1; round <= 2; round++) {
   for (const sentence of sentences) {
-    const prompt = buildReadingGuidePrompt(sentence)
+    const targets = wholeSentenceTarget(sentence)
+    const prompt = buildReadingGuidePrompt(sentence, targets)
     const response = await provider.generateStructured({
       model,
       systemPrompt: prompt.system,
@@ -53,12 +63,7 @@ for (let round = 1; round <= 2; round++) {
     }
 
     rawInventedExpressions += checked.data.expressions.filter(({ text }) => !sentence.includes(text)).length
-    const grounded = groundReadingGuide(checked.data, sentence)
-    if (!grounded.success) {
-      groundingFailures++
-      guideRuns.push({ round, sentence, success: false, error: grounded.error })
-      continue
-    }
+    const grounded = groundReadingGuide(checked.data, sentence, targets)
 
     const { readingSteps, expressions } = grounded.readingGuide
     groundedExactSourceItems += readingSteps.length + expressions.length

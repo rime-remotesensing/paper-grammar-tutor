@@ -17,14 +17,30 @@ describe('findReadingStepsForTreeNode', () => {
     expect(findReadingStepsForTreeNode({ start: 10, end: 20 }, items)).toEqual([items[1], items[0]])
   })
 
-  it('uses a reading step containing a narrow tree node', () => {
+  it('rejects a broader reading step containing a narrow tree node', () => {
     const item = step('containing item', 5, 25)
-    expect(findReadingStepsForTreeNode({ start: 10, end: 20 }, [item])).toEqual([item])
+    expect(findReadingStepsForTreeNode({ start: 10, end: 20 }, [item])).toEqual([])
   })
 
-  it('falls back to meaningful partial overlap', () => {
+  it('rejects partial overlap', () => {
     const item = step('partial', 15, 25)
-    expect(findReadingStepsForTreeNode({ start: 10, end: 20 }, [item])).toEqual([item])
+    expect(findReadingStepsForTreeNode({ start: 10, end: 20 }, [item])).toEqual([])
+  })
+
+  it('rejects both broad live-shape overlaps around an active complement', () => {
+    const items = [step('left broad step', 0, 64), step('right broad step', 65, 109)]
+    expect(findReadingStepsForTreeNode({ start: 31, end: 90 }, items)).toEqual([])
+  })
+
+  it('keeps both source-ordered steps fully contained by the active complement', () => {
+    const items = [step('base complement', 31, 64), step('modifier', 65, 90)]
+    expect(findReadingStepsForTreeNode({ start: 31, end: 90 }, items)).toEqual(items)
+  })
+
+  it('prefers the exact child step over a broad containing complement step', () => {
+    const broad = step('broad complement', 31, 90)
+    const exact = step('exact modifier', 65, 90)
+    expect(findReadingStepsForTreeNode({ start: 65, end: 90 }, [broad, exact])).toEqual([exact])
   })
 
   it('returns nothing for no overlap', () => {

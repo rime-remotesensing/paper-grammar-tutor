@@ -16,8 +16,11 @@ export function structureTreeNodeKey(node: StructureTreeNode): string {
   return `${node.start}:${node.end}:${node.role}`
 }
 
-/** Returns only the strongest overlap tier, in source order: exact, item contained by
- * tree, tree contained by item, then meaningful partial overlap. */
+/** Returns only the strongest structurally safe tier, in source order: exact, then item
+ * contained by tree. A broader item that contains the tree node is not safe to render as
+ * contextual guidance because its text/explanation may describe unselected material.
+ * Partial overlap is likewise deliberately omitted; correct empty state is preferable to
+ * implying that text outside the active Tree authority belongs to it. */
 export function findReadingStepsForTreeNode(
   treeSpan: SourceSpan,
   readingSteps: readonly ResolvedReadingStep[],
@@ -40,8 +43,6 @@ export function findReadingStepsForTreeNode(
 function overlapRank(tree: SourceSpan, item: SourceSpan): number | null {
   if (tree.start === item.start && tree.end === item.end) return 0
   if (tree.start <= item.start && item.end <= tree.end) return 1
-  if (item.start <= tree.start && tree.end <= item.end) return 2
-  if (Math.max(tree.start, item.start) < Math.min(tree.end, item.end)) return 3
   return null
 }
 

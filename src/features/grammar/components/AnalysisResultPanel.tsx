@@ -11,16 +11,18 @@ import { applyFocusedWhereClauseRepair } from '../domain/whereClauseRelocation'
 import { buildCoreOnlyTree, buildHybridStructureTree } from '../domain/structureTree'
 import { resolveSupplementSpan } from '../domain/supplementSpanResolution'
 import { StructureTreeView } from './StructureTreeView'
+import { TreeContextualReadingPanel } from './TreeContextualReadingPanel'
 import type { ReadingGuide } from '../schemas/readingGuide.schema'
 import type { PredicateStructure } from '../schemas/predicateStructure.schema'
 import type { GroundedRelativeLinkRelation } from '../domain/relativeLinkGrounding'
 import { isSentenceCoreFailure } from '../domain/sentenceCoreRecovery'
 import type { StructureTreeNode } from '../domain/structureTree'
-import { findReadingStepsForTreeNode, structureTreeNodeKey, structureTreeNodeSpan } from '../domain/treeReadingMatching'
+import { structureTreeNodeKey, structureTreeNodeSpan } from '../domain/treeReadingMatching'
 import { activeTreeNodeKey, EMPTY_TREE_READING_INTERACTION, reduceTreeReadingInteraction } from '../domain/treeReadingInteraction'
 import { findVocabularyForTreeNode, groundVocabularyForDisplay, vocabularyPartOfSpeechLabel } from '../domain/vocabularyPresentation'
 import { prepareExpressionsForDisplay } from '../domain/expressionPresentation'
 import { buildSourceHighlightSegments } from '../domain/sourceSentenceHighlight'
+import { deriveTreeReadingTargets, findTreeReadingTargetForNode } from '../domain/treeReadingTargets'
 import type {
   ClauseKind,
   GrammaticalRole,
@@ -100,11 +102,9 @@ export function AnalysisResultPanel({ result, provider, model }: AnalysisResultP
   const coreFailure = isSentenceCoreFailure(core)
   const coreUncertain = verification.status === 'uncertain'
 
-  // Prototype 2.3C: ReadingGuide (readingSteps/expressions/connections/readingAdvice) and
-  // PredicateStructureAnalyzer (the structure tree, via the deterministic hybrid merger)
-  // are two fully independent LLM calls, both triggered by the same single "英語の語順で
-  // 読む" click (item 24) but tracked with entirely separate status/result/guard state so
-  // one's failure or retry never touches the other (item 23).
+  // Prototype 2.6B6: PredicateStructure resolves first; ReadingGuide then receives compact
+  // targets from the final repaired Tree. Status and stale-request guards remain separate
+  // so ReadingGuide failure never removes an already-valid Tree.
   const [readingGuideStatus, setReadingGuideStatus] = useState<AsyncStatus>('idle')
   const [readingGuide, setReadingGuide] = useState<ReadingGuide | null>(null)
   const readingGuideGuardRef = useRef(createRequestGuard())
@@ -138,6 +138,16 @@ export function AnalysisResultPanel({ result, provider, model }: AnalysisResultP
     dispatchTreeInteraction({ type: 'clearPin' })
   }, [result, model])
 
+  const buildFinalTree = (
+    resolvedStructure: PredicateStructure | null,
+    resolvedRelations: GroundedRelativeLinkRelation[],
+  ): StructureTreeNode[] => {
+    if (!resolvedStructure) return buildCoreOnlyTree(core)
+    const hybrid = mergeHybridPredicateStructure(analysis.normalizedText, core, resolvedStructure)
+    const supplementSpan = resolveSupplementSpan(analysis.normalizedText, core, rawCore, verification, hybrid)
+    return buildHybridStructureTree(core, hybrid, supplementSpan, resolvedRelations)
+  }
+
   const handleStart = async () => {
     if (!model || coreFailure) return
     const readingGuideRequestId = readingGuideGuardRef.current.next()
@@ -146,11 +156,7 @@ export function AnalysisResultPanel({ result, provider, model }: AnalysisResultP
     setReadingGuideStatus('loading')
     setStructureStatus('loading')
 
-    const {
-      readingGuide: readingGuidePromise,
-      structure: structurePromise,
-      relativeLink: relativeLinkPromise,
-    } = startReadingSupport({
+    const { structure: structurePromise, relativeLink: relativeLinkPromise } = startReadingSupport({
       provider,
       model,
       originalText: analysis.normalizedText,
@@ -158,60 +164,67 @@ export function AnalysisResultPanel({ result, provider, model }: AnalysisResultP
       temperature: DEFAULT_TEMPERATURE,
     })
 
-    void readingGuidePromise
-      .then((outcome) => {
-        if (!readingGuideGuardRef.current.isCurrent(readingGuideRequestId)) return
-        if (outcome.success) {
-          setReadingGuide(outcome.readingGuide)
-          setReadingGuideStatus('success')
-        } else {
-          setReadingGuideStatus('error')
-        }
-      })
-      .catch(() => {
-        if (!readingGuideGuardRef.current.isCurrent(readingGuideRequestId)) return
-        setReadingGuideStatus('error')
-      })
-
-    void structurePromise
-      .then(async (outcome) => {
+    let nextStructure: PredicateStructure | null = null
+    try {
+      const outcome = await structurePromise
+      if (!structureGuardRef.current.isCurrent(structureRequestId)) return
+      if (outcome.success) {
+        const repaired = await applyFocusedWhereClauseRepair({
+          provider,
+          model,
+          temperature: DEFAULT_TEMPERATURE,
+          sentence: analysis.normalizedText,
+          sentenceCore: core,
+          structure: outcome.structure,
+        })
         if (!structureGuardRef.current.isCurrent(structureRequestId)) return
-        if (outcome.success) {
-          // Prototype 2.5W Part B — applied BEFORE setStructure/mergeHybridPredicateStructure
-          // ever see this data (item 40: "Timing is critical"), using the same
-          // classifyAcceptedPredicates authority the merger itself uses moments later. A
-          // no-op (structure returned unchanged) whenever the gate doesn't fire, the model
-          // abstains, or the repair fails technically — see whereClauseRelocation.ts.
-          const repaired = await applyFocusedWhereClauseRepair({
-            provider,
-            model,
-            temperature: DEFAULT_TEMPERATURE,
-            sentence: analysis.normalizedText,
-            sentenceCore: core,
-            structure: outcome.structure,
-          })
-          if (!structureGuardRef.current.isCurrent(structureRequestId)) return
-          setStructure(repaired.structure)
-          setStructureStatus('success')
-        } else {
-          setStructureStatus('error')
-        }
-      })
-      .catch(() => {
-        if (!structureGuardRef.current.isCurrent(structureRequestId)) return
+        nextStructure = repaired.structure
+        setStructure(nextStructure)
+        setStructureStatus('success')
+      } else {
         setStructureStatus('error')
-      })
+      }
+    } catch {
+      if (!structureGuardRef.current.isCurrent(structureRequestId)) return
+      setStructureStatus('error')
+    }
 
+    let nextRelations: GroundedRelativeLinkRelation[] = []
     if (relativeLinkPromise) {
-      void relativeLinkPromise
-        .then((outcome) => {
-          if (!relativeLinkGuardRef.current.isCurrent(relativeLinkRequestId)) return
-          if (outcome.success) setRelations(outcome.relations)
-        })
-        .catch(() => {
-          // Item 48: a technical failure here just leaves `relations` empty — no status to
-          // set, no warning to show, the rest of the structure tree renders unaffected.
-        })
+      try {
+        const outcome = await relativeLinkPromise
+        if (!relativeLinkGuardRef.current.isCurrent(relativeLinkRequestId)) return
+        if (outcome.success) nextRelations = outcome.relations
+      } catch {
+        // A focused-link failure safely leaves the final Tree without focused relations.
+      }
+    }
+    if (!relativeLinkGuardRef.current.isCurrent(relativeLinkRequestId)) return
+    setRelations(nextRelations)
+
+    const targets = deriveTreeReadingTargets(
+      buildFinalTree(nextStructure, nextRelations),
+      analysis.normalizedText,
+    )
+    try {
+      const outcome = await getReadingGuide({
+        provider,
+        model,
+        originalText: analysis.normalizedText,
+        sentenceCore: core,
+        targets,
+        temperature: DEFAULT_TEMPERATURE,
+      })
+      if (!readingGuideGuardRef.current.isCurrent(readingGuideRequestId)) return
+      if (outcome.success) {
+        setReadingGuide(outcome.readingGuide)
+        setReadingGuideStatus('success')
+      } else {
+        setReadingGuideStatus('error')
+      }
+    } catch {
+      if (!readingGuideGuardRef.current.isCurrent(readingGuideRequestId)) return
+      setReadingGuideStatus('error')
     }
   }
 
@@ -225,6 +238,10 @@ export function AnalysisResultPanel({ result, provider, model }: AnalysisResultP
         model,
         originalText: analysis.normalizedText,
         sentenceCore: core,
+        targets: deriveTreeReadingTargets(
+          buildFinalTree(structureStatus === 'success' ? structure : null, relations),
+          analysis.normalizedText,
+        ),
         temperature: DEFAULT_TEMPERATURE,
       })
       if (!readingGuideGuardRef.current.isCurrent(requestId)) return
@@ -243,7 +260,10 @@ export function AnalysisResultPanel({ result, provider, model }: AnalysisResultP
   const handleRetryStructure = async () => {
     if (!model || coreFailure) return
     const requestId = structureGuardRef.current.next()
+    const readingRequestId = readingGuideGuardRef.current.next()
     setStructureStatus('loading')
+    setReadingGuideStatus('loading')
+    let repairedStructure: PredicateStructure
     try {
       const outcome = await getPredicateStructure({
         provider,
@@ -253,29 +273,58 @@ export function AnalysisResultPanel({ result, provider, model }: AnalysisResultP
         temperature: DEFAULT_TEMPERATURE,
       })
       if (!structureGuardRef.current.isCurrent(requestId)) return
-      if (outcome.success) {
-        const repaired = await applyFocusedWhereClauseRepair({
-          provider,
-          model,
-          temperature: DEFAULT_TEMPERATURE,
-          sentence: analysis.normalizedText,
-          sentenceCore: core,
-          structure: outcome.structure,
-        })
-        if (!structureGuardRef.current.isCurrent(requestId)) return
-        setStructure(repaired.structure)
-        setStructureStatus('success')
-      } else {
+      if (!outcome.success) {
         setStructureStatus('error')
+        setReadingGuideStatus('error')
+        return
       }
+      const repaired = await applyFocusedWhereClauseRepair({
+        provider,
+        model,
+        temperature: DEFAULT_TEMPERATURE,
+        sentence: analysis.normalizedText,
+        sentenceCore: core,
+        structure: outcome.structure,
+      })
+      if (!structureGuardRef.current.isCurrent(requestId)) return
+      repairedStructure = repaired.structure
+      setStructure(repairedStructure)
+      setStructureStatus('success')
     } catch {
       if (!structureGuardRef.current.isCurrent(requestId)) return
       setStructureStatus('error')
+      setReadingGuideStatus('error')
+      return
+    }
+
+    const targets = deriveTreeReadingTargets(
+      buildFinalTree(repairedStructure, relations),
+      analysis.normalizedText,
+    )
+    try {
+      const readingOutcome = await getReadingGuide({
+        provider,
+        model,
+        originalText: analysis.normalizedText,
+        sentenceCore: core,
+        targets,
+        temperature: DEFAULT_TEMPERATURE,
+      })
+      if (!readingGuideGuardRef.current.isCurrent(readingRequestId)) return
+      if (readingOutcome.success) {
+        setReadingGuide(readingOutcome.readingGuide)
+        setReadingGuideStatus('success')
+      } else {
+        setReadingGuideStatus('error')
+      }
+    } catch {
+      if (!readingGuideGuardRef.current.isCurrent(readingRequestId)) return
+      setReadingGuideStatus('error')
     }
   }
 
-  // Prototype 2.5ZB: ReadingGuide/PredicateStructure are generated once with the sentence
-  // analysis. Hover, focus, and click below only select already-grounded data.
+  // Prototype 2.6B6: Tree authority is resolved first, then the existing ReadingGuide call
+  // writes notes for those targets. Hover, focus, and click perform exact local lookup only.
   useEffect(() => {
     if (model && !coreFailure) void handleStart()
     // result/model are the analysis identity; provider is stable for one mounted App.
@@ -294,21 +343,15 @@ export function AnalysisResultPanel({ result, provider, model }: AnalysisResultP
   // this to the raw-SVO case (rawCore never even had a complement candidate, so the
   // Verifier was correctly never called at all) via the same conservative comma+-ing
   // surface signal, applied to the hybrid predicate directly — see supplementSpanResolution.ts.
-  let tree = buildCoreOnlyTree(core)
-  if (structureStatus === 'success' && structure) {
-    const hybrid = mergeHybridPredicateStructure(analysis.normalizedText, core, structure)
-    const supplementSpan = resolveSupplementSpan(analysis.normalizedText, core, rawCore, verification, hybrid)
-    tree = buildHybridStructureTree(core, hybrid, supplementSpan, relations)
-  }
+  const tree = buildFinalTree(structureStatus === 'success' ? structure : null, relations)
 
   const started = readingGuideStatus !== 'idle' || structureStatus !== 'idle'
   const activeKey = activeTreeNodeKey(treeInteraction)
   const activeNode = activeKey ? findTreeNode(tree, activeKey) : null
   const activeSpan = activeNode ? structureTreeNodeSpan(activeNode) : null
-  const groundedReadingSteps = readingGuide?.readingSteps ?? []
-  const contextualSteps = activeSpan
-    ? findReadingStepsForTreeNode(activeSpan, groundedReadingSteps)
-    : []
+  const readingTargets = deriveTreeReadingTargets(tree, analysis.normalizedText)
+  const activeReadingTarget = findTreeReadingTargetForNode(activeNode, readingTargets)
+  const readingSteps = readingGuide?.readingSteps ?? []
   const displayedExpressions = prepareExpressionsForDisplay(readingGuide?.expressions ?? [])
   const groundedVocabulary = groundVocabularyForDisplay(analysis.vocabulary, analysis.normalizedText)
   const displayedVocabulary = activeSpan
@@ -411,33 +454,13 @@ export function AnalysisResultPanel({ result, provider, model }: AnalysisResultP
               </button>
             </>
           )}
-          <div className="tree-reading-context" aria-live="polite">
-            <h3>選択した部分の読み方</h3>
-            {!activeNode && (
-              <p className="empty-note">文の構造にカーソルを合わせると、その部分の読み方を確認できます。クリックすると固定できます。</p>
-            )}
-            {activeNode && readingGuideStatus === 'loading' && <p className="empty-note">読み方を解析中…</p>}
-            {activeNode && readingGuideStatus === 'error' && (
-              <>
-                <p className="analysis-warning" role="alert">読み方ガイドを作成できませんでした。</p>
-                <button type="button" onClick={() => void handleRetryReadingGuide()}>再試行</button>
-              </>
-            )}
-            {activeNode && readingGuideStatus === 'success' && contextualSteps.length === 0 && (
-              <p className="empty-note">この部分の読解メモはありません。</p>
-            )}
-            {contextualSteps.length > 0 && (
-              <ol className="reading-steps contextual-cards">
-                {contextualSteps.map((step) => (
-                  <li key={`${step.start}:${step.end}`} className="is-active">
-                    <p className="card-title">{step.text}</p>
-                    {step.cue && <p className="reading-step-cue">{step.cue}</p>}
-                    {step.explanation && <p>{step.explanation}</p>}
-                  </li>
-                ))}
-              </ol>
-            )}
-          </div>
+          <TreeContextualReadingPanel
+            hasActiveNode={activeNode !== null}
+            activeTarget={activeReadingTarget}
+            readingGuideStatus={readingGuideStatus}
+            readingSteps={readingSteps}
+            onRetry={() => void handleRetryReadingGuide()}
+          />
 
           <div className="contextual-vocabulary">
             <h3>{activeSpan ? 'この部分の語彙' : '語彙'}</h3>

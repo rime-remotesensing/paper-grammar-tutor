@@ -1,5 +1,68 @@
 # インストールと起動
 
+## 推奨: Docker quick start
+
+最初に検証したDocker配布環境は次のとおりです。
+
+- Windows 10/11
+- Docker Desktop（WSL2 backend）
+- NVIDIA GPU（検証機: RTX 4070 Ti SUPER 16 GB）
+- NVIDIA driver / Docker GPU passthrough
+- Git、またはGitHub ZIP download
+
+この方法ではNode.js、Python、venv、PyMuPDF、PaddlePaddle、PaddleOCR、Ollamaをhostへ個別installしません。Pythonを含むruntimeは各container内にあります。Conda / Minicondaは使用しません。
+
+Docker Desktopを起動し、repository rootのPowerShellで実行します。
+
+```powershell
+.\scripts\start.ps1
+```
+
+scriptはDocker/Compose、使用port、4 serviceのhealth、Paddle GPUを検査します。使用中のportがあればPIDを表示して停止し、processを自動終了しません。PaddleOCR modelsと`qwen2.5:7b-instruct`が未取得の場合だけdownloadし、最後に`http://localhost:5173`を開きます。
+
+初回は大きなDocker imageとmodel dataを取得するため、ネットワーク環境により数分以上かかります。modelはnamed volumeへ保存され、通常の再起動では再downloadされません。
+
+停止:
+
+```powershell
+.\scripts\stop.ps1
+```
+
+このscriptは`docker compose down`を実行します。`down -v`は使用せず、Paddle/Ollama model volumeを保持します。
+
+状態確認:
+
+```powershell
+.\scripts\status.ps1
+```
+
+既定のlocalhost portsは次のとおりです。
+
+| Service | URL / port |
+| --- | --- |
+| Web | `http://localhost:5173` |
+| PaddleOCR | `http://127.0.0.1:8008` |
+| PyMuPDF layout | `http://127.0.0.1:8009` |
+| Ollama | `http://localhost:11434` |
+
+Docker runtime authority:
+
+| Role | Image / version |
+| --- | --- |
+| Frontend build | `node:24.19.0-alpine`（`npm ci` + `npm run build`） |
+| Frontend runtime | `nginx:1.29.1-alpine` |
+| PyMuPDF | `python:3.12.3-slim-bookworm` + `pymupdf==1.28.2` |
+| PaddleOCR | `paddlepaddle/paddle:3.3.1-gpu-cuda12.9-cudnn9.9` + `paddleocr==3.7.0` + `paddlex==3.7.2` |
+| Ollama | `ollama/ollama:0.32.9` |
+
+公式Paddle image内のPythonは3.10.12です。Paddle 3.3.1のcommit、CUDA 12.9、cuDNN 9.9は検証済みWindows runtimeと一致し、RTX 4070 Ti SUPER上でGPU inferenceを確認しています。Paddle modelは`paddle-models` volumeの`/root/.paddlex`、Ollama modelは`ollama-models` volumeの`/root/.ollama`に保持されます。
+
+必要な場合は`.env.example`を`.env`へcopyしてportやmodel名を変更できます。既定値のままなら`.env`は不要です。PDFはbrowserからuploadされるため、host PDF directoryのmountは不要です。
+
+Docker pathはmacOS GPU、AMD/Intel GPU、ARM、CPU-onlyをまだ検証していません。該当環境では、以下の手動setupを開発者向けfallbackとして使用してください。
+
+## Advanced / developer setup（手動）
+
 この手順は、WindowsとPowerShellでPaper Grammar Tutorをローカル起動するためのものです。開発者固有の絶対パスは使用しません。
 
 ## 1. Documented environment

@@ -2,24 +2,21 @@ import type { LLMProvider } from '../../../llm/types.ts'
 import type { SentenceCore, Span } from '../schemas/grammarAnalysis.schema.ts'
 import type { ReadingGuide } from '../schemas/readingGuide.schema.ts'
 import { analyzeReadingGuide } from './ReadingGuideAnalyzer.ts'
+import type { TreeReadingTarget } from './treeReadingTargets.ts'
+import { treeReadingTargetSignature } from './treeReadingTargets.ts'
 
 export type ReadingGuideOutcome =
-  | { success: true; readingGuide: ReadingGuide }
+  | { success: true; readingGuide: ReadingGuide; invalidTargetIds: string[]; duplicateTargetIds: string[] }
   | { success: false; error: string }
 
 export interface ReadingGuideCacheKey {
-  /** The text Reading Guide is generated/grounded against — pass
-   * GrammarAnalysis.normalizedText here, the same text sentenceCore's own spans were
-   * resolved against, not the raw pre-normalization input. */
+  /** Normalized sentence used for prompt context and Expression grounding. */
   originalText: string
   model: string
-  /** Prototype 2.3C item 26: cache key includes sentenceCore even though
-   * analyzeReadingGuide itself no longer reads it (ReadingGuide dropped its sentenceCore
-   * dependency — see ReadingGuideAnalyzer.ts). Kept as a defensive invalidation trigger:
-   * a forced-core recovery means the confirmed analysis materially changed, and the cache
-   * should not silently keep serving a Reading Guide generated under the pre-recovery
-   * state just because the raw sentence text happened to stay the same. */
+  /** Effective core remains a defensive invalidation trigger alongside the authoritative
+   * Tree-target signature. */
   sentenceCore: SentenceCore
+  targets: readonly TreeReadingTarget[]
 }
 
 export interface GetReadingGuideParams extends ReadingGuideCacheKey {
@@ -47,7 +44,7 @@ function spanKey(span: Span | null): string {
 /** Field-by-field, not JSON.stringify — deterministic regardless of object key order,
  * and changes whenever any constituent of the core (including its resolved offsets)
  * changes, which is exactly what should invalidate a cached Reading Guide. */
-function cacheKeyOf({ originalText, model, sentenceCore }: ReadingGuideCacheKey): string {
+function cacheKeyOf({ originalText, model, sentenceCore, targets }: ReadingGuideCacheKey): string {
   return [
     originalText,
     model,
@@ -58,14 +55,12 @@ function cacheKeyOf({ originalText, model, sentenceCore }: ReadingGuideCacheKey)
     spanKey(sentenceCore.indirectObject),
     spanKey(sentenceCore.object),
     spanKey(sentenceCore.complement),
+    treeReadingTargetSignature(targets),
   ].join('|')
 }
 
 /**
- * Runs (or reuses a cached) Reading Guide generation for the given (text, model,
- * sentenceCore) triple. Never invoked automatically — only from the user-triggered
- * "英語の語順で読む" click, and only once sentenceCore is confirmed (not in core-failure
- * state) — see AnalysisResultPanel, which gates the click itself.
+ * Runs (or reuses) ReadingGuide for text/model/effective-core/final-target identity.
  */
 export async function getReadingGuide(params: GetReadingGuideParams): Promise<ReadingGuideOutcome> {
   const key = cacheKeyOf(params)
@@ -76,6 +71,7 @@ export async function getReadingGuide(params: GetReadingGuideParams): Promise<Re
     provider: params.provider,
     model: params.model,
     sentence: params.originalText,
+    targets: params.targets,
     temperature: params.temperature,
   })
 

@@ -206,7 +206,7 @@ VISUAL_INK_CENTRAL_RATIO_THRESHOLD = 0.05
 # for ordinary selections (item 23/64 -- Paddle being offline must not affect ordinary
 # text-only PDF reading). Confidence threshold is conservative relative to the 2.5C
 # spike's observed real-recovery range (0.959-1.000).
-PADDLE_OCR_URL = "http://127.0.0.1:8008"
+PADDLE_OCR_URL = os.environ.get("PGT_PADDLE_OCR_URL", "http://127.0.0.1:8008").rstrip("/")
 PADDLE_OCR_TIMEOUT_S = 10.0
 OCR_CONFIDENCE_THRESHOLD = 0.90
 

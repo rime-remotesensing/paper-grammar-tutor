@@ -2,6 +2,13 @@ import { describe, expect, it } from 'vitest'
 import { buildGrammarAnalysisPrompt } from '../../src/llm/prompts/grammarAnalysisPrompt'
 import { buildReadingGuidePrompt } from '../../src/llm/prompts/readingGuidePrompt'
 
+const targets = [{
+  targetId: 'tree-0', nodeKey: '0:43:clause', authoritativeStart: 0, authoritativeEnd: 43,
+  interactionStart: 0, interactionEnd: 43, displayText: 'The values are 10 and 20, respectively',
+  authorityText: 'The values are 10 and 20, respectively', interactionText: 'The values are 10 and 20, respectively',
+  role: 'clause' as const, parentTargetId: null, parentDisplayText: null,
+}]
+
 describe('academic relational vocabulary prompts', () => {
   it('asks GrammarAnalysis for interpretation-changing relational words as lexical items', () => {
     const prompt = buildGrammarAnalysisPrompt('The values are 10 and 20, respectively.')
@@ -13,18 +20,17 @@ describe('academic relational vocabulary prompts', () => {
   })
 
   it('keeps POS teaching separate from the ReadingGuide pairwise explanation', () => {
-    const prompt = buildReadingGuidePrompt('The values are 10 and 20, respectively.')
+    const prompt = buildReadingGuidePrompt('The values are 10 and 20, respectively.', targets)
 
-    expect(prompt.user).toContain('same-order correspondence')
-    expect(prompt.user).toContain('never output placeholder letters')
-    expect(prompt.user).toContain('a → 10、b → 20')
-    expect(prompt.user).toContain('English source verbatim')
+    expect(prompt.system).toContain('same-order pairs')
+    expect(prompt.system).toContain('source items')
+    expect(prompt.user).toContain('respectively')
     expect(prompt.user).not.toContain('respectively/adverb')
   })
 
   it('allows the respectively construction to become a reusable expression', () => {
-    const prompt = buildReadingGuidePrompt('The values are 10 and 20, respectively.')
+    const prompt = buildReadingGuidePrompt('The values are 10 and 20, respectively.', targets)
 
-    expect(prompt.user).toContain('A and B ... X and Y, respectively')
+    expect(prompt.system).toContain('sentence-wide and independent from Tree targets')
   })
 })

@@ -1,5 +1,27 @@
 # Paper Grammar Tutor
 
+## Quick start（推奨: Docker）
+
+最初に対応する配布環境は、Windows 10/11、Docker Desktop（WSL2 backend）、NVIDIA GPUです。Node.js、Python、Ollamaを個別にインストールする必要はありません。
+
+1. [Docker Desktop](https://www.docker.com/products/docker-desktop/) をインストールし、WSL2 backend と NVIDIA GPU support を利用できる状態にします。
+2. このrepositoryをcloneするか、GitHubのZIPを展開します。
+3. repository rootのPowerShellで次を実行します。
+
+```powershell
+.\scripts\start.ps1
+```
+
+初回はDocker images、PaddleOCR models、`qwen2.5:7b-instruct`（約4.7 GB）をdownloadするため時間がかかります。起動後は [http://localhost:5173](http://localhost:5173) を開きます。
+
+停止:
+
+```powershell
+.\scripts\stop.ps1
+```
+
+通常の停止ではmodel cacheを削除しません。状態確認には`.\scripts\status.ps1`を使用できます。Docker非対応環境または開発作業向けの手動setupも[インストールと起動](docs/GETTING_STARTED.md)に残しています。
+
 Paper Grammar Tutorは、日本語話者が英語論文を英語のまま読み進めるための、local-firstな学術英語リーディング支援ツールです。全文を日本語へ置き換えるのではなく、英文の構造、英語の語順、学術語彙、再利用できる語法を理解することを助けます。
 
 現在は**Prototype / active development**です。研究・学習用のローカルアプリとして開発しており、production-stableなリリースではありません。

@@ -1,74 +1,56 @@
 import { resolveSpanAfter } from '../../../utils/spanMatch.ts'
-import type { LlmReadingGuide, ReadingGuide, ResolvedReadingStep } from '../schemas/readingGuide.schema.ts'
+import type { LlmReadingGuide, ReadingGuide } from '../schemas/readingGuide.schema.ts'
+import type { TreeReadingTarget } from './treeReadingTargets.ts'
 import { containsSimplifiedChineseCharacters } from './japaneseLanguagePurity.ts'
 
-export type GroundReadingGuideResult =
-  | { success: true; readingGuide: ReadingGuide }
-  | { success: false; error: string }
+export interface GroundReadingGuideResult {
+  readingGuide: ReadingGuide
+  invalidTargetIds: string[]
+  duplicateTargetIds: string[]
+}
 
-/**
- * Re-derives each readingStep's position in `sentence` (never trusts the LLM's own claim,
- * same rationale as resolveAnalysisSpans.ts) and enforces the left-to-right reading-order
- * contract: every step must resolve to an exact substring of `sentence`, and each step's
- * resolved start must be strictly greater than the previous step's. That single strict-
- * increase check also rejects an exact duplicate span (same start reappearing) and a
- * source-order reversal — unchanged since Prototype 2.1.
- *
- * Prototype 2.3C: no `sentenceCore` parameter — the structural attachment tree
- * (`structureBranches`, which was the only reason grounding ever needed sentenceCore for
- * `attachTo` validation) moved entirely to predicateStructureGrounding.ts +
- * hybridPredicateMerger.ts. ReadingGuide grounding is purely about the sentence text now.
- */
-export function groundReadingGuide(llm: LlmReadingGuide, sentence: string): GroundReadingGuideResult {
-  const resolvedSteps: ResolvedReadingStep[] = []
-  let nextStart = 0
+/** Validates model-owned note IDs against the application request set. Unknown/duplicate,
+ * blank, or wrong-language notes are dropped without disturbing valid notes or Expressions.
+ * Tree text and offsets never come from this result. */
+export function groundReadingGuide(
+  llm: LlmReadingGuide,
+  sentence: string,
+  targets: readonly TreeReadingTarget[],
+): GroundReadingGuideResult {
+  const allowedIds = new Set(targets.map(({ targetId }) => targetId))
+  const invalidTargetIds: string[] = []
+  const targetIdCounts = new Map<string, number>()
+  for (const step of llm.readingSteps) {
+    targetIdCounts.set(step.targetId, (targetIdCounts.get(step.targetId) ?? 0) + 1)
+  }
+  const duplicateTargetIds = [...targetIdCounts]
+    .filter(([, count]) => count > 1)
+    .map(([targetId]) => targetId)
+  const readingSteps: ReadingGuide['readingSteps'] = []
 
   for (const step of llm.readingSteps) {
-    const resolved = resolveSpanAfter(sentence, step.text, nextStart)
-    if (!resolved.resolved) {
-      return { success: false, error: `readingStep「${step.text}」が原文中に見つからないか、左から右への順序と一致しません。` }
+    if (!allowedIds.has(step.targetId)) {
+      invalidTargetIds.push(step.targetId)
+      continue
     }
-    resolvedSteps.push({
-      text: resolved.text,
-      // Prototype 2.3P item 2/4: a contaminated cue/explanation is blanked out rather than
-      // dropping the whole step -- dropping would break the required left-to-right walk
-      // (the exact reason an empty cue/explanation was already treated as a display nicety,
-      // not a grounding failure, see the schema comment). The UI already renders cue/
-      // explanation conditionally on non-empty, so this degrades to the same accepted
-      // "model left it blank" state, never leaving Chinese text visible to the user.
-      cue: containsSimplifiedChineseCharacters(step.cue) ? '' : step.cue,
-      explanation: containsSimplifiedChineseCharacters(step.explanation) ? '' : step.explanation,
-      start: resolved.start,
-      end: resolved.end,
-    })
-    nextStart = resolved.end
+    // Conflicting guidance for one target is ambiguous. Drop every occurrence rather
+    // than silently choosing the first model-owned note.
+    if ((targetIdCounts.get(step.targetId) ?? 0) > 1) continue
+    const guidance = step.guidance.trim()
+    if (!guidance || containsSimplifiedChineseCharacters(guidance)) continue
+    readingSteps.push({ targetId: step.targetId, guidance })
   }
 
   return {
-    success: true,
     readingGuide: {
-      readingSteps: resolvedSteps,
-      connections: dropBlankConnections(llm.connections),
+      readingSteps,
       expressions: groundExpressions(llm.expressions, sentence),
-      readingAdvice: llm.readingAdvice.filter((advice) => advice.trim().length > 0 && !containsSimplifiedChineseCharacters(advice)),
     },
+    invalidTargetIds,
+    duplicateTargetIds,
   }
 }
 
-/**
- * Expressions are only useful if genuinely present in the sentence (Prototype 2.1 item 9:
- * "実際に文中にある場合のみ検出できる設計"). Unlike readingSteps, an unresolved,
- * duplicate-span, or incomplete (blank pattern/meaning/function) expression is silently
- * dropped rather than failing the whole Reading Guide — expressions are a supplementary
- * list, not the sentence's required backbone, so a partial list is an acceptable
- * degradation where a broken readingSteps sequence is not.
- *
- * Prototype 2.3P item 2/4: the same drop-not-fail treatment now also applies to an entry
- * whose pattern/meaning/function contains Simplified-Chinese-only characters (live
- * diagnosis found this specifically in `pattern`, e.g. "主語 + 动词" instead of "主語 +
- * 動詞") — a card with wrong-language text is worse than no card, matching this file's
- * existing "never show a broken/incomplete entry" precedent.
- */
 function groundExpressions(
   expressions: LlmReadingGuide['expressions'],
   sentence: string,
@@ -79,12 +61,12 @@ function groundExpressions(
   for (const expr of expressions) {
     if (!expr.pattern.trim() || !expr.meaning.trim() || !expr.function.trim()) continue
     if (!isReusableExpression(expr.text, expr.pattern)) continue
+    if (containsBibliographicCitation(`${expr.pattern} ${expr.meaning} ${expr.function}`)) continue
     if (
       containsSimplifiedChineseCharacters(expr.pattern) ||
       containsSimplifiedChineseCharacters(expr.meaning) ||
       containsSimplifiedChineseCharacters(expr.function)
-    )
-      continue
+    ) continue
     const resolved = resolveSpanAfter(sentence, expr.text, nextStart)
     if (!resolved.resolved) continue
     const spanKey = `${resolved.start}:${resolved.end}`
@@ -96,23 +78,15 @@ function groundExpressions(
   return grounded
 }
 
-/** Structure Tree already teaches these elementary shapes; keep the expression panel for
- * reusable lexical usage. Preposition-bearing combinations remain eligible. */
 function isReusableExpression(text: string, pattern: string): boolean {
   const normalizedText = text.trim()
+  if (/\bbe\s+based\s+on\b/i.test(pattern) && !/\bbased\s+on\b/i.test(normalizedText)) return false
   if (/^where\b/i.test(normalizedText)) return false
   if (/^be\s*\+\s*past participle$/i.test(pattern.trim())) return false
   if (/^(?:can|may|must|should|could)\s+be\s+\w+(?:ed|en)$/i.test(normalizedText)) return false
   return true
 }
 
-/** Drops a connection entry if either field came back blank, OR if the explanation contains
- * Simplified-Chinese-only characters (Prototype 2.3P item 2/4) — a half-empty or
- * wrong-language card is not useful to show, but (unlike readingSteps) this is purely a
- * display-completeness filter, not a grounding/safety check, so it never fails the whole
- * Reading Guide. */
-function dropBlankConnections(connections: LlmReadingGuide['connections']): ReadingGuide['connections'] {
-  return connections.filter(
-    (c) => c.text.trim().length > 0 && c.explanation.trim().length > 0 && !containsSimplifiedChineseCharacters(c.explanation),
-  )
+function containsBibliographicCitation(text: string): boolean {
+  return /\bet\s+al\.|\b(?:19|20)\d{2}[a-z]?\b/i.test(text)
 }

@@ -1,6 +1,15 @@
 import { OllamaProvider } from '../src/llm/providers/ollama/OllamaProvider.ts'
 import { analyzeReadingGuide } from '../src/features/grammar/domain/ReadingGuideAnalyzer.ts'
 import { prepareExpressionsForDisplay } from '../src/features/grammar/domain/expressionPresentation.ts'
+import type { TreeReadingTarget } from '../src/features/grammar/domain/treeReadingTargets.ts'
+
+function wholeSentenceTarget(sentence: string): TreeReadingTarget[] {
+  return [{
+    targetId: 'tree-0', nodeKey: `0:${sentence.length}:clause`, authoritativeStart: 0, authoritativeEnd: sentence.length,
+    interactionStart: 0, interactionEnd: sentence.length, displayText: sentence, authorityText: sentence,
+    interactionText: sentence, role: 'clause', parentTargetId: null, parentDisplayText: null,
+  }]
+}
 
 const provider = new OllamaProvider('http://localhost:11434')
 const model = 'qwen2.5:7b-instruct'
@@ -16,17 +25,15 @@ const runs: unknown[] = []
 
 for (let round = 1; round <= 2; round++) {
   for (const sentence of controls) {
-    const result = await analyzeReadingGuide({ provider, model, sentence, temperature: 0.1 })
+    const result = await analyzeReadingGuide({ provider, model, sentence, targets: wholeSentenceTarget(sentence), temperature: 0.1 })
     if (!result.success) {
       failures++
       runs.push({ round, sentence, error: result.error })
       continue
     }
-    const respectivelyStep = result.readingGuide.readingSteps.find(({ text }) => (
-      /respectively/i.test(text)
-    ))
+    const respectivelyStep = result.readingGuide.readingSteps[0]
     const stepTeaching = respectivelyStep
-      ? `${respectivelyStep.cue}\n${respectivelyStep.explanation}`
+      ? respectivelyStep.guidance
       : ''
     const expected = sentence.startsWith('The values')
       ? [['a'], ['b'], ['10'], ['20']]

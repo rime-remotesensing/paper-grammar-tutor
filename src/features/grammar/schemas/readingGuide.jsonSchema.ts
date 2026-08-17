@@ -1,15 +1,6 @@
-// Hand-written JSON Schema mirroring llmReadingGuideSchema in readingGuide.schema.ts.
-// Passed to Ollama's `format` field for the "英語の語順で読む" second call. If you change
-// one of these two files, change the other too (same convention as
-// grammarAnalysis.jsonSchema.ts / forcedCore.jsonSchema.ts). readingSteps carry no
-// start/end here — the app derives those itself (see readingGuideGrounding.ts) rather
-// than trusting the model's own offsets.
-//
-// Prototype 2.3C: structureBranches (Prototype 2.2B/2.2C's fixed-depth attachment tree)
-// is removed — structure is now a separate, dedicated LLM call
-// (predicateStructure.jsonSchema.ts) combined with a deterministic hybrid merger. See
-// readingGuide.schema.ts for why.
-
+// Hand-written JSON Schema mirroring llmReadingGuideSchema. Tree target IDs are supplied
+// by the application in the prompt and validated after generation; the model never returns
+// offsets or source-label authority.
 export const READING_GUIDE_JSON_SCHEMA = {
   type: 'object',
   properties: {
@@ -18,23 +9,10 @@ export const READING_GUIDE_JSON_SCHEMA = {
       items: {
         type: 'object',
         properties: {
-          text: { type: 'string' },
-          cue: { type: 'string' },
-          explanation: { type: 'string' },
+          targetId: { type: 'string' },
+          guidance: { type: 'string' },
         },
-        required: ['text', 'cue', 'explanation'],
-        additionalProperties: false,
-      },
-    },
-    connections: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          text: { type: 'string' },
-          explanation: { type: 'string' },
-        },
-        required: ['text', 'explanation'],
+        required: ['targetId', 'guidance'],
         additionalProperties: false,
       },
     },
@@ -52,8 +30,7 @@ export const READING_GUIDE_JSON_SCHEMA = {
         additionalProperties: false,
       },
     },
-    readingAdvice: { type: 'array', items: { type: 'string' } },
   },
-  required: ['readingSteps', 'connections', 'expressions', 'readingAdvice'],
+  required: ['readingSteps', 'expressions'],
   additionalProperties: false,
 } as const

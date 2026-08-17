@@ -8,32 +8,27 @@ import {
 } from '../../../llm/prompts/readingGuidePrompt.ts'
 import { tryParseJson } from '../../../utils/jsonExtract.ts'
 import { groundReadingGuide } from './readingGuideGrounding.ts'
+import type { TreeReadingTarget } from './treeReadingTargets.ts'
 
 export interface AnalyzeReadingGuideOptions {
   provider: LLMProvider
   model: string
-  /** The exact text readingSteps/expressions are grounded against — must be the same text
-   * sentenceCore's own spans were resolved against (GrammarAnalysis.normalizedText), not
-   * the raw pre-normalization input, or grounding will spuriously fail. */
+  /** Normalized sentence authority. Only Expressions are text-grounded; reading notes use
+   * application-supplied target IDs. */
   sentence: string
+  targets: readonly TreeReadingTarget[]
   temperature: number
 }
 
 export type AnalyzeReadingGuideResult =
-  | { success: true; readingGuide: ReadingGuide }
+  | { success: true; readingGuide: ReadingGuide; invalidTargetIds: string[]; duplicateTargetIds: string[] }
   | { success: false; error: string }
 
 /**
- * Orchestrates the "英語の語順で読む" second call: prompt -> LLM -> JSON parse -> Zod ->
- * (one repair attempt, covering both schema failures and grounding/order failures) ->
- * source grounding -> ReadingGuide. Mirrors GrammarAnalyzer's shape but is fully
- * independent: its own prompt, its own schema, never invoked from analyzeSentence, and
- * never shares a call with it (Prototype 2.1 item 3 — this must stay a second, separate
- * LLM call, only triggered by an explicit user click).
- *
- * Prototype 2.3C: no `sentenceCore` parameter — ReadingGuide is purely a left-to-right
- * reading aid now (see readingGuide.schema.ts); the structural tree is a fully separate
- * pipeline (PredicateStructureAnalyzer.ts + hybridPredicateMerger.ts).
+ * Orchestrates the single ReadingGuide call after final Tree targets exist: prompt -> LLM
+ * -> JSON parse -> Zod -> target-ID validation / Expression grounding -> ReadingGuide.
+ * One repair attempt remains available for malformed JSON/schema output. Unknown IDs are
+ * safely reported and dropped; they do not trigger a second semantic generation.
  *
  * Never throws for LLM-quality problems; always resolves to a Result so a Reading Guide
  * failure can be shown as a narrow, retryable UI state without disturbing the
@@ -42,9 +37,9 @@ export type AnalyzeReadingGuideResult =
 export async function analyzeReadingGuide(
   options: AnalyzeReadingGuideOptions,
 ): Promise<AnalyzeReadingGuideResult> {
-  const { provider, model, sentence, temperature } = options
+  const { provider, model, sentence, targets, temperature } = options
 
-  const prompt = buildReadingGuidePrompt(sentence)
+  const prompt = buildReadingGuidePrompt(sentence, targets)
   let generation = await provider.generateStructured({
     model,
     systemPrompt: prompt.system,
@@ -53,10 +48,10 @@ export async function analyzeReadingGuide(
     temperature,
   })
 
-  let attempt = validate(generation.rawText, sentence)
+  let attempt = validate(generation.rawText, sentence, targets)
 
   for (let repairCount = 0; repairCount < MAX_REPAIR_ATTEMPTS && !attempt.success; repairCount++) {
-    const repairPrompt = buildReadingGuideRepairPrompt(sentence, generation.rawText, attempt.error)
+    const repairPrompt = buildReadingGuideRepairPrompt(sentence, targets, generation.rawText, attempt.error)
     generation = await provider.generateStructured({
       model,
       systemPrompt: repairPrompt.system,
@@ -64,21 +59,26 @@ export async function analyzeReadingGuide(
       jsonSchema: READING_GUIDE_JSON_SCHEMA,
       temperature,
     })
-    attempt = validate(generation.rawText, sentence)
+    attempt = validate(generation.rawText, sentence, targets)
   }
 
   if (!attempt.success) {
     return { success: false, error: attempt.error }
   }
 
-  return { success: true, readingGuide: attempt.readingGuide }
+  return {
+    success: true,
+    readingGuide: attempt.readingGuide,
+    invalidTargetIds: attempt.invalidTargetIds,
+    duplicateTargetIds: attempt.duplicateTargetIds,
+  }
 }
 
 type ValidationOutcome =
-  | { success: true; readingGuide: ReadingGuide }
+  | { success: true; readingGuide: ReadingGuide; invalidTargetIds: string[]; duplicateTargetIds: string[] }
   | { success: false; error: string }
 
-function validate(rawText: string, sentence: string): ValidationOutcome {
+function validate(rawText: string, sentence: string, targets: readonly TreeReadingTarget[]): ValidationOutcome {
   const parsed = tryParseJson(rawText)
   if ('error' in parsed) {
     return { success: false, error: `JSONとして解析できませんでした: ${parsed.error}` }
@@ -87,11 +87,13 @@ function validate(rawText: string, sentence: string): ValidationOutcome {
   if (!result.success) {
     return { success: false, error: formatZodIssues(result.error.issues) }
   }
-  const grounded = groundReadingGuide(result.data, sentence)
-  if (!grounded.success) {
-    return { success: false, error: grounded.error }
+  const grounded = groundReadingGuide(result.data, sentence, targets)
+  return {
+    success: true,
+    readingGuide: grounded.readingGuide,
+    invalidTargetIds: grounded.invalidTargetIds,
+    duplicateTargetIds: grounded.duplicateTargetIds,
   }
-  return { success: true, readingGuide: grounded.readingGuide }
 }
 
 function formatZodIssues(issues: ReadonlyArray<{ path: PropertyKey[]; message: string }>): string {
