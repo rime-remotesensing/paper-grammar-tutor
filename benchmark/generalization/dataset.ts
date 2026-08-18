@@ -1,8 +1,11 @@
-import type { SentencePattern } from '../../src/features/grammar/schemas/grammarAnalysis.schema.ts'
+import type { PredicateCoreRelation, SentencePattern } from '../../src/features/grammar/schemas/grammarAnalysis.schema.ts'
 
 export type GeneralizationSplit = 'development' | 'holdout'
 export interface GoldSpan { text: string; start: number; end: number }
-export interface GoldPredicateCore { verb: GoldSpan; indirectObject: GoldSpan | null; object: GoldSpan | null; complement: GoldSpan | null; pattern: SentencePattern }
+export interface GoldPredicateCore {
+  predicateCoreId: string; relation: PredicateCoreRelation; connector: GoldSpan | null
+  verb: GoldSpan; indirectObject: GoldSpan | null; object: GoldSpan | null; complement: GoldSpan | null; pattern: SentencePattern
+}
 export interface GoldAttachment { role: 'subjectModifier' | 'predicateModifier' | 'complementModifier' | 'postmodifier' | 'subordinateClause' | 'coordination' | 'enumeration'; span: GoldSpan }
 export interface GeneralizationCase {
   id: string; split: GeneralizationSplit; locked: boolean; text: string; tags: string[]
@@ -35,7 +38,9 @@ function locate(source: string, spec: SlotSpec, label: string): GoldSpan | null 
   return { text, start, end: start + text.length }
 }
 
-function materializePredicate(text: string, raw: RawPredicateCore, label: string): GoldPredicateCore {
+type GoldPredicateSlots = Omit<GoldPredicateCore, 'predicateCoreId' | 'relation' | 'connector'>
+
+function materializePredicate(text: string, raw: RawPredicateCore, label: string): GoldPredicateSlots {
   const verb = locate(text, raw.verb, `${label}.verb`)
   if (!verb) throw new Error(`${label}.verb cannot be null`)
   return {
@@ -47,10 +52,27 @@ function materializePredicate(text: string, raw: RawPredicateCore, label: string
   }
 }
 
+function locateConnector(text: string, previous: GoldSpan, current: GoldSpan): GoldSpan | null {
+  const gap = text.slice(previous.end, current.start)
+  const matches = [...gap.matchAll(/\b(and|or|but|nor|yet)\b/gi)]
+  const match = matches.at(-1)
+  if (!match || match.index === undefined) return null
+  const start = previous.end + match.index
+  return { text: match[0], start, end: start + match[0].length }
+}
+
 function materialize(raw: RawCase): GeneralizationCase {
   const subject = locate(raw.text, raw.subject, `${raw.id}.subject`)
   if (!subject) throw new Error(`${raw.id}.subject cannot be null`)
-  const primaryCore = materializePredicate(raw.text, raw.primary, `${raw.id}.primary`)
+  const predicateSlots = (raw.predicates ?? [raw.primary]).map((predicate, index) =>
+    materializePredicate(raw.text, predicate, `${raw.id}.predicates[${index}]`))
+  const predicateCores: GoldPredicateCore[] = predicateSlots.map((core, index) => ({
+    ...core,
+    predicateCoreId: `predicate-${index + 1}`,
+    relation: index === 0 ? 'main' : 'coordinated',
+    connector: index === 0 ? null : locateConnector(raw.text, predicateSlots[index - 1].verb, core.verb),
+  }))
+  const primaryCore = predicateCores[0]
   return {
     id: raw.id, split: raw.split, locked: raw.split === 'holdout', text: raw.text, tags: raw.tags,
     wordCount: raw.text.match(/[A-Za-z0-9]+(?:[-'][A-Za-z0-9]+)*/g)?.length ?? 0,
@@ -58,7 +80,7 @@ function materialize(raw: RawCase): GeneralizationCase {
     gold: {
       subject,
       primaryCore,
-      predicateCores: (raw.predicates ?? [raw.primary]).map((predicate, index) => materializePredicate(raw.text, predicate, `${raw.id}.predicates[${index}]`)),
+      predicateCores,
       attachments: (raw.attachments ?? []).map((attachment, index) => {
         const span = locate(raw.text, attachment.span, `${raw.id}.attachments[${index}]`)
         if (!span) throw new Error(`${raw.id}.attachments[${index}] cannot be null`)

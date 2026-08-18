@@ -1,4 +1,4 @@
-import type { SentenceCore, Span } from '../../src/features/grammar/schemas/grammarAnalysis.schema.ts'
+import type { SentenceCore, SentenceCoreSet, Span } from '../../src/features/grammar/schemas/grammarAnalysis.schema.ts'
 import { deriveStructureNodePresentation, hasLosslessPresentationCoverage } from '../../src/features/grammar/domain/structureNodePresentation.ts'
 import type { StructureTreeNode } from '../../src/features/grammar/domain/structureTree.ts'
 import type { GeneralizationCase, GoldSpan } from './dataset.ts'
@@ -27,6 +27,22 @@ export interface TreeMetrics {
   equationPlaceholderCorruption: boolean
 }
 
+export interface CoreSetMetrics {
+  sharedSubjectExact: boolean
+  predicateCoreCountExact: boolean
+  underSplit: boolean
+  overSplit: boolean
+  predicateVerbExact: boolean[]
+  predicateIndirectObjectExact: boolean[]
+  predicateObjectExact: boolean[]
+  predicateComplementExact: boolean[]
+  predicatePatternExact: boolean[]
+  predicateRelationExact: boolean[]
+  predicateConnectorExact: boolean[]
+  falseComplement: boolean[]
+  coreSetExact: boolean
+}
+
 function exact(gold: GoldSpan | null, actual: Span | null): boolean {
   if (gold === null) return actual === null
   return actual !== null && gold.start === actual.start && gold.end === actual.end && gold.text === actual.text
@@ -47,6 +63,39 @@ export function evaluateCore(item: GeneralizationCase, core: SentenceCore): Core
     missingCoreSlot,
     overcapturedVerb: core.verb !== null && core.verb.start <= gold.verb.start && core.verb.end >= gold.verb.end && !exact(gold.verb, core.verb),
     undercapturedVerb: core.verb !== null && gold.verb.start <= core.verb.start && gold.verb.end >= core.verb.end && !exact(gold.verb, core.verb),
+  }
+}
+
+export function evaluateCoreSet(item: GeneralizationCase, coreSet: SentenceCoreSet): CoreSetMetrics {
+  const gold = item.gold.predicateCores
+  const actual = coreSet.predicateCores
+  const predicateVerbExact = gold.map((core, index) => exact(core.verb, actual[index]?.verb ?? null))
+  const predicateIndirectObjectExact = gold.map((core, index) => exact(core.indirectObject, actual[index]?.indirectObject ?? null))
+  const predicateObjectExact = gold.map((core, index) => exact(core.object, actual[index]?.object ?? null))
+  const predicateComplementExact = gold.map((core, index) => exact(core.complement, actual[index]?.complement ?? null))
+  const predicatePatternExact = gold.map((core, index) => core.pattern === actual[index]?.pattern)
+  const predicateRelationExact = gold.map((core, index) => core.relation === actual[index]?.relation)
+  const predicateConnectorExact = gold.map((core, index) => exact(core.connector, actual[index]?.connector ?? null))
+  const falseComplement = gold.map((core, index) => core.complement === null && actual[index]?.complement != null)
+  const sharedSubjectExact = exact(item.gold.subject, coreSet.subject)
+  const predicateCoreCountExact = gold.length === actual.length
+  const allPerCore = [predicateVerbExact, predicateIndirectObjectExact, predicateObjectExact,
+    predicateComplementExact, predicatePatternExact, predicateRelationExact, predicateConnectorExact]
+    .every((values) => values.every(Boolean))
+  return {
+    sharedSubjectExact,
+    predicateCoreCountExact,
+    underSplit: actual.length < gold.length,
+    overSplit: actual.length > gold.length,
+    predicateVerbExact,
+    predicateIndirectObjectExact,
+    predicateObjectExact,
+    predicateComplementExact,
+    predicatePatternExact,
+    predicateRelationExact,
+    predicateConnectorExact,
+    falseComplement,
+    coreSetExact: sharedSubjectExact && predicateCoreCountExact && allPerCore,
   }
 }
 

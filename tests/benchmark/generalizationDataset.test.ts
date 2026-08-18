@@ -18,7 +18,7 @@ describe('Prototype 2.6D complex generalization dataset', () => {
       const spans = [
         item.gold.subject,
         ...item.gold.predicateCores.flatMap((core) => [
-          core.verb, core.indirectObject, core.object, core.complement,
+          core.connector, core.verb, core.indirectObject, core.object, core.complement,
         ]),
         ...item.gold.attachments.map(({ span }) => span),
       ].filter((span) => span !== null)
@@ -54,5 +54,17 @@ describe('Prototype 2.6D complex generalization dataset', () => {
     const mixedCases = GENERALIZATION_DATASET.filter(({ tags }) => tags.includes('mixed-pattern'))
     expect(mixedCases.length).toBeGreaterThanOrEqual(3)
     expect(mixedCases.every(({ gold }) => gold.predicateCores.length >= 2)).toBe(true)
+  })
+
+  it('freezes canonical predicate IDs, relations, source order, and grounded connectors', () => {
+    for (const item of GENERALIZATION_DATASET) {
+      item.gold.predicateCores.forEach((core, index) => {
+        expect(core.predicateCoreId).toBe(`predicate-${index + 1}`)
+        expect(core.relation).toBe(index === 0 ? 'main' : 'coordinated')
+        if (index === 0) expect(core.connector).toBeNull()
+        else expect(core.verb.start).toBeGreaterThan(item.gold.predicateCores[index - 1].verb.start)
+        if (core.connector) expect(item.text.slice(core.connector.start, core.connector.end)).toBe(core.connector.text)
+      })
+    }
   })
 })
