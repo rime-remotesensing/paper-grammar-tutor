@@ -1,6 +1,6 @@
 import type { PredicateCoreRelation, SentencePattern } from '../../src/features/grammar/schemas/grammarAnalysis.schema.ts'
 
-export type GeneralizationSplit = 'development' | 'holdout'
+export type GeneralizationSplit = 'development' | 'holdout' | 'blind-v2'
 export interface GoldSpan { text: string; start: number; end: number }
 export interface GoldPredicateCore {
   predicateCoreId: string; relation: PredicateCoreRelation; connector: GoldSpan | null
@@ -13,9 +13,9 @@ export interface GeneralizationCase {
   gold: { subject: GoldSpan; primaryCore: GoldPredicateCore; predicateCores: GoldPredicateCore[]; attachments: GoldAttachment[] }
 }
 
-type SlotSpec = string | { text: string; occurrence: number } | null
-interface RawPredicateCore { verb: SlotSpec; indirectObject?: SlotSpec; object?: SlotSpec; complement?: SlotSpec; pattern: SentencePattern }
-interface RawCase {
+export type SlotSpec = string | { text: string; occurrence: number } | null
+export interface RawPredicateCore { verb: SlotSpec; indirectObject?: SlotSpec; object?: SlotSpec; complement?: SlotSpec; pattern: SentencePattern }
+export interface RawCase {
   id: string; split: GeneralizationSplit; text: string; tags: string[]; clauseCount: number; modifierCount: number
   subject: SlotSpec; primary: RawPredicateCore; predicates?: RawPredicateCore[]
   attachments?: Array<{ role: GoldAttachment['role']; span: SlotSpec }>
@@ -61,7 +61,7 @@ function locateConnector(text: string, previous: GoldSpan, current: GoldSpan): G
   return { text: match[0], start, end: start + match[0].length }
 }
 
-function materialize(raw: RawCase): GeneralizationCase {
+export function materialize(raw: RawCase): GeneralizationCase {
   const subject = locate(raw.text, raw.subject, `${raw.id}.subject`)
   if (!subject) throw new Error(`${raw.id}.subject cannot be null`)
   const predicateSlots = (raw.predicates ?? [raw.primary]).map((predicate, index) =>
@@ -74,7 +74,7 @@ function materialize(raw: RawCase): GeneralizationCase {
   }))
   const primaryCore = predicateCores[0]
   return {
-    id: raw.id, split: raw.split, locked: raw.split === 'holdout', text: raw.text, tags: raw.tags,
+    id: raw.id, split: raw.split, locked: raw.split === 'holdout' || raw.split === 'blind-v2', text: raw.text, tags: raw.tags,
     wordCount: raw.text.match(/[A-Za-z0-9]+(?:[-'][A-Za-z0-9]+)*/g)?.length ?? 0,
     clauseCount: raw.clauseCount, modifierCount: raw.modifierCount,
     gold: {
