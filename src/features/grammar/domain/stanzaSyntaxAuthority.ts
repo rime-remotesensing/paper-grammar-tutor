@@ -98,7 +98,9 @@ export function hasCommaBetween(tokens: StanzaToken[], start: number, end: numbe
 // Postnominal amod is excluded (it signals an object-complement small
 // clause) and left for the caller to reattach as complement.
 // ----------------------------------------------------------------------------
-const ALWAYS_NONRESTRICTIVE = new Set(['appos', 'parataxis'])
+// `appos` is deliberately NOT listed here -- it gets its own three-way comma/PP-aware check
+// where it's used (see the dedicated `dep === 'appos'` branch below).
+const ALWAYS_NONRESTRICTIVE = new Set(['parataxis'])
 const RESTRICTIVE_GATED = new Set(['acl', 'advcl'])
 const EMPTY_ID_SET: ReadonlySet<number> = new Set()
 const EMPTY_DEP_SET: ReadonlySet<string> = new Set()
@@ -140,11 +142,29 @@ export function collectConstituentTokens(
       // over-broadly-stopped deep token would wrongly fracture that island. Scoping the stop
       // to direct children only is what `stopDeps` was always semantically meant to express.
       if (current.id === head.id && stopDeps.has(dep)) continue
-      // `appos` is a bare non-restrictive apposition and stays excluded -- unless it itself has
-      // a `case` child, meaning Stanza attached what is structurally a PP (e.g. "term in
-      // [式 (7)]") as `appos` instead of `nmod`; a PP headed this way is kept, like any `nmod`.
-      const childIsPpObject = dep === 'appos' && (byHead.get(child.id) ?? []).some((gc) => normalizeDep(gc.deprel) === 'case')
-      if (ALWAYS_NONRESTRICTIVE.has(dep) && !childIsPpObject) continue
+      // `appos` needs its own three-way check (not a plain ALWAYS_NONRESTRICTIVE/
+      // RESTRICTIVE_GATED member), defaulting to EXCLUDED (a bare appositive is a non-
+      // restrictive aside by default -- this also covers a colon-introduced enumeration list,
+      // which UD sometimes attaches as `appos` too and must stay excluded from canonical O/C,
+      // matching the Tree layer's own separate enumeration-recovery mechanism), with two
+      // narrow, dependency/punctuation-structural KEEP exceptions: (1) it itself has a `case`
+      // child, meaning Stanza attached what is structurally a PP (e.g. "term in [式 (7)]") as
+      // `appos` instead of `nmod` -- a PP headed this way is kept, like any `nmod`; (2)
+      // Prototype 2.6G2.5C2 -- it is wrapped in its OWN direct balanced-parenthesis punct
+      // children (a literal "(" and ")" attached to the appositive token itself, e.g. "factor
+      // (VIF)") -- a tightly-bound, DEFINING parenthetical abbreviation, structurally distinct
+      // from both a floating comma-set-off aside and a colon-introduced list (neither of which
+      // has its own paren-wrapping). Comma presence/absence was tried and rejected as the
+      // distinguishing signal: a colon-enumeration appositive also has no comma before it, so
+      // a comma-only gate wrongly kept it too (live-audited regression, reverted).
+      if (dep === 'appos') {
+        const apposChildren = byHead.get(child.id) ?? []
+        const isPpObject = apposChildren.some((gc) => normalizeDep(gc.deprel) === 'case')
+        const isParenWrappedAbbreviation = apposChildren.some((gc) => gc.text === '(') && apposChildren.some((gc) => gc.text === ')')
+        if (!isPpObject && !isParenWrappedAbbreviation) continue
+      } else if (ALWAYS_NONRESTRICTIVE.has(dep)) {
+        continue
+      }
       if (RESTRICTIVE_GATED.has(dep) && hasCommaBetween(allTokens, current.end, child.start)) continue
       if (dep === 'amod' && child.start > current.end) continue // postnominal -> complement candidate
       stack.push(child)
@@ -364,14 +384,27 @@ export function stripCitationTokens(text: string, head: StanzaToken, tokens: Sta
  * contiguity of the *selected* set while `spanFromTokens` kept slicing across the gap.
  *
  * This finds the maximal run of tokens, in source order, that are either (a) part of the
- * selected set or (b) punctuation, and returns only the run containing `head` -- the run a
- * genuine excluded CONTENT token (opening modifier, canonical subject, copular verb, sibling
- * predicate material, non-restrictive clause, ...) breaks. Punctuation never forces a split:
- * it is already excluded from every constituent's own token selection by
- * `collectConstituentTokens` itself, yet legitimately sits between two selected tokens all the
- * time (e.g. the hyphens in "graph-based").
+ * selected set, (b) punctuation, or (c) a non-selected NOMINAL aside (an excluded bare
+ * appositive like "(VIF)", a stripped citation, ...), and returns only the run containing
+ * `head` -- the run only breaks at a genuine excluded CLAUSE-LEVEL boundary (a stopped
+ * copular verb, a comma-gated non-restrictive relative clause's own verb, sibling predicate
+ * material, ...), identified via `isPredicateLikeToken` -- dependency-structural, never
+ * lexical/positional. Punctuation never forces a split: it is already excluded from every
+ * constituent's own token selection by `collectConstituentTokens` itself, yet legitimately
+ * sits between two selected tokens all the time (e.g. the hyphens in "graph-based").
+ *
+ * Prototype 2.6G2.5C2: a bare non-restrictive appositive/citation excluded by
+ * `collectConstituentTokens`'s own policy (e.g. "(VIF)" in "the variance inflation factor
+ * (VIF) and Pearson's ... methods") must still be silently BRIDGED OVER when it sits between
+ * two genuinely selected tokens of the SAME constituent (the coordination's own two members)
+ * -- that is the established, accepted product policy (section 8 of the phase spec), not a
+ * bug. Only an excluded token that is ITSELF predicate-like (a finite verb/copula, i.e. the
+ * signal that a whole separate CLAUSE -- not just a nominal aside -- sits in the gap) breaks
+ * the island. This is what distinguishes the desired VIF/PCC bridging from the d34-diagnosed
+ * bug (a non-restrictive relative clause's own verb, "integrates", correctly breaks the
+ * island; its own excluded appositive/citation content never would have).
  */
-function contiguousIslandContaining(head: StanzaToken, allTokens: StanzaToken[], selected: StanzaToken[]): StanzaToken[] {
+function contiguousIslandContaining(head: StanzaToken, allTokens: StanzaToken[], selected: StanzaToken[], byHead: Map<number, StanzaToken[]>): StanzaToken[] {
   const selectedIds = new Set(selected.map((t) => t.id))
   const sorted = [...allTokens].sort((a, b) => a.start - b.start)
   let current: StanzaToken[] = []
@@ -381,8 +414,13 @@ function contiguousIslandContaining(head: StanzaToken, allTokens: StanzaToken[],
       continue
     }
     if (normalizeDep(token.deprel) === 'punct') continue // punctuation never breaks an island
-    if (current.some((t) => t.id === head.id)) return current // head's own island just closed
-    current = []
+    if (isPredicateLikeToken(token, byHead)) {
+      if (current.some((t) => t.id === head.id)) return current // head's own island just closed
+      current = []
+      continue
+    }
+    // A non-selected, non-punct, non-predicate-like token (a bare excluded appositive,
+    // citation subtree, ...) is a nominal aside -- bridged over, never breaks the island.
   }
   return current
 }
@@ -404,7 +442,7 @@ function groundConstituentSpan(
 ): Span | null {
   const rawTokens = collectConstituentTokens(head, byHead, allTokens, boundaryIds, stopDeps)
   const cleanedTokens = stripCitationTokens(text, head, rawTokens, byHead)
-  const island = contiguousIslandContaining(head, allTokens, cleanedTokens)
+  const island = contiguousIslandContaining(head, allTokens, cleanedTokens, byHead)
   return spanFromTokens(text, island.length > 0 ? island : cleanedTokens)
 }
 
@@ -534,7 +572,23 @@ export function buildSentenceCoreSetFromStanzaTokens(text: string, rawTokens: St
   const mainSubjToken = (byHead.get(mainClause.headTokenId) ?? []).find(
     (c) => normalizeDep(c.deprel) === 'nsubj' || normalizeDep(c.deprel) === 'csubj',
   ) ?? null
-  const subject = mainSubjToken ? spanFromTokens(text, collectConstituentTokens(mainSubjToken, byHead, tokens, siblingBoundaryIds)) : null
+  // Prototype 2.6G2.5C2: subject grounding used to be a bare
+  // `spanFromTokens(text, collectConstituentTokens(...))` call -- the exact same "sparse
+  // selected tokens -> contiguous min/max source slice -> excluded material silently
+  // reinserted" class 2.6G2.5C already fixed for O/C/IO grounding, just never routed through
+  // the fix. Live-diagnosed on `d34-long-80`: the subject head's own non-restrictive relative
+  // clause is correctly excluded by `collectConstituentTokens` (comma-gated acl:relcl), but a
+  // downstream enumeration item several tokens INSIDE that excluded relative clause ("...
+  // slope-unit morphology...") suffers a genuine Stanza UD coordination-attachment drift and
+  // attaches its `conj` chain directly to the SUBJECT head instead of to the relative clause's
+  // own object -- a real, correctly-selected (if spuriously attached) token, textually
+  // stranded far past the excluded relative clause. `groundConstituentSpan`'s island
+  // restriction (see its own doc comment) is exactly the general mechanism this needs: the
+  // excluded relative clause tokens sitting between the subject head and the drifted
+  // enumeration break the contiguous run, so only the island actually containing the subject
+  // head is kept. This also gives subject the SAME citation-safe stripping O/C/IO already
+  // have (`stripCitationTokens`) -- previously subject had none at all.
+  const subject = mainSubjToken ? groundConstituentSpan(mainSubjToken, byHead, tokens, siblingBoundaryIds, text) : null
   const subjectHead = mainSubjToken ? spanFromTokens(text, [mainSubjToken]) : null
 
   const predicateCores: PredicateCore[] = []
