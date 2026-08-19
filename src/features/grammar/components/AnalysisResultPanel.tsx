@@ -7,6 +7,7 @@ import { getReadingGuide } from '../domain/readingGuideService'
 import { getPredicateStructure } from '../domain/predicateStructureService'
 import { startReadingSupport } from '../domain/readingSupportOrchestrator'
 import { mergeHybridPredicateStructure } from '../domain/hybridPredicateMerger'
+import { getBasicSkeletonDisplayText } from '../domain/basicSkeletonPresentation'
 import { applyFocusedWhereClauseRepair } from '../domain/whereClauseRelocation'
 import { buildCoreOnlyTree, buildHybridStructureTree } from '../domain/structureTree'
 import { resolveSupplementSpan } from '../domain/supplementSpanResolution'
@@ -79,7 +80,7 @@ function findTreeNode(nodes: readonly StructureTreeNode[], key: string): Structu
 }
 
 export function AnalysisResultPanel({ result, provider, model }: AnalysisResultPanelProps) {
-  const { meta, analysis, rawCore, effectiveCore, verification, coreRepair } = result
+  const { meta, analysis, rawCore, effectiveCore, effectiveCoreSet, verification, coreRepair } = result
   const [userNote, setUserNote] = useState('')
   const [treeInteraction, dispatchTreeInteraction] = useReducer(
     reduceTreeReadingInteraction,
@@ -333,6 +334,13 @@ export function AnalysisResultPanel({ result, provider, model }: AnalysisResultP
 
   const subjectHeadDiffers = core.subjectHead !== null && core.subject !== null && core.subjectHead.text !== core.subject.text
 
+  // Prototype 2.6G2-F1: `effectiveCoreSet` always corresponds to `core` (`effectiveCore`), so
+  // `getBasicSkeletonDisplayText` selecting from its `predicateCores[0]` is the same "primary"
+  // predicate `core`'s V/IO/O/C were projected from (see `projectPrimaryCore`). See
+  // basicSkeletonPresentation.ts for the citation-free-presentation-text-over-grounded-.text
+  // fallback policy itself.
+  const basicSkeletonText = getBasicSkeletonDisplayText(effectiveCoreSet, core)
+
   // Prototype 2.3C item 22: the skeleton tree never disappears just because structure is
   // still loading/failed — buildCoreOnlyTree (sentenceCore alone, mechanical S/V/O/C, no
   // coordination awareness) is the fallback; the full hybrid tree replaces it the moment
@@ -383,7 +391,7 @@ export function AnalysisResultPanel({ result, provider, model }: AnalysisResultP
             <dl className="core-compact">
               <dt>S</dt>
               <dd>
-                {spanText(core.subject)}
+                {basicSkeletonText.subject ?? spanText(core.subject)}
                 {subjectHeadDiffers && <span className="core-subject-head">（{core.subjectHead!.text}）</span>}
               </dd>
               <dt>V</dt>
@@ -391,19 +399,19 @@ export function AnalysisResultPanel({ result, provider, model }: AnalysisResultP
               {core.indirectObject && (
                 <>
                   <dt>IO</dt>
-                  <dd>{core.indirectObject.text}</dd>
+                  <dd>{basicSkeletonText.indirectObject}</dd>
                 </>
               )}
               {core.object && (
                 <>
                   <dt>O</dt>
-                  <dd>{core.object.text}</dd>
+                  <dd>{basicSkeletonText.object}</dd>
                 </>
               )}
               {core.complement && !coreUncertain && (
                 <>
                   <dt>C</dt>
-                  <dd>{core.complement.text}</dd>
+                  <dd>{basicSkeletonText.complement}</dd>
                 </>
               )}
               <dt>型</dt>
