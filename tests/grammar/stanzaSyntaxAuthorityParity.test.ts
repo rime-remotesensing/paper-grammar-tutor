@@ -94,7 +94,18 @@ describe('Prototype 2.6G1 production/frozen-benchmark parity (96-sentence regres
         }))
         const coresMatch = JSON.stringify(frozenCores) === JSON.stringify(productionCores)
 
-        if (subjectMatches && coresMatch) {
+        // Prototype 2.6G2.5C: `development/d15-svc-svc-coordination` ("The surface is smooth
+        // and is relatively uniform.") is an INTENTIONAL, documented divergence, not a
+        // regression. The frozen benchmark's own complement grounding has the exact "sparse
+        // token set -> contiguous span -> excluded token reinsertion" bug this phase fixes
+        // (its own second complement is "and is relatively uniform", wrongly including the
+        // connector and copula) -- frozen was never re-run after this phase's fix, by design
+        // (it is the frozen 2.6F reference, not touched here). Production's own corrected
+        // complement ("relatively uniform") now matches the dataset's own gold annotation
+        // exactly, which frozen never did. This is the ONLY case where the two are allowed to
+        // differ; any other case still requires 100% parity.
+        const isKnownCorrectedDivergence = item.id === 'd15-svc-svc-coordination' && subjectMatches && !coresMatch
+        if (subjectMatches && (coresMatch || isKnownCorrectedDivergence)) {
           parityCount += 1
         } else {
           mismatches.push(

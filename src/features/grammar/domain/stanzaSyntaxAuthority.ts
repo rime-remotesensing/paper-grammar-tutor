@@ -32,11 +32,11 @@ export interface StanzaToken {
   end: number
 }
 
-function normalizeDep(dep: string): string {
+export function normalizeDep(dep: string): string {
   return dep.split(':')[0] ?? dep
 }
 
-function childrenByHead(tokens: StanzaToken[]): Map<number, StanzaToken[]> {
+export function childrenByHead(tokens: StanzaToken[]): Map<number, StanzaToken[]> {
   const byHead = new Map<number, StanzaToken[]>()
   for (const token of tokens) {
     if (!byHead.has(token.head)) byHead.set(token.head, [])
@@ -76,7 +76,7 @@ function balanceDelimiters(text: string, start: number, end: number): { start: n
   return { start, end: e }
 }
 
-function spanFromTokens(text: string, tokens: StanzaToken[]): Span | null {
+export function spanFromTokens(text: string, tokens: StanzaToken[]): Span | null {
   if (tokens.length === 0) return null
   const ordered = [...tokens].sort((a, b) => a.start - b.start)
   const rawStart = ordered[0]!.start
@@ -85,7 +85,7 @@ function spanFromTokens(text: string, tokens: StanzaToken[]): Span | null {
   return { text: text.slice(start, end), start, end }
 }
 
-function hasCommaBetween(tokens: StanzaToken[], start: number, end: number): boolean {
+export function hasCommaBetween(tokens: StanzaToken[], start: number, end: number): boolean {
   return tokens.some((token) => token.text === ',' && token.start >= start && token.start < end)
 }
 
@@ -104,7 +104,7 @@ const EMPTY_ID_SET: ReadonlySet<number> = new Set()
 const EMPTY_DEP_SET: ReadonlySet<string> = new Set()
 const COPULAR_HEAD_STOP_DEPS: ReadonlySet<string> = new Set(['nsubj', 'csubj', 'cop'])
 
-function collectConstituentTokens(
+export function collectConstituentTokens(
   head: StanzaToken,
   byHead: Map<number, StanzaToken[]>,
   allTokens: StanzaToken[],
@@ -128,7 +128,18 @@ function collectConstituentTokens(
     for (const child of byHead.get(current.id) ?? []) {
       const dep = normalizeDep(child.deprel)
       if (dep === 'punct') continue // balanced-delimiter pass reattaches closers/openers afterwards
-      if (stopDeps.has(dep)) continue
+      // Prototype 2.6G2.5C: `stopDeps` (e.g. COPULAR_HEAD_STOP_DEPS excluding the MAIN
+      // clause's own nsubj/csubj/cop from a copular complement's grounding) must only apply
+      // to `head`'s own DIRECT children -- not to every descendant at any depth. A restrictive
+      // relative clause nested inside the constituent (e.g. "an approach that scales well")
+      // has its OWN internal `nsubj` ("that", subject of "scales") that has nothing to do
+      // with the outer clause boundary stopDeps exists to enforce; stopping it too used to be
+      // silently masked by the old contiguous-min/max span (the excluded "that" sat between
+      // two otherwise-selected tokens and was reintroduced anyway) -- now that spans are
+      // correctly restricted to the selected tokens' own contiguous island, an
+      // over-broadly-stopped deep token would wrongly fracture that island. Scoping the stop
+      // to direct children only is what `stopDeps` was always semantically meant to express.
+      if (current.id === head.id && stopDeps.has(dep)) continue
       // `appos` is a bare non-restrictive apposition and stays excluded -- unless it itself has
       // a `case` child, meaning Stanza attached what is structurally a PP (e.g. "term in
       // [式 (7)]") as `appos` instead of `nmod`; a PP headed this way is kept, like any `nmod`.
@@ -142,7 +153,7 @@ function collectConstituentTokens(
   return out
 }
 
-function findPostnominalComplementToken(head: StanzaToken, byHead: Map<number, StanzaToken[]>): StanzaToken | null {
+export function findPostnominalComplementToken(head: StanzaToken, byHead: Map<number, StanzaToken[]>): StanzaToken | null {
   const children = byHead.get(head.id) ?? []
   return children.filter((c) => normalizeDep(c.deprel) === 'amod' && c.start > head.end).sort((a, b) => a.start - b.start)[0] ?? null
 }
@@ -193,7 +204,7 @@ function anchorClauseHead(token: StanzaToken, byId: Map<number, StanzaToken>, cl
   return null
 }
 
-function isPredicateLikeToken(token: StanzaToken, byHead: Map<number, StanzaToken[]>): boolean {
+export function isPredicateLikeToken(token: StanzaToken, byHead: Map<number, StanzaToken[]>): boolean {
   if (token.upos === 'VERB' || token.upos === 'AUX') return true
   // copular root: lexical ADJ/NOUN/PROPN head with an overt `cop` child (e.g. "X is effective")
   if (token.upos === 'ADJ' || token.upos === 'NOUN' || token.upos === 'PROPN') {
@@ -293,9 +304,108 @@ export function buildPredicateFrame(headToken: StanzaToken, clause: ClauseFrame,
 // PredicateFrame -> Paper Grammar Tutor S/V/O/C
 // ============================================================================
 
-function isCitationLike(span: Span | null): boolean {
+export function isCitationLike(span: Span | null): boolean {
   if (!span) return false
   return /\b[A-Z][a-z]+\s+et\s+al\.|\(\s*[A-Z][a-z]+\s+et\s+al\.\s*\d{4}\s*\)/i.test(span.text) || /\(.*\d{4}.*\)/.test(span.text)
+}
+
+/**
+ * Prototype 2.6G2.2 -- citation-safe constituent cleanup. The pre-existing whole-span
+ * `isCitationLike` check nulled an entire O/C constituent the moment ANY citation-like text
+ * appeared anywhere inside it (e.g. "very complex (Chen et al. 2015)" -> null, losing the
+ * genuine complement "very complex" along with the citation). This instead walks the
+ * candidate constituent's DIRECT children (within the already-collected token set -- never
+ * past the constituent's own boundary) and, for each one, checks whether that child's own
+ * reachable subtree forms a citation-like span on its own. A matching subtree is removed in
+ * full -- dependency/token-based exclusion, never substring deletion on the rendered text, so
+ * a legitimate nested parenthetical that merely happens to contain a 4-digit number elsewhere
+ * in the constituent is never touched by this pass. Returns `tokens` unchanged when no child
+ * subtree qualifies; a candidate that is ITSELF nothing but a citation (no other child to
+ * strip from) is unaffected here and still correctly rejected by the existing whole-span
+ * `isCitationLike` check that runs after this, in `convertPredicateFrame`.
+ */
+export function stripCitationTokens(text: string, head: StanzaToken, tokens: StanzaToken[], byHead: Map<number, StanzaToken[]>): StanzaToken[] {
+  const allowedIds = new Set(tokens.map((t) => t.id))
+  const removedIds = new Set<number>()
+  for (const child of byHead.get(head.id) ?? []) {
+    if (!allowedIds.has(child.id) || removedIds.has(child.id)) continue
+    const subtree: StanzaToken[] = []
+    const stack = [child]
+    const seen = new Set<number>()
+    while (stack.length > 0) {
+      const current = stack.pop()!
+      if (seen.has(current.id) || !allowedIds.has(current.id)) continue
+      seen.add(current.id)
+      subtree.push(current)
+      for (const grandchild of byHead.get(current.id) ?? []) stack.push(grandchild)
+    }
+    const span = spanFromTokens(text, subtree)
+    if (span && isCitationLike(span)) {
+      for (const t of subtree) removedIds.add(t.id)
+    }
+  }
+  if (removedIds.size === 0) return tokens
+  return tokens.filter((t) => !removedIds.has(t.id))
+}
+
+/**
+ * Prototype 2.6G2.5C -- a selected token set from `collectConstituentTokens` can be textually
+ * SPARSE: some tokens strictly between its own min-start and max-end were deliberately
+ * excluded (a stopped `nsubj`/`cop`, a sibling coordinated predicate boundary, a non-
+ * restrictive relative clause, ...), yet `spanFromTokens` grounds a span via one CONTIGUOUS
+ * min-to-max slice of the source text -- so an excluded token sitting textually between two
+ * selected tokens is silently reintroduced into the final span merely because it lies inside
+ * that broad range, never because it was actually selected. This was the live-diagnosed root
+ * cause of a copular complement absorbing a sentence-opening `obl` adjunct ("In this study")
+ * attached to the SAME root token that doubles as the complement's own grounding head: the
+ * adjunct was correctly excluded from the selected set (nothing in `COPULAR_HEAD_STOP_DEPS`
+ * removes it, but it was never the issue -- see below) yet resurfaced anyway once the subject
+ * and copula sitting between it and the lexical complement were stopped out, breaking
+ * contiguity of the *selected* set while `spanFromTokens` kept slicing across the gap.
+ *
+ * This finds the maximal run of tokens, in source order, that are either (a) part of the
+ * selected set or (b) punctuation, and returns only the run containing `head` -- the run a
+ * genuine excluded CONTENT token (opening modifier, canonical subject, copular verb, sibling
+ * predicate material, non-restrictive clause, ...) breaks. Punctuation never forces a split:
+ * it is already excluded from every constituent's own token selection by
+ * `collectConstituentTokens` itself, yet legitimately sits between two selected tokens all the
+ * time (e.g. the hyphens in "graph-based").
+ */
+function contiguousIslandContaining(head: StanzaToken, allTokens: StanzaToken[], selected: StanzaToken[]): StanzaToken[] {
+  const selectedIds = new Set(selected.map((t) => t.id))
+  const sorted = [...allTokens].sort((a, b) => a.start - b.start)
+  let current: StanzaToken[] = []
+  for (const token of sorted) {
+    if (selectedIds.has(token.id)) {
+      current.push(token)
+      continue
+    }
+    if (normalizeDep(token.deprel) === 'punct') continue // punctuation never breaks an island
+    if (current.some((t) => t.id === head.id)) return current // head's own island just closed
+    current = []
+  }
+  return current
+}
+
+/** Collects a constituent's tokens, removes an embedded citation subtree (if any), and
+ * restricts the result to the contiguous source-text island containing `head` (see
+ * `contiguousIslandContaining`) before grounding the span -- the citation-safe, boundary-safe
+ * replacement for a bare `spanFromTokens(text, collectConstituentTokens(...))` call wherever
+ * an O/C/IO span is finalized. The trailing whole-span `isCitationLike` check in
+ * convertPredicateFrame remains as the final safety net for a citation-only candidate
+ * (nothing left to strip from). */
+function groundConstituentSpan(
+  head: StanzaToken,
+  byHead: Map<number, StanzaToken[]>,
+  allTokens: StanzaToken[],
+  boundaryIds: ReadonlySet<number>,
+  text: string,
+  stopDeps: ReadonlySet<string> = EMPTY_DEP_SET,
+): Span | null {
+  const rawTokens = collectConstituentTokens(head, byHead, allTokens, boundaryIds, stopDeps)
+  const cleanedTokens = stripCitationTokens(text, head, rawTokens, byHead)
+  const island = contiguousIslandContaining(head, allTokens, cleanedTokens)
+  return spanFromTokens(text, island.length > 0 ? island : cleanedTokens)
 }
 
 function verbSpanFor(frame: PredicateFrame, text: string): Span {
@@ -308,7 +418,7 @@ function verbSpanFor(frame: PredicateFrame, text: string): Span {
   return spanFromTokens(text, [...parts.values()])!
 }
 
-function collectFullSubtree(head: StanzaToken, byHead: Map<number, StanzaToken[]>): StanzaToken[] {
+export function collectFullSubtree(head: StanzaToken, byHead: Map<number, StanzaToken[]>): StanzaToken[] {
   const out: StanzaToken[] = []
   const stack = [head]
   const seen = new Set<number>()
@@ -322,7 +432,7 @@ function collectFullSubtree(head: StanzaToken, byHead: Map<number, StanzaToken[]
   return out
 }
 
-function connectorSpan(text: string, start: number, end: number): Span | null {
+export function connectorSpan(text: string, start: number, end: number): Span | null {
   const gap = text.slice(start, end)
   const match = Array.from(gap.matchAll(/\b(and|or|but|nor|yet|while|whereas)\b/gi)).at(-1)
   if (!match || match.index === undefined) return null
@@ -340,7 +450,7 @@ interface ConvertedCore {
   pattern: SentencePattern
 }
 
-function convertPredicateFrame(
+export function convertPredicateFrame(
   frame: PredicateFrame,
   text: string,
   tokens: StanzaToken[],
@@ -355,16 +465,15 @@ function convertPredicateFrame(
   if (frame.cop.length > 0) {
     // Copular core: V = cop(+aux); C = the lexical head's own constituent. `boundaryIds` keeps
     // this from reaching across `conj` into a sibling coordinated predicate.
-    const complementTokens = collectConstituentTokens(frame.headToken, byHead, tokens, boundaryIds, COPULAR_HEAD_STOP_DEPS)
-    complement = spanFromTokens(text, complementTokens)
+    complement = groundConstituentSpan(frame.headToken, byHead, tokens, boundaryIds, text, COPULAR_HEAD_STOP_DEPS)
   } else {
     if (frame.objToken) {
-      object = spanFromTokens(text, collectConstituentTokens(frame.objToken, byHead, tokens, boundaryIds))
+      object = groundConstituentSpan(frame.objToken, byHead, tokens, boundaryIds, text)
       const postnominal = findPostnominalComplementToken(frame.objToken, byHead)
-      if (postnominal) complement = spanFromTokens(text, collectConstituentTokens(postnominal, byHead, tokens, boundaryIds))
+      if (postnominal) complement = groundConstituentSpan(postnominal, byHead, tokens, boundaryIds, text)
     }
     if (frame.iobjToken) {
-      indirectObject = spanFromTokens(text, collectConstituentTokens(frame.iobjToken, byHead, tokens, boundaryIds))
+      indirectObject = groundConstituentSpan(frame.iobjToken, byHead, tokens, boundaryIds, text)
     }
     if (frame.ccompToken) {
       // Whole clausal complement is the object, as a single grounded span (noun-clause object).
@@ -376,7 +485,7 @@ function convertPredicateFrame(
       // xcomp ("began to run") is a different, non-5-pattern construction and is left unmapped.
       const xUpos = frame.xcompToken.upos
       if (xUpos === 'ADJ' || xUpos === 'NOUN' || xUpos === 'PROPN') {
-        complement = spanFromTokens(text, collectConstituentTokens(frame.xcompToken, byHead, tokens, boundaryIds))
+        complement = groundConstituentSpan(frame.xcompToken, byHead, tokens, boundaryIds, text)
       }
     }
   }
