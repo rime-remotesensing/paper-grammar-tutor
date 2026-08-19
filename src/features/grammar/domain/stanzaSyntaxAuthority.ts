@@ -101,7 +101,21 @@ export function hasCommaBetween(tokens: StanzaToken[], start: number, end: numbe
 // `appos` is deliberately NOT listed here -- it gets its own three-way comma/PP-aware check
 // where it's used (see the dedicated `dep === 'appos'` branch below).
 const ALWAYS_NONRESTRICTIVE = new Set(['parataxis'])
-const RESTRICTIVE_GATED = new Set(['acl', 'advcl'])
+// Prototype 2.6G2.5C3 -- `nmod` joins the comma-gated set alongside `acl`/`advcl`. An `nmod`
+// is integral/restrictive NP content by default ("the parameters FOR THE ALGORITHM", "the
+// effect OF RAINFALL") and must stay in the canonical constituent -- `nmod` itself is never
+// sufficient evidence for exclusion. But when a comma sits between the constituent head and
+// the `nmod` child (the same structural signal already used to distinguish a restrictive vs.
+// non-restrictive `acl`/`advcl`), the `nmod` is comma-set-off from the head NP -- a
+// nonrestrictive supplement ("Relevant data, INCLUDING A, B, AND C, were collected") rather
+// than an integral postmodifier -- and is excluded the same way. This is dependency + comma
+// structure only, never a lexical trigger on "including"/"such as"/"namely": any comma-
+// delimited `nmod` is treated identically regardless of its own internal wording. Diagnosed in
+// Prototype 2.6G2.5C-SUPPLEMENT-AUDIT: canonical S previously depended on citation presence
+// only because `stripCitationTokens` accidentally wiped the whole `nmod` subtree when a nested
+// citation happened to be present anywhere inside it -- this rule removes that dependency by
+// giving the constituent collector its own citation-independent boundary for the supplement.
+const RESTRICTIVE_GATED = new Set(['acl', 'advcl', 'nmod'])
 const EMPTY_ID_SET: ReadonlySet<number> = new Set()
 const EMPTY_DEP_SET: ReadonlySet<string> = new Set()
 const COPULAR_HEAD_STOP_DEPS: ReadonlySet<string> = new Set(['nsubj', 'csubj', 'cop'])
@@ -333,39 +347,60 @@ export function isCitationLike(span: Span | null): boolean {
  * Prototype 2.6G2.2 -- citation-safe constituent cleanup. The pre-existing whole-span
  * `isCitationLike` check nulled an entire O/C constituent the moment ANY citation-like text
  * appeared anywhere inside it (e.g. "very complex (Chen et al. 2015)" -> null, losing the
- * genuine complement "very complex" along with the citation). This instead walks the
- * candidate constituent's DIRECT children (within the already-collected token set -- never
- * past the constituent's own boundary) and, for each one, checks whether that child's own
- * reachable subtree forms a citation-like span on its own. A matching subtree is removed in
- * full -- dependency/token-based exclusion, never substring deletion on the rendered text, so
- * a legitimate nested parenthetical that merely happens to contain a 4-digit number elsewhere
- * in the constituent is never touched by this pass. Returns `tokens` unchanged when no child
- * subtree qualifies; a candidate that is ITSELF nothing but a citation (no other child to
- * strip from) is unaffected here and still correctly rejected by the existing whole-span
- * `isCitationLike` check that runs after this, in `convertPredicateFrame`.
+ * genuine complement "very complex" along with the citation).
+ *
+ * Prototype 2.6G2.5C4 -- fine-grained recursive citation exclusion. The original repair (walk
+ * `head`'s DIRECT children, ground each child's ENTIRE unbounded reachable subtree as one
+ * span, and remove the whole thing if that span is citation-like anywhere inside it) still
+ * over-strips whenever a citation is nested more than one hop below a direct child: e.g. "The
+ * influence of environmental factors including rainfall, soil type (Smith et al. 2020), and
+ * land cover" -- "factors"' own full subtree contains "Smith et al. 2020" *somewhere*, so the
+ * old algorithm ground that ENTIRE subtree, saw the citation, and deleted "including rainfall,
+ * soil type, and land cover" wholesale, collapsing the constituent down to "The influence".
+ *
+ * This walks the tree bottom-up instead: `prune(node)` first recurses into each of `node`'s
+ * own children -- pruning THEIR nested citations out FIRST -- and only then grounds the span
+ * of that already-pruned child subtree to decide whether the child, as a whole (post-pruning),
+ * is itself nothing but a citation. A genuine sibling member several levels deep is therefore
+ * always judged on its OWN narrow, already-citation-free span, never on the combined span of
+ * everything that happens to share a distant ancestor with a citation -- so "soil type" and
+ * "land cover" survive even though "Smith et al. 2020" sits several hops below the same
+ * grandparent. Dependency/token-based exclusion throughout, never substring deletion on the
+ * rendered text. Returns `tokens` unchanged when nothing qualifies for removal; a candidate
+ * that is ITSELF nothing but a citation (no other child to strip from) is unaffected here and
+ * still correctly rejected by the existing whole-span `isCitationLike` check that runs after
+ * this, in `convertPredicateFrame`.
  */
-export function stripCitationTokens(text: string, head: StanzaToken, tokens: StanzaToken[], byHead: Map<number, StanzaToken[]>): StanzaToken[] {
+export function stripCitationTokens(_text: string, head: StanzaToken, tokens: StanzaToken[], byHead: Map<number, StanzaToken[]>): StanzaToken[] {
   const allowedIds = new Set(tokens.map((t) => t.id))
-  const removedIds = new Set<number>()
-  for (const child of byHead.get(head.id) ?? []) {
-    if (!allowedIds.has(child.id) || removedIds.has(child.id)) continue
-    const subtree: StanzaToken[] = []
-    const stack = [child]
-    const seen = new Set<number>()
-    while (stack.length > 0) {
-      const current = stack.pop()!
-      if (seen.has(current.id) || !allowedIds.has(current.id)) continue
-      seen.add(current.id)
-      subtree.push(current)
-      for (const grandchild of byHead.get(current.id) ?? []) stack.push(grandchild)
-    }
-    const span = spanFromTokens(text, subtree)
-    if (span && isCitationLike(span)) {
-      for (const t of subtree) removedIds.add(t.id)
-    }
+
+  // The citation test for a pruned child subtree must NOT be built via `spanFromTokens` (a
+  // source-text slice from min-start to max-end): once a nested citation has already been
+  // pruned OUT of that subtree's own token list, the character GAP it leaves behind still
+  // sits between two surviving tokens in the raw source text, so a naive slice would silently
+  // re-absorb the very citation text just excluded (the same "sparse selection -> contiguous
+  // span reintroduces excluded content" class of bug `contiguousIslandContaining` exists to
+  // guard against elsewhere in this file). Instead this joins only the SURVIVING tokens' own
+  // text, in source order -- immune to any gap, since removed tokens simply are not present.
+  function narrowSpanText(subtree: StanzaToken[]): string {
+    return [...subtree].sort((a, b) => a.start - b.start).map((t) => t.text).join(' ')
   }
-  if (removedIds.size === 0) return tokens
-  return tokens.filter((t) => !removedIds.has(t.id))
+
+  function prune(node: StanzaToken): StanzaToken[] {
+    const kept: StanzaToken[] = [node]
+    for (const child of byHead.get(node.id) ?? []) {
+      if (!allowedIds.has(child.id)) continue
+      const prunedChildSubtree = prune(child)
+      const narrowText = narrowSpanText(prunedChildSubtree)
+      if (isCitationLike({ text: narrowText, start: 0, end: narrowText.length })) continue // this child is itself nothing but a citation, even after its own nested citations (if any) were already removed
+      kept.push(...prunedChildSubtree)
+    }
+    return kept
+  }
+
+  const survivingIds = new Set(prune(head).map((t) => t.id))
+  if (survivingIds.size === tokens.length) return tokens
+  return tokens.filter((t) => survivingIds.has(t.id))
 }
 
 /**
@@ -425,13 +460,98 @@ function contiguousIslandContaining(head: StanzaToken, allTokens: StanzaToken[],
   return current
 }
 
-/** Collects a constituent's tokens, removes an embedded citation subtree (if any), and
- * restricts the result to the contiguous source-text island containing `head` (see
- * `contiguousIslandContaining`) before grounding the span -- the citation-safe, boundary-safe
- * replacement for a bare `spanFromTokens(text, collectConstituentTokens(...))` call wherever
- * an O/C/IO span is finalized. The trailing whole-span `isCitationLike` check in
- * convertPredicateFrame remains as the final safety net for a citation-only candidate
- * (nothing left to strip from). */
+/**
+ * Prototype 2.6G2.5C4.2 -- `contiguousIslandContaining` deliberately BRIDGES an excluded,
+ * non-predicate-like token instead of breaking the island at it (that is what lets a bare
+ * non-restrictive appositive like "(VIF)" or a citation sitting at the tail keep the
+ * surrounding constituent readable). A naive `spanFromTokens(text, island)` slice therefore
+ * still grounds its `.text` from the island's own min-start to max-end over the RAW SOURCE
+ * TEXT -- so a citation subtree that `stripCitationTokens` removed from the TOKEN set (fine-
+ * grained, see `stripCitationTokens` above) is still sitting, as literal characters, inside
+ * that character range whenever the citation is interior (real content on both sides, e.g. a
+ * citation on a non-final coordination member).
+ *
+ * Prototype 2.6G2.5C4 originally had this OVERWRITE the authority Span's own `.text` with a
+ * citation-excised reconstruction while keeping `start`/`end` as the outer boundary --
+ * confirmed by the 2.6G2.5C4.1 audit to violate the codebase-wide Span contract
+ * (`span.text === source.slice(span.start, span.end)`, relied on by `resolveSpan`,
+ * `sourceSentenceHighlight`, `treeReadingTargets`, and Tree's own independent grounding).
+ * `groundConstituentSpan` below now keeps the authority Span fully, always contract-compliant
+ * again; this helper instead produces a citation-free PRESENTATION STRING as a side artifact,
+ * exposed separately (see `PresentationTextResult`), never written into `Span.text`.
+ *
+ * This computes the character range each REMOVED citation subtree occupied (the tight, local
+ * min-to-max of just its own removed tokens -- never a broader parent range), expands each
+ * range to swallow an immediately-adjacent bracket pair if one tightly wraps it (generic
+ * punctuation-structural check, not lexical), and reconstructs a citation-free string by
+ * concatenating the surviving CONTIGUOUS SOURCE-TEXT segments between those excised ranges --
+ * every character in the result still comes from a genuine contiguous run of the source, only
+ * the excised ranges are skipped.
+ */
+function expandBracketAdjacency(text: string, range: { start: number; end: number }): { start: number; end: number } {
+  let start = range.start
+  let end = range.end
+  let i = start - 1
+  while (i >= 0 && /\s/.test(text[i]!)) i--
+  if (i >= 0 && text[i] === '(') start = i
+  let j = end
+  while (j < text.length && /\s/.test(text[j]!)) j++
+  if (j < text.length && text[j] === ')') end = j + 1
+  return { start, end }
+}
+
+function joinTextSegments(a: string, b: string): string {
+  const trimmedA = a.replace(/\s+$/, '')
+  const trimmedB = b.replace(/^\s+/, '')
+  if (trimmedA === '') return trimmedB
+  if (trimmedB === '') return trimmedA
+  if (/^[,.;:)\]}]/.test(trimmedB)) return trimmedA + trimmedB
+  return `${trimmedA} ${trimmedB}`
+}
+
+function buildSpanTextExcisingCitations(
+  text: string,
+  outerStart: number,
+  outerEnd: number,
+  exciseRanges: Array<{ start: number; end: number }>,
+): string {
+  const relevant = exciseRanges
+    .filter((r) => r.start >= outerStart && r.end <= outerEnd)
+    .sort((a, b) => a.start - b.start)
+  let result = ''
+  let cursor = outerStart
+  for (const r of relevant) {
+    if (r.start < cursor) continue // overlapping with an already-excised range
+    result = joinTextSegments(result, text.slice(cursor, r.start))
+    cursor = Math.max(cursor, r.end)
+  }
+  result = joinTextSegments(result, text.slice(cursor, outerEnd))
+  return result
+}
+
+/** A canonical constituent's grounded authority Span, plus an OPTIONAL, separate citation-free
+ * presentation string -- never merged into `span.text`. `presentationText` is `null` whenever
+ * nothing was excised (the overwhelming majority of constituents), signalling callers should
+ * simply display `span.text` as-is. */
+export interface GroundedConstituent {
+  span: Span
+  presentationText: string | null
+}
+
+/** Collects a constituent's tokens, removes embedded citation subtrees (if any -- narrowly,
+ * see `stripCitationTokens`), and restricts the result to the contiguous source-text island
+ * containing `head` (see `contiguousIslandContaining`) before grounding the span -- the
+ * citation-safe, boundary-safe replacement for a bare
+ * `spanFromTokens(text, collectConstituentTokens(...))` call wherever an S/O/C/IO span is
+ * finalized. The trailing whole-span `isCitationLike` check in convertPredicateFrame remains
+ * as the final safety net for a citation-only candidate (nothing left to strip from).
+ *
+ * Prototype 2.6G2.5C4.2 -- the returned `span` is ALWAYS fully source-grounded
+ * (`span.text === text.slice(span.start, span.end)`, restoring the codebase-wide Span
+ * contract the original C4 excision violated -- see 2.6G2.5C4.1). A citation-free rendering,
+ * when the fine-grained pruning above actually removed something, is exposed separately as
+ * `presentationText` -- authority answers "where is this in the source", presentation answers
+ * "what should Basic Skeleton display". */
 function groundConstituentSpan(
   head: StanzaToken,
   byHead: Map<number, StanzaToken[]>,
@@ -439,11 +559,43 @@ function groundConstituentSpan(
   boundaryIds: ReadonlySet<number>,
   text: string,
   stopDeps: ReadonlySet<string> = EMPTY_DEP_SET,
-): Span | null {
+): GroundedConstituent | null {
   const rawTokens = collectConstituentTokens(head, byHead, allTokens, boundaryIds, stopDeps)
   const cleanedTokens = stripCitationTokens(text, head, rawTokens, byHead)
   const island = contiguousIslandContaining(head, allTokens, cleanedTokens, byHead)
-  return spanFromTokens(text, island.length > 0 ? island : cleanedTokens)
+  const span = spanFromTokens(text, island.length > 0 ? island : cleanedTokens)
+  if (!span) return null
+
+  const cleanedIds = new Set(cleanedTokens.map((t) => t.id))
+  if (rawTokens.every((t) => cleanedIds.has(t.id))) return { span, presentationText: null }
+
+  // Cluster the removed tokens into SEPARATE excise ranges, one per contiguous run --
+  // splitting a run the moment a surviving (`cleanedTokens`) token sits between two removed
+  // ones. This matters whenever a constituent contains MULTIPLE independently-removed
+  // citations (e.g. a citation on each of several coordination members): merging them into
+  // one big range would wrongly excise the genuine content sitting between them too.
+  const sortedRaw = [...rawTokens].sort((a, b) => a.start - b.start)
+  const exciseRanges: Array<{ start: number; end: number }> = []
+  let clusterStart: number | null = null
+  let clusterEnd = 0
+  for (const t of sortedRaw) {
+    if (cleanedIds.has(t.id)) {
+      if (clusterStart !== null) exciseRanges.push({ start: clusterStart, end: clusterEnd })
+      clusterStart = null
+      continue
+    }
+    if (clusterStart === null) clusterStart = t.start
+    clusterEnd = Math.max(clusterEnd, t.end)
+  }
+  if (clusterStart !== null) exciseRanges.push({ start: clusterStart, end: clusterEnd })
+
+  const presentationText = buildSpanTextExcisingCitations(
+    text,
+    span.start,
+    span.end,
+    exciseRanges.map((r) => expandBracketAdjacency(text, r)),
+  )
+  return { span, presentationText: presentationText === span.text ? null : presentationText }
 }
 
 function verbSpanFor(frame: PredicateFrame, text: string): Span {
@@ -485,6 +637,9 @@ interface ConvertedCore {
   indirectObject: Span | null
   object: Span | null
   complement: Span | null
+  indirectObjectPresentationText: string | null
+  objectPresentationText: string | null
+  complementPresentationText: string | null
   pattern: SentencePattern
 }
 
@@ -499,19 +654,32 @@ export function convertPredicateFrame(
   let object: Span | null = null
   let indirectObject: Span | null = null
   let complement: Span | null = null
+  let objectPresentationText: string | null = null
+  let indirectObjectPresentationText: string | null = null
+  let complementPresentationText: string | null = null
 
   if (frame.cop.length > 0) {
     // Copular core: V = cop(+aux); C = the lexical head's own constituent. `boundaryIds` keeps
     // this from reaching across `conj` into a sibling coordinated predicate.
-    complement = groundConstituentSpan(frame.headToken, byHead, tokens, boundaryIds, text, COPULAR_HEAD_STOP_DEPS)
+    const grounded = groundConstituentSpan(frame.headToken, byHead, tokens, boundaryIds, text, COPULAR_HEAD_STOP_DEPS)
+    complement = grounded?.span ?? null
+    complementPresentationText = grounded?.presentationText ?? null
   } else {
     if (frame.objToken) {
-      object = groundConstituentSpan(frame.objToken, byHead, tokens, boundaryIds, text)
+      const grounded = groundConstituentSpan(frame.objToken, byHead, tokens, boundaryIds, text)
+      object = grounded?.span ?? null
+      objectPresentationText = grounded?.presentationText ?? null
       const postnominal = findPostnominalComplementToken(frame.objToken, byHead)
-      if (postnominal) complement = groundConstituentSpan(postnominal, byHead, tokens, boundaryIds, text)
+      if (postnominal) {
+        const groundedComplement = groundConstituentSpan(postnominal, byHead, tokens, boundaryIds, text)
+        complement = groundedComplement?.span ?? null
+        complementPresentationText = groundedComplement?.presentationText ?? null
+      }
     }
     if (frame.iobjToken) {
-      indirectObject = groundConstituentSpan(frame.iobjToken, byHead, tokens, boundaryIds, text)
+      const grounded = groundConstituentSpan(frame.iobjToken, byHead, tokens, boundaryIds, text)
+      indirectObject = grounded?.span ?? null
+      indirectObjectPresentationText = grounded?.presentationText ?? null
     }
     if (frame.ccompToken) {
       // Whole clausal complement is the object, as a single grounded span (noun-clause object).
@@ -523,16 +691,45 @@ export function convertPredicateFrame(
       // xcomp ("began to run") is a different, non-5-pattern construction and is left unmapped.
       const xUpos = frame.xcompToken.upos
       if (xUpos === 'ADJ' || xUpos === 'NOUN' || xUpos === 'PROPN') {
-        complement = groundConstituentSpan(frame.xcompToken, byHead, tokens, boundaryIds, text)
+        const grounded = groundConstituentSpan(frame.xcompToken, byHead, tokens, boundaryIds, text)
+        complement = grounded?.span ?? null
+        complementPresentationText = grounded?.presentationText ?? null
       }
     }
   }
 
-  if (object && isCitationLike(object)) object = null
-  if (complement && isCitationLike(complement)) complement = null
+  // Prototype 2.6G2.5C4.2 -- this whole-span citation-only-candidate safety net must be tested
+  // against the citation-free PRESENTATION text (when fine-grained pruning produced one), never
+  // the raw grounded `span.text` directly: `span.text` is now always the fully source-grounded
+  // slice (2.6G2.5C4.1 contract restoration) and may legitimately still contain a bridged-in
+  // interior citation's literal characters alongside genuine surrounding content (e.g. "rainfall,
+  // soil type Smith et al. 2020, and land cover") -- `isCitationLike`'s own regex is unanchored
+  // and matches the pattern ANYWHERE in the text, so testing the raw span would wrongly reject
+  // a perfectly good constituent that merely CONTAINS a citation. Falling back to `span.text`
+  // only when nothing was pruned preserves the original safety net's real intent: reject a
+  // candidate that, after pruning, is nothing but a citation (nothing left to strip from).
+  if (object && isCitationLike({ text: objectPresentationText ?? object.text, start: 0, end: 0 })) {
+    object = null
+    objectPresentationText = null
+  }
+  if (complement && isCitationLike({ text: complementPresentationText ?? complement.text, start: 0, end: 0 })) {
+    complement = null
+    complementPresentationText = null
+  }
 
   const pattern = derivePattern({ verb, indirectObject, object, complement })
-  return { relation: frame.relation, connector: null, verb, indirectObject, object, complement, pattern }
+  return {
+    relation: frame.relation,
+    connector: null,
+    verb,
+    indirectObject,
+    object,
+    complement,
+    indirectObjectPresentationText,
+    objectPresentationText,
+    complementPresentationText,
+    pattern,
+  }
 }
 
 // ============================================================================
@@ -560,7 +757,7 @@ export function buildSentenceCoreSetFromStanzaTokens(text: string, rawTokens: St
   const mainClause = clauses.find((c) => c.relation === 'main')
 
   if (!mainClause) {
-    return { coreSet: { subject: null, subjectHead: null, predicateCores: [] }, clauses }
+    return { coreSet: { subject: null, subjectHead: null, subjectPresentationText: null, predicateCores: [] }, clauses }
   }
 
   // A constituent span must never reach across `conj` into a sibling coordinated predicate of
@@ -588,7 +785,9 @@ export function buildSentenceCoreSetFromStanzaTokens(text: string, rawTokens: St
   // enumeration break the contiguous run, so only the island actually containing the subject
   // head is kept. This also gives subject the SAME citation-safe stripping O/C/IO already
   // have (`stripCitationTokens`) -- previously subject had none at all.
-  const subject = mainSubjToken ? groundConstituentSpan(mainSubjToken, byHead, tokens, siblingBoundaryIds, text) : null
+  const groundedSubject = mainSubjToken ? groundConstituentSpan(mainSubjToken, byHead, tokens, siblingBoundaryIds, text) : null
+  const subject = groundedSubject?.span ?? null
+  const subjectPresentationText = groundedSubject?.presentationText ?? null
   const subjectHead = mainSubjToken ? spanFromTokens(text, [mainSubjToken]) : null
 
   const predicateCores: PredicateCore[] = []
@@ -606,10 +805,13 @@ export function buildSentenceCoreSetFromStanzaTokens(text: string, rawTokens: St
       indirectObject: converted.indirectObject,
       object: converted.object,
       complement: converted.complement,
+      indirectObjectPresentationText: converted.indirectObjectPresentationText,
+      objectPresentationText: converted.objectPresentationText,
+      complementPresentationText: converted.complementPresentationText,
       pattern: converted.pattern,
     })
     if (converted.verb) previousVerbEnd = converted.verb.end
   })
 
-  return { coreSet: { subject, subjectHead, predicateCores }, clauses }
+  return { coreSet: { subject, subjectHead, subjectPresentationText, predicateCores }, clauses }
 }
