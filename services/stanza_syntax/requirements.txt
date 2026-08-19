@@ -1,0 +1,11 @@
+# Prototype 2.6G1 -- pinned versions for the local Stanza syntax authority service.
+# Do not bump to "latest" without re-running the 96-case production/benchmark parity test
+# (see docs/design-notes.md, Prototype 2.6G1, and tests/test_parity_fixture.py).
+
+stanza==1.14.0
+
+fastapi==0.141.1
+uvicorn[standard]==0.52.3
+
+pytest==8.3.5
+httpx==0.28.1

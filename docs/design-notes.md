@@ -1615,3 +1615,79 @@ the backend's own `reconstructedText`, confirming no frontend fix was ever neede
 service: 16/16 unchanged.
 
 **Decision**: `WHITESPACE_FUSED_PAREN_RECOVERY_READY_FOR_LIVE_ACCEPTANCE`.
+
+# Prototype 2.6F/2.6G1 — Stanza syntax authority (benchmark spike, then production integration)
+
+## Architecture summary
+
+Syntax authority for canonical S/V/O/C — subject, predicate count, per-core verb/indirect
+object/object/complement, five-pattern type — is Stanford Stanza's dependency parser,
+converted via a deterministic three-layer pipeline:
+
+```
+Stanza dependency parse (local HTTP service, services/stanza_syntax/)
+  -> ClauseFrame (clause identity, relation, parent clause, predicate-head scope)
+  -> PredicateFrame (lexical head, aux/aux:pass/cop, obj/iobj/xcomp/ccomp)
+  -> SentenceCoreSet (subject + one-or-more predicate cores; canonical authority)
+```
+
+Ollama/Qwen remains in the application for ReadingGuide, Vocabulary, Expressions, and other
+educational/semantic enrichment — but Qwen's own `sentenceCoreSet`/`sentenceCore` output (and
+every focused repair built to correct it: subject/verb repair, copular-core repair,
+passive-core repair, complement verification) is no longer canonical. Direction is one-way:
+Stanza canonical authority -> legacy compatibility projection. Qwen's legacy core is never
+used to reconstruct or override Stanza's.
+
+**Accuracy is not claimed to be 100%.** The frozen blind evaluation (BLIND_HOLDOUT_V2, 24
+never-tuned-against sentences) scored **22/24 (91.7%) whole core-set exact**; both failures
+were confirmed TRUE_STANZA_PARSE_ERROR (a verb/noun POS-tagging ambiguity, and a bare
+ditransitive parsed as a noun-compound chain) — genuine upstream parser limitations, not
+adapter or gold defects, and not fixed with sentence-specific heuristics.
+
+## Benchmark provenance (do not re-derive these numbers without re-running the harness)
+
+- **Prototype 2.6F freeze**, commit `da6cb57ec1dc3ccf4de3602f856bc6cdd11600ca` — the
+  hierarchical adapter design accepted for production porting.
+  `benchmark/generalization/stanzaHierarchicalAdapterEval.ts` is the frozen reference; do not
+  edit its conversion logic.
+- **Blind gold freeze**, commit `8528803` — `benchmark/generalization/blindHoldoutV2.ts`
+  (`BLIND_HOLDOUT_V2`, 24 sentences), gold written and grounded before Stanza was ever run on
+  them.
+- Regression corpus for production/benchmark parity: development 48 + former holdout 24 +
+  BLIND_HOLDOUT_V2 24 = **96 sentences total**. Former holdout (`LOCKED_HOLDOUT_CASES`) is no
+  longer a blind set — it was opened during 2.6F diagnosis and is now regression corpus only.
+  A *new* blind set is required before any future accuracy claim beyond what's recorded here.
+
+## Production module map
+
+| Concern | Location |
+|---|---|
+| Raw Stanza dependency parse (HTTP service) | `services/stanza_syntax/main.py` |
+| ClauseFrame / PredicateFrame / SentenceCoreSet conversion (pure function, no I/O) | `src/features/grammar/domain/stanzaSyntaxAuthority.ts` |
+| HTTP client (local-only, throws `StanzaSyntaxUnavailableError` rather than guessing) | `src/features/grammar/domain/stanzaSyntaxClient.ts` |
+| Failure-policy entry point (`{status:'ok'\|'unavailable'}`) | `src/features/grammar/domain/analyzeSyntaxAuthority.ts` |
+| Wrapper around the existing Qwen pipeline; overrides `effectiveCore`/`effectiveCoreSet` when Stanza succeeds | `src/features/grammar/domain/analyzeSentenceWithSyntaxAuthority.ts` (new call site; `App.tsx` now calls this instead of `analyzeSentenceWithComplementVerification` directly) |
+| `SentenceCoreSet`/`PredicateCore` schema types, `projectPrimaryCore` (legacy single-core projection), `validateGroundedSentenceCoreSet` | `src/features/grammar/domain/sentenceCoreSet.ts` (pre-existing, reused as-is) |
+| Production/frozen-benchmark parity (hard requirement, 96/96) | `tests/grammar/stanzaSyntaxAuthorityParity.test.ts` |
+
+## Failure policy
+
+If the local Stanza service is unavailable, times out, or its parse fails structural
+validation (`validateGroundedSentenceCoreSet`), the app does **not** silently present the
+legacy Qwen core as Stanza-quality canonical authority. `syntaxAuthority.source` on the
+analysis result is explicitly `'legacy-qwen-fallback'` (never silently `'stanza'`), a console
+warning is emitted, and the (unredesigned) UI falls back to displaying the existing
+Qwen-derived core so the application stays usable — degraded-authority is always visible to
+anything inspecting the result, never hidden.
+
+## Deferred to Prototype 2.6G2
+
+- Structure Tree construction still consumes only the single primary `SentenceCore`
+  projection (`buildCoreOnlyTree`/`buildHybridStructureTree`), not the full
+  `SentenceCoreSet.predicateCores` array. Coordinated/secondary predicate cores are computed
+  and preserved in `effectiveCoreSet` but not yet rendered.
+- Basic Skeleton UI shows only the primary core (via `projectPrimaryCore`).
+- ReadingGuide (B6) is unchanged; it will receive genuinely multi-core-aware Tree targets once
+  Tree migrates.
+- No UI has been added to surface `syntaxAuthority.source`/`unavailableReason` to the end user
+  (currently console-only).

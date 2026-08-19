@@ -10,8 +10,8 @@ import {
 } from './config/settings'
 import { AnalysisResultPanel } from './features/grammar/components/AnalysisResultPanel'
 import { SentenceInputPanel, type AnalyzePhase } from './features/grammar/components/SentenceInputPanel'
-import type { VerifiedSentenceAnalysis } from './features/grammar/domain/analyzeSentenceWithComplementVerification'
-import { analyzeSentenceWithComplementVerification } from './features/grammar/domain/analyzeSentenceWithComplementVerification'
+import type { VerifiedSentenceAnalysisWithSyntaxAuthority } from './features/grammar/domain/analyzeSentenceWithSyntaxAuthority'
+import { analyzeSentenceWithSyntaxAuthority } from './features/grammar/domain/analyzeSentenceWithSyntaxAuthority'
 import { restoreEquationPlaceholdersInFreeText } from './features/grammar/domain/equationPlaceholder'
 import { normalizeSentenceForGrammarAnalysis } from './features/grammar/domain/grammarInputNormalization'
 import { getModelSizeAdvisory } from './features/grammar/domain/modelSizeAdvisory'
@@ -47,7 +47,7 @@ export default function App() {
   const [sentence, setSentence] = useState('')
   const [selectionPageNumber, setSelectionPageNumber] = useState<number | null>(null)
   const [analyzePhase, setAnalyzePhase] = useState<AnalyzePhase>('idle')
-  const [result, setResult] = useState<VerifiedSentenceAnalysis | null>(null)
+  const [result, setResult] = useState<VerifiedSentenceAnalysisWithSyntaxAuthority | null>(null)
   const [analyzeError, setAnalyzeError] = useState<string | null>(null)
   // Guards the "骨格を見る" flow (GrammarAnalysis + automatic forced-core recovery +
   // focused complement verification, Prototype 2.2/2.3I) against a slow in-flight call
@@ -155,7 +155,7 @@ export default function App() {
       // offset resolution) operates on one consistent representation. The textarea itself
       // is never touched.
       const analysisInput = normalizeSentenceForGrammarAnalysis(sentence)
-      const outcome = await analyzeSentenceWithComplementVerification({
+      const outcome = await analyzeSentenceWithSyntaxAuthority({
         provider,
         model: selectedModel,
         sentence: analysisInput,

@@ -107,6 +107,19 @@ export const PYMUPDF_LAYOUT_SERVICE_URL = 'http://127.0.0.1:8009'
  * `/health` since it involves a real file upload + PyMuPDF opening the document. */
 export const PYMUPDF_REGISTER_TIMEOUT_MS = 10_000
 
+/**
+ * Local-only Stanza syntax authority service (Prototype 2.6G1) — the canonical S/V/O/C
+ * syntax authority (see docs/design-notes.md, Prototype 2.6F/2.6G1). `services/
+ * stanza_syntax/` must be started manually in development (see its README); the app never
+ * spawns it. 127.0.0.1 only, matching the service's own bind address. Port 8010, chosen to
+ * sit next to the PyMuPDF (8009) / PaddleOCR (8008) services without colliding.
+ */
+export const STANZA_SYNTAX_SERVICE_URL = 'http://127.0.0.1:8010'
+
+/** A single-sentence dependency parse; generous relative to `/health` for CPU-only inference
+ * on very long (80+ word) sentences. */
+export const STANZA_SYNTAX_ANALYZE_TIMEOUT_MS = 15_000
+
 /** `/health` should answer near-instantly if the service is up at all. */
 export const PYMUPDF_HEALTH_TIMEOUT_MS = 3_000
 

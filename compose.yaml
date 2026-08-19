@@ -60,6 +60,24 @@ services:
       start_period: 30s
     restart: unless-stopped
 
+  stanza-syntax:
+    build:
+      context: .
+      dockerfile: docker/stanza-syntax/Dockerfile
+    ports:
+      - "127.0.0.1:${PGT_STANZA_PORT:-8010}:8010"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import json, urllib.request; data=json.load(urllib.request.urlopen('http://127.0.0.1:8010/health', timeout=5)); assert data.get('status') == 'ok' and data.get('modelReady') is True"
+      interval: 5s
+      timeout: 5s
+      retries: 40
+      start_period: 20s
+    restart: unless-stopped
+
   ollama:
     image: ollama/ollama:0.32.9
     environment:

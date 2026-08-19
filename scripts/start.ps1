@@ -61,6 +61,7 @@ try {
         web = [int](Get-ConfiguredValue 'PGT_WEB_PORT' '5173')
         paddle = [int](Get-ConfiguredValue 'PGT_PADDLE_PORT' '8008')
         pymupdf = [int](Get-ConfiguredValue 'PGT_PYMUPDF_PORT' '8009')
+        stanza = [int](Get-ConfiguredValue 'PGT_STANZA_PORT' '8010')
         ollama = [int](Get-ConfiguredValue 'PGT_OLLAMA_PORT' '11434')
     }
     foreach ($entry in $ports.GetEnumerator()) {
@@ -78,6 +79,7 @@ try {
     Write-Host 'service healthを待機しています。'
     Wait-ComposeHealth 'web' 180
     Wait-ComposeHealth 'pymupdf-layout' 180
+    Wait-ComposeHealth 'stanza-syntax' 180
     Wait-ComposeHealth 'ollama' 180
     Wait-ComposeHealth 'paddle-ocr' 1800
 

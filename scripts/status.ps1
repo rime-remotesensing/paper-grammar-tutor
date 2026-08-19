@@ -22,12 +22,15 @@ function Get-ConfiguredValue {
 try {
     $paddlePort = Get-ConfiguredValue 'PGT_PADDLE_PORT' '8008'
     $pymupdfPort = Get-ConfiguredValue 'PGT_PYMUPDF_PORT' '8009'
+    $stanzaPort = Get-ConfiguredValue 'PGT_STANZA_PORT' '8010'
     $ollamaPort = Get-ConfiguredValue 'PGT_OLLAMA_PORT' '11434'
     docker compose ps
     Write-Host "`nPyMuPDF health:"
     try { Invoke-RestMethod "http://127.0.0.1:$pymupdfPort/health" -TimeoutSec 5 | ConvertTo-Json -Compress } catch { Write-Host "  unavailable: $($_.Exception.Message)" }
     Write-Host 'Paddle health:'
     try { Invoke-RestMethod "http://127.0.0.1:$paddlePort/health" -TimeoutSec 5 | ConvertTo-Json -Compress } catch { Write-Host "  unavailable: $($_.Exception.Message)" }
+    Write-Host 'Stanza syntax health:'
+    try { Invoke-RestMethod "http://127.0.0.1:$stanzaPort/health" -TimeoutSec 5 | ConvertTo-Json -Compress } catch { Write-Host "  unavailable: $($_.Exception.Message)" }
     Write-Host 'Ollama version/models:'
     try {
         Invoke-RestMethod "http://127.0.0.1:$ollamaPort/api/version" -TimeoutSec 5 | ConvertTo-Json -Compress
