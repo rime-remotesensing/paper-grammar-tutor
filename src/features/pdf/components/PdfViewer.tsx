@@ -21,6 +21,7 @@ import {
   type PointerPoint,
 } from '../domain/pdfViewerState'
 import { normalizePdfSelectionText } from '../utils/pdfTextNormalize'
+import { joinTextSegments, type TextSegment } from '../domain/sameLineTextReconstruction'
 import { extractPageLines, classifyPageLines, type PageLine, type RawTextItem } from '../domain/pageTextClassifier'
 import { buildFilteredFragmentText, buildNuisancePredicate, combineFragments, type SelectionFragment } from '../domain/crossPageSelection'
 import {
@@ -182,6 +183,45 @@ function normalizedPointOfBoundary(node: Node, offset: number, canvasRect: DOMRe
   }
 }
 
+/** Prototype 2.6G2.5A: a text node's own geometry (its pdf.js-rendered parent `<span>`'s
+ * bounding box, in CSS pixels) plus a representative font-size measure -- the sole input
+ * `joinTextSegments` needs to decide whether a gap between two adjacent DOM segments is a
+ * genuine word boundary. Falls back to the rect's own height when computed font-size isn't
+ * available (e.g. in a non-browser test environment), never a fixed pixel guess. */
+function segmentGeometry(node: Text): { left: number; right: number; fontSize: number } {
+  const el = node.parentElement
+  const rect = el?.getBoundingClientRect()
+  if (!rect) return { left: 0, right: 0, fontSize: 0 }
+  const computed = el && typeof getComputedStyle === 'function' ? parseFloat(getComputedStyle(el).fontSize) : NaN
+  return { left: rect.left, right: rect.right, fontSize: Number.isFinite(computed) && computed > 0 ? computed : rect.height }
+}
+
+/**
+ * Prototype 2.6G2.5A item 4: reconstructs the text of a Range from its own intersected DOM
+ * text nodes' geometry, rather than trusting `Range.toString()` (which concatenates text-node
+ * data with no separator at all between adjacent nodes/spans, exactly the same failure mode
+ * `extractWithinLine` below already has to defend against). Mirrors `extractScientificTokens`'
+ * existing `range.intersectsNode` walking pattern in this same file. Returns '' if the range
+ * doesn't intersect any text node in `layer` (caller falls back to `range.toString()` then --
+ * never worse than the pre-2.6G2.5A behavior).
+ */
+function reconstructRangeText(range: Range, layer: HTMLElement): string {
+  const walker = document.createTreeWalker(layer, NodeFilter.SHOW_TEXT)
+  const segments: TextSegment[] = []
+  let node = walker.nextNode()
+  while (node) {
+    if (range.intersectsNode(node)) {
+      const text = node.textContent ?? ''
+      const localStart = node === range.startContainer ? range.startOffset : 0
+      const localEnd = node === range.endContainer ? range.endOffset : text.length
+      const slice = sliceBetweenCaretOffsets(text, localStart, localEnd)
+      if (slice.length > 0) segments.push({ text: slice, ...segmentGeometry(node as Text) })
+    }
+    node = walker.nextNode()
+  }
+  return joinTextSegments(segments)
+}
+
 /**
  * Prototype 2.4B-R1 item 22: "最初と最後のline/spanだけはnative selection offsetを使用" — the
  * ONLY place this file still trusts native DOM Range membership is for extracting the exact
@@ -208,21 +248,23 @@ function extractWithinLine(layer: HTMLElement, node: Text, offset: number, direc
 
   if (direction === 'forward') {
     const nodeText = node.textContent ?? ''
-    let text = sliceBetweenCaretOffsets(nodeText, offset, nodeText.length)
+    const firstText = sliceBetweenCaretOffsets(nodeText, offset, nodeText.length)
+    const segments: TextSegment[] = [{ text: firstText, ...segmentGeometry(node) }]
     for (let i = nodeIndex + 1; i < flatNodes.length; i++) {
       const cur = flatNodes[i]
       if (cur.nodeType === Node.ELEMENT_NODE) break
-      text += cur.textContent ?? ''
+      segments.push({ text: cur.textContent ?? '', ...segmentGeometry(cur as Text) })
     }
-    return text
+    return joinTextSegments(segments)
   }
-  const prefixParts: string[] = []
+  const segments: TextSegment[] = []
   for (let i = nodeIndex - 1; i >= 0; i--) {
     const cur = flatNodes[i]
     if (cur.nodeType === Node.ELEMENT_NODE) break
-    prefixParts.unshift(cur.textContent ?? '')
+    segments.unshift({ text: cur.textContent ?? '', ...segmentGeometry(cur as Text) })
   }
-  return prefixParts.join('') + sliceBetweenCaretOffsets(node.textContent ?? '', 0, offset)
+  segments.push({ text: sliceBetweenCaretOffsets(node.textContent ?? '', 0, offset), ...segmentGeometry(node) })
+  return joinTextSegments(segments)
 }
 
 type LoadStatus = 'idle' | 'loading' | 'ready' | 'error'
@@ -590,7 +632,13 @@ export const PdfViewer = forwardRef<PdfViewerHandle, PdfViewerProps>(function Pd
       // Prototype 2.4B-R5B item 3/19/35: native-path artifacts, computed synchronously so
       // they're ready immediately if routing (below) lands on "same page, same text block" --
       // the untouched Prototype 1.1 native Range selection, exactly as it has always worked.
-      const nativeText = range.toString()
+      // Prototype 2.6G2.5A: `Range.toString()` concatenates DOM text-node data with no
+      // separator at all between adjacent nodes/spans, so it inherits the exact same
+      // intra-line word-boundary-loss risk `extractWithinLine` has to defend against --
+      // reconstructing from the range's own intersected DOM segments' geometry instead keeps
+      // both paths on the same boundary policy. Falls back to the untouched
+      // `range.toString()` whenever the reconstruction finds nothing (never a regression).
+      const nativeText = reconstructRangeText(range, startLayer) || range.toString()
       const nativeOcrRects = computeNormalizedSelectionRects(Array.from(range.getClientRects()), startCanvasRect)
       const nativeScientificTokens = extractScientificTokens(range, startLayer, startCanvasRect)
 

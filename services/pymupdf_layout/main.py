@@ -367,6 +367,102 @@ def _get_document_state(document_id: str) -> _DocumentState:
     return doc_state
 
 
+# --- Intra-line word-boundary reconstruction (Prototype 2.6G2.5A) -----------------------
+#
+# "dict"-mode span text (raw_span["text"]) is PyMuPDF's own already-joined text for one
+# font-run, produced by an internal heuristic that inserts a synthetic space wherever it
+# judges a glyph-to-glyph gap large enough. For some fonts/PDFs that heuristic's own
+# threshold is too strict and multiple genuinely separate words are returned as a single,
+# spaceless run (e.g. a real failing control measured a ~14.8%-of-font-size gap between
+# "training" and "and" that PyMuPDF's own heuristic did not treat as a word boundary, while
+# every intra-word glyph-to-glyph gap on the same page measured ~0%). This never touches
+# Stanza/SentenceCoreSet/Structure Tree/ReadingGuide -- it is strictly about the English text
+# that reaches the textarea before analysis ever begins.
+#
+# The fix is a SEPARATE, independent geometry pass ("rawdict" mode, which exposes each
+# character's own bbox) used ONLY to REPAIR a span's text when its own char geometry proves
+# a word gap dict-mode's text does not represent -- never a wholesale replacement of
+# PyMuPDF's own extraction. No dictionary, no known-phrase table, no language-specific
+# tokenization: the sole signal is the horizontal gap between two adjacent glyphs' bounding
+# boxes, normalized by font size.
+_WORD_GAP_RATIO = 0.10
+_WORD_GAP_MIN_PT = 0.3
+
+
+def _bbox_key(bbox: tuple[float, float, float, float]) -> tuple[float, float, float, float]:
+    return tuple(round(v, 1) for v in bbox)
+
+
+def _rawdict_chars_by_line(page: "pymupdf.Page") -> dict[tuple[float, float, float, float], list[list[dict]]]:
+    """Maps each line's rounded bbox -> one char list per span (rawdict mode), used only to
+    independently verify/repair "dict"-mode's word-boundary reconstruction. Returns {} if
+    rawdict extraction fails outright for this page -- callers then leave every span's
+    dict-mode text completely unmodified (the pre-2.6G2.5A behavior), never guess."""
+    try:
+        rd = page.get_text("rawdict")
+    except Exception:
+        return {}
+    result: dict[tuple[float, float, float, float], list[list[dict]]] = {}
+    for raw_block in rd.get("blocks", []):
+        if raw_block.get("type") != 0:
+            continue
+        for raw_line in raw_block.get("lines", []):
+            key = _bbox_key(tuple(raw_line.get("bbox", (0.0, 0.0, 0.0, 0.0))))
+            result[key] = [span.get("chars", []) for span in raw_line.get("spans", [])]
+    return result
+
+
+def _has_word_gap(prev_char: dict, next_char: dict) -> bool:
+    gap = next_char["bbox"][0] - prev_char["bbox"][2]
+    size = max(prev_char.get("size", 0.0), next_char.get("size", 0.0)) or 1.0
+    return gap > max(_WORD_GAP_MIN_PT, _WORD_GAP_RATIO * size)
+
+
+def _reconstruct_line_span_texts(dict_spans: list[dict], raw_span_chars: Optional[list[list[dict]]]) -> list[str]:
+    """Returns one text string per span in `dict_spans`, same order. Prefers each span's own
+    PyMuPDF "dict"-mode text unchanged; only substitutes a geometry-reconstructed text for a
+    span whose own rawdict character stream proves a word gap exists that dict-mode's text
+    does not represent -- and only ever ADDS a single space at a proven gap, never removes or
+    otherwise alters any character. Falls back to the original dict-mode text entirely when
+    rawdict data is unavailable or its span count doesn't line up with dict-mode's own (a
+    structural mismatch that should not happen but is treated as "leave alone")."""
+    original_texts = [s["text"] for s in dict_spans]
+    if not raw_span_chars or len(raw_span_chars) != len(dict_spans):
+        return original_texts
+
+    result: list[str] = []
+    prev_last_char: Optional[dict] = None
+    for span_index, chars in enumerate(raw_span_chars):
+        original = original_texts[span_index]
+        size = dict_spans[span_index].get("size", 0.0)
+        pieces: list[str] = []
+        need_leading_space = False
+        if chars and prev_last_char is not None:
+            first_c = chars[0].get("c", "")
+            if first_c and not first_c.isspace() and not prev_last_char.get("c", "").isspace():
+                if _has_word_gap(prev_last_char, {**chars[0], "size": size}):
+                    need_leading_space = True
+        for i, ch in enumerate(chars):
+            c = ch.get("c", "")
+            if i > 0:
+                prev = chars[i - 1]
+                if c and not c.isspace() and not prev.get("c", "").isspace():
+                    if _has_word_gap({**prev, "size": size}, {**ch, "size": size}):
+                        pieces.append(" ")
+            pieces.append(c)
+        reconstructed = ("" if not need_leading_space else " ") + "".join(pieces)
+
+        stripped_reconstructed = reconstructed.replace(" ", "")
+        stripped_original = original.replace(" ", "")
+        if chars and stripped_reconstructed == stripped_original and len(reconstructed) >= len(original) and reconstructed != original:
+            result.append(reconstructed)
+        else:
+            result.append(original)
+
+        prev_last_char = {**chars[-1], "size": size} if chars else None
+    return result
+
+
 def _extract_page_blocks(document_id: str, page_number: int) -> PageBlocks:
     doc_state = _get_document_state(document_id)
     if page_number in doc_state.page_cache:
@@ -378,6 +474,7 @@ def _extract_page_blocks(document_id: str, page_number: int) -> PageBlocks:
     page = doc[page_number - 1]
     width, height = page.rect.width, page.rect.height
     d = page.get_text("dict")
+    raw_chars_by_line = _rawdict_chars_by_line(page)
 
     blocks: list[Block] = []
     raw_spans_pt: list[dict] = []  # every span's own raw (pt, unnormalized) geometry, across ALL blocks -- gap detection needs to compare adjacent spans regardless of which block PyMuPDF happened to put them in (see docs/design-notes.md, Prototype 2.5A: two spans on the SAME visual row can legitimately land in different blocks).
@@ -387,17 +484,28 @@ def _extract_page_blocks(document_id: str, page_number: int) -> PageBlocks:
         lines: list[Line] = []
         for raw_line in raw_block["lines"]:
             spans: list[Span] = []
+            # Prototype 2.6G2.5A: PyMuPDF's own "dict"-mode span text (raw_span["text"]) is
+            # PREFERRED as-is -- it already carries whatever whitespace the PDF's content
+            # stream and PyMuPDF's own internal heuristic produced. It is only OVERRIDDEN,
+            # span-by-span, when this line's independently-computed char-geometry
+            # reconstruction (_line_text_from_raw_chars) proves a different, gap-justified
+            # result -- see that function's own docs for why this is a strict repair, never a
+            # wholesale replacement of PyMuPDF's own text.
+            span_texts = _reconstruct_line_span_texts(raw_line["spans"], raw_chars_by_line.get(_bbox_key(raw_line["bbox"])))
             line_text_parts = []
-            for raw_span in raw_line["spans"]:
+            for raw_span, span_text in zip(raw_line["spans"], span_texts):
                 bx0, by0, bx1, by1 = raw_span["bbox"]
-                spans.append(Span(text=raw_span["text"], bbox=(bx0 / width, by0 / height, bx1 / width, by1 / height), size=raw_span["size"], font=raw_span["font"]))
-                line_text_parts.append(raw_span["text"])
+                spans.append(Span(text=span_text, bbox=(bx0 / width, by0 / height, bx1 / width, by1 / height), size=raw_span["size"], font=raw_span["font"]))
+                line_text_parts.append(span_text)
                 if raw_span["text"].strip():
                     # Prototype 2.5L item 9: "text" is threaded through so the punctuation-
                     # bounded candidacy rule below can check bracket-adjacency; this is the
                     # span's own already-reliably-extracted PyMuPDF text (never OCR/guessed),
                     # so it doesn't compromise _detect_suspicious_gaps's existing "pure
                     # geometry, no dictionary/content guessing" contract for the ordinary rule.
+                    # Deliberately still keyed on raw_span["text"] (not span_text) -- gap
+                    # detection's own candidacy rule is unrelated to intra-span word-boundary
+                    # reconstruction and must stay unaffected by it.
                     raw_spans_pt.append({"x0": bx0, "y0": by0, "x1": bx1, "y1": by1, "size": raw_span["size"], "text": raw_span["text"]})
             if not spans:
                 continue
