@@ -13,6 +13,20 @@ export function buildFallbackAnalysis(
   return {
     originalText,
     normalizedText,
+    sentenceCoreSet: {
+      subject: null,
+      subjectHead: null,
+      predicateCores: [{
+        predicateCoreId: 'predicate-1',
+        relation: 'main',
+        connector: null,
+        verb: null,
+        indirectObject: null,
+        object: null,
+        complement: null,
+        pattern: 'other',
+      }],
+    },
     sentenceCore: {
       subject: null,
       subjectHead: null,

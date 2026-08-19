@@ -7,7 +7,7 @@ import type {
   LLMProvider,
   ModelInfo,
 } from '../../src/llm/types'
-import { SAMPLE_SENTENCE, validAnalysisFixture } from '../fixtures/validAnalysisFixture'
+import { SAMPLE_SENTENCE, validAnalysisFixture, withSingleCoreFixture } from '../fixtures/validAnalysisFixture'
 
 class StubProvider implements LLMProvider {
   callCount = 0
@@ -59,14 +59,11 @@ describe('analyzeSentence', () => {
     // the model to contradict itself with — this guards against that class of bug
     // (Prototype 0 baseline saw the LLM's own "pattern" answer disagree with the S/V/O/C
     // spans it had just produced) coming back if the schema is ever changed again.
-    const svocFixture = {
-      ...validAnalysisFixture,
-      sentenceCore: {
+    const svocFixture = withSingleCoreFixture(validAnalysisFixture, {
         ...validAnalysisFixture.sentenceCore,
         object: { text: 'The results', start: 0, end: 11 },
         complement: { text: 'obtained', start: 12, end: 20 },
-      },
-    }
+      })
     const provider = new StubProvider([JSON.stringify(svocFixture)])
     const result = await analyzeSentence({
       provider,
@@ -90,6 +87,16 @@ describe('analyzeSentence', () => {
     expect(result.meta.regenerated).toBe(true)
     expect(result.meta.schemaValid).toBe(true)
     expect(provider.callCount).toBe(2)
+  })
+
+  it('repairs once when canonical predicateCores is missing', async () => {
+    const malformed = { ...validAnalysisFixture, sentenceCoreSet: { ...validAnalysisFixture.sentenceCoreSet, predicateCores: [] } }
+    const provider = new StubProvider([JSON.stringify(malformed), JSON.stringify(validAnalysisFixture)])
+    const result = await analyzeSentence({ provider, model: 'test-model', sentence: SAMPLE_SENTENCE, temperature: 0.1 })
+    expect(result.meta.schemaValid).toBe(true)
+    expect(result.meta.regenerated).toBe(true)
+    expect(provider.callCount).toBe(2)
+    expect(result.analysis.sentenceCoreSet.predicateCores).toHaveLength(1)
   })
 
   it('falls back to a safe empty analysis when repair also fails, without throwing', async () => {
@@ -131,13 +138,10 @@ describe('analyzeSentence', () => {
   })
 
   it('flags spans the model reports that do not appear in the sentence', async () => {
-    const badSpanFixture = {
-      ...validAnalysisFixture,
-      sentenceCore: {
+    const badSpanFixture = withSingleCoreFixture(validAnalysisFixture, {
         ...validAnalysisFixture.sentenceCore,
         verb: { text: 'this phrase is not in the sentence', start: 0, end: 5 },
-      },
-    }
+      })
     const provider = new StubProvider([JSON.stringify(badSpanFixture)])
     const result = await analyzeSentence({
       provider,

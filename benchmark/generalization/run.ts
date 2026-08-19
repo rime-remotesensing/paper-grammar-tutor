@@ -19,7 +19,7 @@ import { resetFocusedSubjectVerbRepairCache } from '../../src/features/grammar/d
 import { resetFocusedWhereClauseRepairCache } from '../../src/features/grammar/domain/focusedWhereClauseRepairService.ts'
 import { resetPredicateStructureCache } from '../../src/features/grammar/domain/predicateStructureService.ts'
 import { DEVELOPMENT_CASES, LOCKED_HOLDOUT_CASES, type GeneralizationCase, type GeneralizationSplit } from './dataset.ts'
-import { evaluateCore, evaluateTree, type CoreMetrics, type TreeMetrics } from './metrics.ts'
+import { evaluateCore, evaluateCoreSet, evaluateTree, type CoreMetrics, type CoreSetMetrics, type TreeMetrics } from './metrics.ts'
 
 interface Args {
   split: GeneralizationSplit
@@ -63,7 +63,7 @@ interface RequestTrace {
 
 function requestKind(request: GenerateStructuredRequest): string {
   const properties = Object.keys((request.jsonSchema.properties ?? {}) as Record<string, unknown>)
-  if (properties.includes('sentenceCore')) return 'GrammarAnalysis'
+  if (properties.includes('sentenceCoreSet')) return 'GrammarAnalysis'
   if (properties.includes('subjectModifiers') && properties.includes('predicates')) return 'PredicateStructure'
   if (properties.includes('relations')) return 'FocusedRelativeLink'
   if (properties.includes('classification')) return 'FocusedComplementVerification'
@@ -202,8 +202,11 @@ export interface BaselineResult {
   passiveRepair: unknown
   complementVerification: unknown
   rawGrammarAnalysis: unknown
+  analysisMeta: unknown
   rawCore: unknown
   effectiveCore: unknown
+  rawCoreSet: unknown
+  effectiveCoreSet: unknown
   rawPredicateStructure: unknown
   whereClauseRepair: string
   acceptedPredicates: unknown
@@ -211,6 +214,7 @@ export interface BaselineResult {
   finalTree: StructureTreeNode[]
   visibleTree: VisibleTreeNode[]
   coreMetrics: CoreMetrics | null
+  coreSetMetrics: CoreSetMetrics | null
   treeMetrics: TreeMetrics | null
   firstFailureStage: FailureStage | 'unscored-control'
   failureTaxonomy: string[]
@@ -230,9 +234,9 @@ async function runCase(provider: TracingProvider, model: string, item: Generaliz
       requestTrace: provider.calls.slice(startCall), cacheResetSequence: resetSequence,
       schemaValid: false, regenerationUsed: false, recoveryUsed: false,
       coreRepair: null, copularRepair: null, passiveRepair: null, complementVerification: null,
-      rawGrammarAnalysis: null, rawCore: null, effectiveCore: null, rawPredicateStructure: null,
+      rawGrammarAnalysis: null, analysisMeta: null, rawCore: null, effectiveCore: null, rawCoreSet: null, effectiveCoreSet: null, rawPredicateStructure: null,
       whereClauseRepair: 'not_run', acceptedPredicates: null, hybridMerger: null, finalTree: [], visibleTree: [],
-      coreMetrics: null, treeMetrics: null, firstFailureStage: 'GrammarAnalysis', failureTaxonomy: ['CORE_MISSING_SLOT'], error: outcome.error,
+      coreMetrics: null, coreSetMetrics: null, treeMetrics: null, firstFailureStage: 'GrammarAnalysis', failureTaxonomy: ['CORE_MISSING_SLOT'], error: outcome.error,
     }
   }
 
@@ -258,7 +262,7 @@ async function runCase(provider: TracingProvider, model: string, item: Generaliz
     ? classifyAcceptedPredicates(verified.analysis.normalizedText, verified.effectiveCore, structure.predicates)
     : null
   const hybrid = structure
-    ? mergeHybridPredicateStructure(verified.analysis.normalizedText, verified.effectiveCore, structure)
+    ? mergeHybridPredicateStructure(verified.analysis.normalizedText, verified.effectiveCore, structure, verified.effectiveCoreSet)
     : null
   const supplement = hybrid
     ? resolveSupplementSpan(verified.analysis.normalizedText, verified.effectiveCore, verified.rawCore, verified.verification, hybrid)
@@ -268,6 +272,7 @@ async function runCase(provider: TracingProvider, model: string, item: Generaliz
     : buildCoreOnlyTree(verified.effectiveCore)
   const rawMetrics = evaluateCore(item, verified.rawCore)
   const coreMetrics = evaluateCore(item, verified.effectiveCore)
+  const coreSetMetrics = evaluateCoreSet(item, verified.effectiveCoreSet)
   const treeMetrics = evaluateTree(item, tree)
   const repairRan = verified.coreRepair.strategy !== 'none' || verified.copularRepair.status !== 'not_applicable' ||
     verified.passiveRepair.status !== 'not_applicable' || verified.verification.status !== 'not_applicable'
@@ -282,11 +287,12 @@ async function runCase(provider: TracingProvider, model: string, item: Generaliz
     schemaValid: verified.meta.schemaValid,
     regenerationUsed: verified.meta.regenerated, recoveryUsed: outcome.recoveryUsed,
     coreRepair: verified.coreRepair, copularRepair: verified.copularRepair, passiveRepair: verified.passiveRepair,
-    complementVerification: verified.verification, rawGrammarAnalysis: verified.analysis,
+    complementVerification: verified.verification, rawGrammarAnalysis: verified.analysis, analysisMeta: verified.meta,
     rawCore: verified.rawCore, effectiveCore: verified.effectiveCore,
+    rawCoreSet: verified.rawCoreSet, effectiveCoreSet: verified.effectiveCoreSet,
     rawPredicateStructure: structureOutcome.success ? structureOutcome.structure : structureOutcome,
     whereClauseRepair, acceptedPredicates: classification, hybridMerger: hybrid,
-    finalTree: tree, visibleTree: visibleTree(tree), coreMetrics, treeMetrics,
+    finalTree: tree, visibleTree: visibleTree(tree), coreMetrics, coreSetMetrics, treeMetrics,
     firstFailureStage: stage, failureTaxonomy: taxonomy(item, coreMetrics, treeMetrics), error: null,
   }
 }
@@ -298,12 +304,12 @@ async function runExternalControl(provider: TracingProvider, model: string, id: 
     clauseCount: 0, modifierCount: 0,
     gold: {
       subject: { text: text, start: 0, end: text.length },
-      primaryCore: { verb: { text, start: 0, end: text.length }, indirectObject: null, object: null, complement: null, pattern: 'other' },
+      primaryCore: { predicateCoreId: 'predicate-1', relation: 'main', connector: null, verb: { text, start: 0, end: text.length }, indirectObject: null, object: null, complement: null, pattern: 'other' },
       predicateCores: [], attachments: [],
     },
   }
   const result = await runCase(provider, model, synthetic)
-  return { ...result, split: 'external-control', gold: null, coreMetrics: null, treeMetrics: null, firstFailureStage: 'unscored-control', failureTaxonomy: [] }
+  return { ...result, split: 'external-control', gold: null, coreMetrics: null, coreSetMetrics: null, treeMetrics: null, firstFailureStage: 'unscored-control', failureTaxonomy: [] }
 }
 
 async function main(): Promise<void> {

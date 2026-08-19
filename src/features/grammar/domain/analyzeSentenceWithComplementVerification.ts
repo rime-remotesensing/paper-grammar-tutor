@@ -9,7 +9,8 @@ import { evaluatePassiveCoreGate } from './passiveCoreGate.ts'
 import { getFocusedPassiveCoreRepair } from './focusedPassiveCoreRepairService.ts'
 import { attachDerivedPattern } from './derivePattern.ts'
 import type { FocusedClassification, FocusedReasonCode } from '../schemas/focusedComplementVerification.schema.ts'
-import type { GrammarAnalysis, LlmSentenceCore, SentenceCore } from '../schemas/grammarAnalysis.schema.ts'
+import type { GrammarAnalysis, LlmSentenceCore, SentenceCore, SentenceCoreSet } from '../schemas/grammarAnalysis.schema.ts'
+import { replacePrimaryCoreFromRepair } from './sentenceCoreSet.ts'
 
 export type AnalyzeWithComplementVerificationPhase = AnalyzeWithAutoRecoveryPhase | 'verifyingComplement'
 
@@ -78,12 +79,16 @@ export interface VerifiedSentenceAnalysis {
    * analyzeSentenceWithAutoRecovery produced it (post forced-core recovery if that ran),
    * BEFORE complement verification. Never mutated. */
   rawCore: SentenceCore
+  /** Canonical authority after established auto-recovery, before focused core layers. */
+  rawCoreSet: SentenceCoreSet
   /** The core every downstream consumer (basic-core display, pattern display,
    * PredicateStructure/ReadingGuide cache keys, hybrid merger, structure tree) MUST use
    * (Prototype 2.3I item 20) — identical to rawCore except when `verification.status ===
    * 'confirmed_supplementary_ing'`, in which case `complement` is null and `pattern` is
    * re-derived via derivePattern.ts (never hand-set to a literal "SVO"). */
   effectiveCore: SentenceCore
+  /** Canonical authority after the same primary-core focused changes as effectiveCore. */
+  effectiveCoreSet: SentenceCoreSet
   verification: ComplementVerification
   /** Prototype 2.3L — which core-repair strategy (if any) ran and why, kept for debug
    * display alongside `verification`. Raw authority preservation: this never affects
@@ -154,6 +159,7 @@ export async function analyzeSentenceWithComplementVerification(
 
   const { analysis, meta } = outcome.result
   const rawCore = analysis.sentenceCore
+  const rawCoreSet = analysis.sentenceCoreSet
 
   // Prototype 2.5W Part A — copular-core gate, checked first (item 6/20: Stage 1 remains
   // the primary single-core summary; a coordinated second predicate stays Stage 2's job,
@@ -177,6 +183,7 @@ export async function analyzeSentenceWithComplementVerification(
         object: null,
         complement: copularRepair.result.complement,
       }
+      const effectiveCore = attachDerivedPattern(effectiveCoreRaw)
       return {
         success: true,
         recoveryUsed: outcome.recoveryUsed,
@@ -184,7 +191,9 @@ export async function analyzeSentenceWithComplementVerification(
           analysis,
           meta,
           rawCore,
-          effectiveCore: attachDerivedPattern(effectiveCoreRaw),
+          rawCoreSet,
+          effectiveCore,
+          effectiveCoreSet: replacePrimaryCoreFromRepair(rawCoreSet, effectiveCore),
           verification: NOT_APPLICABLE,
           coreRepair: outcome.coreRepair,
           copularRepair: { status: 'repaired' },
@@ -194,7 +203,7 @@ export async function analyzeSentenceWithComplementVerification(
     }
     // Technical failure — fall through to rawCore, same safe-failure philosophy as every
     // other focused repair in this file (never guess, never surface a technical error).
-    return continueAfterCoreGates(analysis, meta, rawCore, outcome, { status: 'failed' }, PASSIVE_NOT_APPLICABLE, provider, model, temperature, onPhaseChange)
+    return continueAfterCoreGates(analysis, meta, rawCore, rawCoreSet, outcome, { status: 'failed' }, PASSIVE_NOT_APPLICABLE, provider, model, temperature, onPhaseChange)
   }
 
   // Prototype 2.5Z Part A — passive-core overcomplement gate, checked only when the copular
@@ -221,6 +230,7 @@ export async function analyzeSentenceWithComplementVerification(
         object: null,
         complement: passiveRepair.result.pattern === 'SVC' ? passiveRepair.result.complement : null,
       }
+      const effectiveCore = attachDerivedPattern(effectiveCoreRaw)
       return {
         success: true,
         recoveryUsed: outcome.recoveryUsed,
@@ -228,7 +238,9 @@ export async function analyzeSentenceWithComplementVerification(
           analysis,
           meta,
           rawCore,
-          effectiveCore: attachDerivedPattern(effectiveCoreRaw),
+          rawCoreSet,
+          effectiveCore,
+          effectiveCoreSet: replacePrimaryCoreFromRepair(rawCoreSet, effectiveCore),
           verification: NOT_APPLICABLE,
           coreRepair: outcome.coreRepair,
           copularRepair: COPULAR_NOT_APPLICABLE,
@@ -236,16 +248,17 @@ export async function analyzeSentenceWithComplementVerification(
         },
       }
     }
-    return continueAfterCoreGates(analysis, meta, rawCore, outcome, COPULAR_NOT_APPLICABLE, { status: 'failed' }, provider, model, temperature, onPhaseChange)
+    return continueAfterCoreGates(analysis, meta, rawCore, rawCoreSet, outcome, COPULAR_NOT_APPLICABLE, { status: 'failed' }, provider, model, temperature, onPhaseChange)
   }
 
-  return continueAfterCoreGates(analysis, meta, rawCore, outcome, COPULAR_NOT_APPLICABLE, PASSIVE_NOT_APPLICABLE, provider, model, temperature, onPhaseChange)
+  return continueAfterCoreGates(analysis, meta, rawCore, rawCoreSet, outcome, COPULAR_NOT_APPLICABLE, PASSIVE_NOT_APPLICABLE, provider, model, temperature, onPhaseChange)
 }
 
 async function continueAfterCoreGates(
   analysis: GrammarAnalysis,
   meta: AnalyzeSentenceMeta,
   rawCore: SentenceCore,
+  rawCoreSet: SentenceCoreSet,
   outcome: { recoveryUsed: boolean; coreRepair: CoreRepairMeta },
   copularRepair: CopularCoreRepairMeta,
   passiveRepair: PassiveCoreRepairMeta,
@@ -258,7 +271,7 @@ async function continueAfterCoreGates(
     return {
       success: true,
       recoveryUsed: outcome.recoveryUsed,
-      result: { analysis, meta, rawCore, effectiveCore: rawCore, verification: NOT_APPLICABLE, coreRepair: outcome.coreRepair, copularRepair, passiveRepair },
+      result: { analysis, meta, rawCore, rawCoreSet, effectiveCore: rawCore, effectiveCoreSet: rawCoreSet, verification: NOT_APPLICABLE, coreRepair: outcome.coreRepair, copularRepair, passiveRepair },
     }
   }
 
@@ -285,7 +298,9 @@ async function continueAfterCoreGates(
         analysis,
         meta,
         rawCore,
+        rawCoreSet,
         effectiveCore: rawCore,
+        effectiveCoreSet: rawCoreSet,
         verification: { status: 'uncertain', classification: null, reasonCode: null },
         coreRepair: outcome.coreRepair,
         copularRepair,
@@ -303,6 +318,7 @@ async function continueAfterCoreGates(
       object: rawCore.object,
       complement: null,
     }
+    const effectiveCore = attachDerivedPattern(effectiveCoreRaw)
     return {
       success: true,
       recoveryUsed: outcome.recoveryUsed,
@@ -310,7 +326,9 @@ async function continueAfterCoreGates(
         analysis,
         meta,
         rawCore,
-        effectiveCore: attachDerivedPattern(effectiveCoreRaw),
+        rawCoreSet,
+        effectiveCore,
+        effectiveCoreSet: replacePrimaryCoreFromRepair(rawCoreSet, effectiveCore),
         verification: {
           status: 'confirmed_supplementary_ing',
           classification: verification.classification,
@@ -332,7 +350,9 @@ async function continueAfterCoreGates(
       analysis,
       meta,
       rawCore,
+      rawCoreSet,
       effectiveCore: rawCore,
+      effectiveCoreSet: rawCoreSet,
       verification: { status, classification: verification.classification, reasonCode: verification.reasonCode },
       coreRepair: outcome.coreRepair,
       copularRepair,

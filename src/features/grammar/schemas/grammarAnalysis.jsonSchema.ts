@@ -32,17 +32,29 @@ const GRAMMATICAL_ROLE_ENUM = [
 export const GRAMMAR_ANALYSIS_JSON_SCHEMA = {
   type: 'object',
   properties: {
-    sentenceCore: {
+    sentenceCoreSet: {
       type: 'object',
       properties: {
         subject: NULLABLE_SPAN_SCHEMA,
         subjectHead: NULLABLE_SPAN_SCHEMA,
-        verb: NULLABLE_SPAN_SCHEMA,
-        indirectObject: NULLABLE_SPAN_SCHEMA,
-        object: NULLABLE_SPAN_SCHEMA,
-        complement: NULLABLE_SPAN_SCHEMA,
+        predicateCores: {
+          type: 'array',
+          minItems: 1,
+          items: {
+            type: 'object',
+            properties: {
+              connector: NULLABLE_SPAN_SCHEMA,
+              verb: { ...NULLABLE_SPAN_SCHEMA, description: 'Exact finite verb phrase including auxiliaries/passive participle, but excluding any following preposition or PP.' },
+              indirectObject: { ...NULLABLE_SPAN_SCHEMA, description: 'Only the first object of a true double-object construction; otherwise null.' },
+              object: { ...NULLABLE_SPAN_SCHEMA, description: 'Direct object of this predicate; never the noun inside a following prepositional modifier.' },
+              complement: { ...NULLABLE_SPAN_SCHEMA, description: 'Only Japanese five-pattern C (SVC/SVOC predicate noun/adjective); never a time/place/manner or ordinary prepositional phrase.' },
+            },
+            required: ['connector', 'verb', 'indirectObject', 'object', 'complement'],
+            additionalProperties: false,
+          },
+        },
       },
-      required: ['subject', 'subjectHead', 'verb', 'indirectObject', 'object', 'complement'],
+      required: ['subject', 'subjectHead', 'predicateCores'],
       additionalProperties: false,
     },
     chunks: {
@@ -141,7 +153,7 @@ export const GRAMMAR_ANALYSIS_JSON_SCHEMA = {
     referenceTranslation: { anyOf: [{ type: 'string' }, { type: 'null' }] },
   },
   required: [
-    'sentenceCore',
+    'sentenceCoreSet',
     'chunks',
     'modifiers',
     'clauses',

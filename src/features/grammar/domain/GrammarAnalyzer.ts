@@ -14,7 +14,7 @@ import { normalizeSentence } from '../../../utils/textNormalize.ts'
 import { tryParseJson } from '../../../utils/jsonExtract.ts'
 import { buildFallbackAnalysis } from './fallbackAnalysis.ts'
 import { resolveAnalysisSpans } from './resolveAnalysisSpans.ts'
-import { attachDerivedPattern } from './derivePattern.ts'
+import { materializeSentenceCoreSet, projectPrimaryCore, validateGroundedSentenceCoreSet } from './sentenceCoreSet.ts'
 
 export interface AnalyzeSentenceOptions {
   provider: LLMProvider
@@ -63,7 +63,7 @@ export async function analyzeSentence(
   })
   totalElapsedMs += generation.elapsedMs
 
-  let attempt = validate(generation.rawText)
+  let attempt = validate(generation.rawText, normalizedText)
 
   for (let repairCount = 0; repairCount < MAX_REPAIR_ATTEMPTS && !attempt.success; repairCount++) {
     regenerated = true
@@ -76,7 +76,7 @@ export async function analyzeSentence(
       temperature,
     })
     totalElapsedMs += generation.elapsedMs
-    attempt = validate(generation.rawText)
+    attempt = validate(generation.rawText, normalizedText)
   }
 
   if (!attempt.success) {
@@ -101,12 +101,15 @@ export async function analyzeSentence(
     normalizedText,
   )
 
+  const sentenceCoreSet = materializeSentenceCoreSet(resolved.sentenceCoreSet)
+  const coreSetIssues = validateGroundedSentenceCoreSet(sentenceCoreSet)
   const analysis: GrammarAnalysis = {
     ...resolved,
-    sentenceCore: attachDerivedPattern(resolved.sentenceCore),
+    sentenceCoreSet,
+    sentenceCore: projectPrimaryCore(sentenceCoreSet),
     originalText,
     normalizedText,
-    uncertainties: [...resolved.uncertainties, ...unresolvedNotes],
+    uncertainties: [...resolved.uncertainties, ...unresolvedNotes, ...coreSetIssues.map((issue) => `述語コア検証: ${issue}`)],
   }
 
   return {
@@ -125,7 +128,7 @@ type ValidationOutcome =
   | { success: true; data: LlmGrammarAnalysis }
   | { success: false; error: string }
 
-function validate(rawText: string): ValidationOutcome {
+function validate(rawText: string, normalizedText: string): ValidationOutcome {
   const parsed = tryParseJson(rawText)
   if ('error' in parsed) {
     return { success: false, error: `JSONとして解析できませんでした: ${parsed.error}` }
@@ -133,6 +136,11 @@ function validate(rawText: string): ValidationOutcome {
   const result = llmGrammarAnalysisSchema.safeParse(parsed.value)
   if (!result.success) {
     return { success: false, error: formatZodIssues(result.error.issues) }
+  }
+  const resolved = resolveAnalysisSpans(result.data, normalizedText).analysis
+  const structuralIssues = validateGroundedSentenceCoreSet(materializeSentenceCoreSet(resolved.sentenceCoreSet))
+  if (structuralIssues.length > 0) {
+    return { success: false, error: structuralIssues.map((issue) => `sentenceCoreSet: ${issue}`).join('; ') }
   }
   return { success: true, data: result.data }
 }

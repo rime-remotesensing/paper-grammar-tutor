@@ -9,7 +9,7 @@ import type {
   LLMProvider,
   ModelInfo,
 } from '../../src/llm/types'
-import { SAMPLE_SENTENCE, validAnalysisFixture } from '../fixtures/validAnalysisFixture'
+import { SAMPLE_SENTENCE, validAnalysisFixture, withSingleCoreFixture } from '../fixtures/validAnalysisFixture'
 
 class StubProvider implements LLMProvider {
   callCount = 0
@@ -66,24 +66,18 @@ describe('analyzeSentenceWithAutoRecovery — normal valid core', () => {
 
 describe('analyzeSentenceWithAutoRecovery — "Data was recorded..." null-subject auto-recovery', () => {
   it('automatically recovers with exactly 1 forced-core call, no user action required', async () => {
-    const emptyCoreFixture: LlmGrammarAnalysis = {
-      ...validAnalysisFixture,
-      sentenceCore: {
+    const emptyCoreFixture: LlmGrammarAnalysis = withSingleCoreFixture(validAnalysisFixture, {
         subject: null,
         subjectHead: null,
         verb: null,
         indirectObject: null,
         object: null,
         complement: null,
-      },
-    }
+      })
     const forcedCoreResponse = JSON.stringify({
       subject: span('Data', 0, 4),
       subjectHead: span('Data', 0, 4),
-      verb: span('was recorded', 5, 17),
-      indirectObject: null,
-      object: null,
-      complement: null,
+      predicateCores: [{ connector: null, verb: span('was recorded', 5, 17), indirectObject: null, object: null, complement: null }],
     })
     const provider = new StubProvider([JSON.stringify(emptyCoreFixture), forcedCoreResponse])
     const phases: string[] = []
@@ -109,17 +103,14 @@ describe('analyzeSentenceWithAutoRecovery — "Data was recorded..." null-subjec
 
 describe('analyzeSentenceWithAutoRecovery — "The sensor recorded data." overlap auto-recovery (Prototype 2.3L: Focused Subject-Verb Repair, not forced-core)', () => {
   it('routes SUBJECT_VERB_OVERLAP to Focused Subject-Verb Repair and preserves the original object', async () => {
-    const overlappingFixture: LlmGrammarAnalysis = {
-      ...validAnalysisFixture,
-      sentenceCore: {
+    const overlappingFixture: LlmGrammarAnalysis = withSingleCoreFixture(validAnalysisFixture, {
         subject: span('The sensor recorded data', 0, 25),
         subjectHead: span('sensor', 4, 10),
         verb: span('recorded', 11, 19),
         indirectObject: null,
         object: span('data', 20, 24),
         complement: null,
-      },
-    }
+      })
     // Focused Subject-Verb Repair's schema is {subject, subjectHead, verb} ONLY — no
     // indirectObject/object/complement (item 9 of the 2.3L order), unlike forced-core's
     // full-core response shape.
@@ -152,17 +143,14 @@ describe('analyzeSentenceWithAutoRecovery — "The sensor recorded data." overla
   })
 
   it('does not cascade to forced-core when Focused Subject-Verb Repair fails technically (item 25: safe failure, not blind fallback)', async () => {
-    const overlappingFixture: LlmGrammarAnalysis = {
-      ...validAnalysisFixture,
-      sentenceCore: {
+    const overlappingFixture: LlmGrammarAnalysis = withSingleCoreFixture(validAnalysisFixture, {
         subject: span('The sensor recorded data', 0, 25),
         subjectHead: span('sensor', 4, 10),
         verb: span('recorded', 11, 19),
         indirectObject: null,
         object: span('data', 20, 24),
         complement: null,
-      },
-    }
+      })
     const provider = new StubProvider([JSON.stringify(overlappingFixture), 'not valid json', 'still not valid json'])
     const outcome = await analyzeSentenceWithAutoRecovery({
       provider,
@@ -180,24 +168,18 @@ describe('analyzeSentenceWithAutoRecovery — "The sensor recorded data." overla
 
 describe('analyzeSentenceWithAutoRecovery — subjectHead outside subject auto-recovery', () => {
   it('triggers exactly 1 forced-core call when subjectHead is not contained within subject', async () => {
-    const badContainmentFixture: LlmGrammarAnalysis = {
-      ...validAnalysisFixture,
-      sentenceCore: {
+    const badContainmentFixture: LlmGrammarAnalysis = withSingleCoreFixture(validAnalysisFixture, {
         subject: span('sensor', 4, 10),
         subjectHead: span('The sensor recorded', 0, 20),
         verb: span('data', 21, 25),
         indirectObject: null,
         object: null,
         complement: null,
-      },
-    }
+      })
     const forcedCoreResponse = JSON.stringify({
       subject: span('The sensor', 0, 10),
       subjectHead: span('sensor', 4, 10),
-      verb: span('recorded', 11, 19),
-      indirectObject: null,
-      object: span('data', 20, 24),
-      complement: null,
+      predicateCores: [{ connector: null, verb: span('recorded', 11, 19), indirectObject: null, object: span('data', 20, 24), complement: null }],
     })
     const provider = new StubProvider([JSON.stringify(badContainmentFixture), forcedCoreResponse])
     const outcome = await analyzeSentenceWithAutoRecovery({
@@ -214,10 +196,8 @@ describe('analyzeSentenceWithAutoRecovery — subjectHead outside subject auto-r
 
 describe('analyzeSentenceWithAutoRecovery — forced-recovery failure', () => {
   it('ends in a final error state without looping when the forced-core response is invalid', async () => {
-    const emptyCoreFixture: LlmGrammarAnalysis = {
-      ...validAnalysisFixture,
-      sentenceCore: { subject: null, subjectHead: null, verb: null, indirectObject: null, object: null, complement: null },
-    }
+    const emptyCoreFixture: LlmGrammarAnalysis = withSingleCoreFixture(validAnalysisFixture,
+      { subject: null, subjectHead: null, verb: null, indirectObject: null, object: null, complement: null })
     const provider = new StubProvider([JSON.stringify(emptyCoreFixture), 'not valid json'])
     const outcome = await analyzeSentenceWithAutoRecovery({
       provider,
@@ -236,18 +216,13 @@ describe('analyzeSentenceWithAutoRecovery — forced-recovery failure', () => {
   })
 
   it('ends in a final error state when the forced-core result is itself structurally broken', async () => {
-    const emptyCoreFixture: LlmGrammarAnalysis = {
-      ...validAnalysisFixture,
-      sentenceCore: { subject: null, subjectHead: null, verb: null, indirectObject: null, object: null, complement: null },
-    }
+    const emptyCoreFixture: LlmGrammarAnalysis = withSingleCoreFixture(validAnalysisFixture,
+      { subject: null, subjectHead: null, verb: null, indirectObject: null, object: null, complement: null })
     // Forced-core response repeats the "subject swallows the clause" mistake.
     const brokenForcedCore = JSON.stringify({
       subject: span('Data was recorded', 0, 18),
       subjectHead: span('Data', 0, 4),
-      verb: span('was recorded', 5, 17),
-      indirectObject: null,
-      object: null,
-      complement: null,
+      predicateCores: [{ connector: null, verb: span('was recorded', 5, 17), indirectObject: null, object: null, complement: null }],
     })
     const provider = new StubProvider([JSON.stringify(emptyCoreFixture), brokenForcedCore])
     const outcome = await analyzeSentenceWithAutoRecovery({
@@ -274,10 +249,8 @@ describe('analyzeSentenceWithAutoRecovery — forced-recovery failure', () => {
         this.callCount += 1
         if (this.callCount === 1) {
           return {
-            rawText: JSON.stringify({
-              ...validAnalysisFixture,
-              sentenceCore: { subject: null, subjectHead: null, verb: null, indirectObject: null, object: null, complement: null },
-            }),
+            rawText: JSON.stringify(withSingleCoreFixture(validAnalysisFixture,
+              { subject: null, subjectHead: null, verb: null, indirectObject: null, object: null, complement: null })),
             elapsedMs: 1,
           }
         }

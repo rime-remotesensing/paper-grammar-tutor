@@ -33,6 +33,58 @@ export const sentenceCoreSchema = llmSentenceCoreSchema.extend({
 })
 export type SentenceCore = z.infer<typeof sentenceCoreSchema>
 
+export const predicateCoreRelationSchema = z.enum(['main', 'coordinated'])
+export type PredicateCoreRelation = z.infer<typeof predicateCoreRelationSchema>
+
+/** Compact canonical predicate authority returned by GrammarAnalysis. Subject is held once
+ * at SentenceCoreSet level; pattern and predicateCoreId are derived by the app. Nullable
+ * verb is retained only so the established core-recovery path can safely handle a malformed
+ * model answer without inventing a second schema. */
+export const llmPredicateCoreSchema = z.object({
+  connector: spanSchema.nullable(),
+  verb: spanSchema.nullable(),
+  indirectObject: spanSchema.nullable(),
+  object: spanSchema.nullable(),
+  complement: spanSchema.nullable(),
+})
+export type LlmPredicateCore = z.infer<typeof llmPredicateCoreSchema>
+
+/**
+ * Prototype 2.6G2.5C4.2 -- additive, canonical-authority-specific presentation metadata.
+ * `Span` itself stays a plain contiguous source-grounded interval everywhere, including the
+ * LLM/Qwen `llmPredicateCoreSchema` this extends -- these fields exist ONLY on the app-level
+ * `PredicateCore`/`SentenceCoreSet` (never on the shared `Span`), are entirely optional, and
+ * are set only by the Stanza syntax authority path (`stanzaSyntaxAuthority.ts`'s fine-grained
+ * citation pruning). The Qwen/LLM pipeline's own construction of these types simply never
+ * sets them, which is valid: `null`/absent means "no citation-free rewrite; render the span's
+ * own `.text` as-is". See the 2.6G2.5C4.1 audit for why this is additive metadata rather than
+ * a mutation of `Span.text` itself.
+ */
+export const predicateCoreSchema = llmPredicateCoreSchema.extend({
+  predicateCoreId: z.string().min(1),
+  relation: predicateCoreRelationSchema,
+  pattern: sentencePatternSchema,
+  indirectObjectPresentationText: z.string().nullable().optional(),
+  objectPresentationText: z.string().nullable().optional(),
+  complementPresentationText: z.string().nullable().optional(),
+})
+export type PredicateCore = z.infer<typeof predicateCoreSchema>
+
+export const llmSentenceCoreSetSchema = z.object({
+  subject: spanSchema.nullable(),
+  subjectHead: spanSchema.nullable(),
+  predicateCores: z.array(llmPredicateCoreSchema).min(1),
+})
+export type LlmSentenceCoreSet = z.infer<typeof llmSentenceCoreSetSchema>
+
+export const sentenceCoreSetSchema = z.object({
+  subject: spanSchema.nullable(),
+  subjectHead: spanSchema.nullable(),
+  subjectPresentationText: z.string().nullable().optional(),
+  predicateCores: z.array(predicateCoreSchema).min(1),
+})
+export type SentenceCoreSet = z.infer<typeof sentenceCoreSetSchema>
+
 export const chunkSchema = z.object({
   span: spanSchema,
   order: z.number().int().nonnegative(),
@@ -129,7 +181,7 @@ const sharedAnalysisFieldsSchema = z.object({
 
 /** What the LLM is asked to produce. `pattern` is absent; the app derives it after the fact. */
 export const llmGrammarAnalysisSchema = sharedAnalysisFieldsSchema.extend({
-  sentenceCore: llmSentenceCoreSchema,
+  sentenceCoreSet: llmSentenceCoreSetSchema,
 })
 export type LlmGrammarAnalysis = z.infer<typeof llmGrammarAnalysisSchema>
 
@@ -137,6 +189,8 @@ export type LlmGrammarAnalysis = z.infer<typeof llmGrammarAnalysisSchema>
 export const grammarAnalysisSchema = sharedAnalysisFieldsSchema.extend({
   originalText: z.string(),
   normalizedText: z.string(),
+  sentenceCoreSet: sentenceCoreSetSchema,
+  /** Temporary compatibility projection. Canonical authority is always sentenceCoreSet. */
   sentenceCore: sentenceCoreSchema,
 })
 export type GrammarAnalysis = z.infer<typeof grammarAnalysisSchema>

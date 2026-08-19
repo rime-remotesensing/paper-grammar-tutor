@@ -1,4 +1,4 @@
-import type { SentenceCore, Span } from '../schemas/grammarAnalysis.schema.ts'
+import type { SentenceCore, SentenceCoreSet, Span } from '../schemas/grammarAnalysis.schema.ts'
 import type { PredicateRelation, PredicateStructure, ResolvedDependent, ResolvedLeaf, StructureRole } from '../schemas/predicateStructure.schema.ts'
 
 /**
@@ -60,6 +60,9 @@ export interface SuppressedCoreDependent {
 }
 
 export interface HybridMergedStructure {
+  /** Canonical five-pattern authority. Tree presentation remains legacy-projection based
+   * in E1, but Stage 2 may never replace, merge, or discard these predicate cores. */
+  canonicalCoreSet?: SentenceCoreSet | null
   subject: Span | null
   subjectModifiers: ResolvedLeaf[]
   predicates: HybridPredicate[]
@@ -250,6 +253,7 @@ export function mergeHybridPredicateStructure(
   sentence: string,
   sentenceCore: SentenceCore,
   structure: PredicateStructure,
+  canonicalCoreSet: SentenceCoreSet | null = null,
 ): HybridMergedStructure {
   const subject = isGrounded(sentenceCore.subject) ? sentenceCore.subject : null
   const { accepted, rejected, anchor, dropped, anchorInjected } = classifyAcceptedPredicates(sentence, sentenceCore, structure.predicates)
@@ -395,6 +399,7 @@ export function mergeHybridPredicateStructure(
   }
 
   return {
+    canonicalCoreSet,
     subject,
     subjectModifiers: structure.subjectModifiers,
     predicates: finalPredicates,

@@ -4,8 +4,9 @@ import { tryParseJson } from '../../../utils/jsonExtract.ts'
 import { resolveSpan } from '../../../utils/spanMatch.ts'
 import { forcedCoreSchema } from '../schemas/forcedCore.schema.ts'
 import { FORCED_CORE_JSON_SCHEMA } from '../schemas/forcedCore.jsonSchema.ts'
-import type { GrammarAnalysis, Span, SentenceCore } from '../schemas/grammarAnalysis.schema.ts'
+import type { GrammarAnalysis, Span, SentenceCore, SentenceCoreSet } from '../schemas/grammarAnalysis.schema.ts'
 import { attachDerivedPattern } from './derivePattern.ts'
+import { materializeSentenceCoreSet, projectPrimaryCore, replacePrimaryCoreFromRepair } from './sentenceCoreSet.ts'
 import { classifySentenceCoreFailure } from './sentenceCoreFailureReason.ts'
 
 /**
@@ -45,7 +46,7 @@ export interface RecoverSentenceCoreOptions {
 }
 
 export type RecoverSentenceCoreResult =
-  | { success: true; sentenceCore: SentenceCore }
+  | { success: true; sentenceCore: SentenceCore; sentenceCoreSet: SentenceCoreSet }
   | { success: false; error: string }
 
 /**
@@ -80,15 +81,31 @@ export async function recoverSentenceCore(
     return { text: resolved.text, start: resolved.start, end: resolved.end }
   }
   const resolveNullable = (span: Span | null): Span | null => (span ? resolve(span) : null)
-
-  const resolvedCore = {
-    subject: resolve(result.data.subject),
-    subjectHead: resolve(result.data.subjectHead),
-    verb: resolve(result.data.verb),
-    indirectObject: resolveNullable(result.data.indirectObject),
-    object: resolveNullable(result.data.object),
-    complement: resolveNullable(result.data.complement),
-  }
+  const subject = resolve(result.data.subject)
+  const subjectHead = resolve(result.data.subjectHead)
+  let cursor = subject.end
+  const predicateCores = result.data.predicateCores.map((core) => {
+    const verbStart = options.sentence.indexOf(core.verb.text, Math.max(0, cursor))
+    const verb = verbStart >= 0
+      ? { text: core.verb.text, start: verbStart, end: verbStart + core.verb.text.length }
+      : resolve(core.verb)
+    const connectorStart = core.connector && verb.start >= cursor
+      ? options.sentence.indexOf(core.connector.text, cursor)
+      : -1
+    const connector = core.connector && connectorStart >= cursor && connectorStart + core.connector.text.length <= verb.start
+      ? { text: core.connector.text, start: connectorStart, end: connectorStart + core.connector.text.length }
+      : null
+    if (verb.start >= 0) cursor = verb.end
+    return {
+      connector,
+      verb,
+      indirectObject: resolveNullable(core.indirectObject),
+      object: resolveNullable(core.object),
+      complement: resolveNullable(core.complement),
+    }
+  })
+  const resolvedCoreSet = materializeSentenceCoreSet({ subject, subjectHead, predicateCores })
+  const resolvedCore = projectPrimaryCore(resolvedCoreSet)
 
   // The forced-core schema already requires subject/subjectHead/verb, so conditions 1/2
   // of isSentenceCoreFailure can't fire here — but the overlap/containment checks (3/4)
@@ -96,14 +113,14 @@ export async function recoverSentenceCore(
   // repeating the same "subject swallows the whole clause" mistake. Never merge a
   // recovered core that is itself structurally broken; the caller keeps the original
   // GrammarAnalysis and treats this the same as any other recovery failure.
-  if (isSentenceCoreFailure(resolvedCore)) {
+  if (resolvedCoreSet.predicateCores.some((core) => isSentenceCoreFailure({ subject, subjectHead, verb: core.verb }))) {
     return {
       success: false,
       error: '再解析結果も構造的な矛盾を含んでいたため採用しませんでした。',
     }
   }
 
-  return { success: true, sentenceCore: attachDerivedPattern(resolvedCore) }
+  return { success: true, sentenceCore: resolvedCore, sentenceCoreSet: resolvedCoreSet }
 }
 
 /**
@@ -129,8 +146,30 @@ export async function recoverSentenceCore(
  */
 export function mergeRecoveredSentenceCore(
   analysis: GrammarAnalysis,
-  recoveredCore: SentenceCore,
+  recovered: SentenceCore | SentenceCoreSet,
 ): GrammarAnalysis {
+  if ('predicateCores' in recovered) {
+    const predicateCores = recovered.predicateCores.map((core, index) => {
+      const original = analysis.sentenceCoreSet.predicateCores[index]
+      const slots = {
+        ...core,
+        indirectObject: core.indirectObject ?? original?.indirectObject ?? null,
+        object: core.object ?? original?.object ?? null,
+        complement: core.complement ?? original?.complement ?? null,
+      }
+      return { ...slots, pattern: attachDerivedPattern({
+        subject: recovered.subject,
+        subjectHead: recovered.subjectHead,
+        verb: slots.verb,
+        indirectObject: slots.indirectObject,
+        object: slots.object,
+        complement: slots.complement,
+      }).pattern }
+    })
+    const sentenceCoreSet = { ...recovered, predicateCores }
+    return { ...analysis, sentenceCoreSet, sentenceCore: projectPrimaryCore(sentenceCoreSet) }
+  }
+  const recoveredCore = recovered
   const original = analysis.sentenceCore
   const merged = {
     subject: recoveredCore.subject,
@@ -140,5 +179,6 @@ export function mergeRecoveredSentenceCore(
     object: recoveredCore.object ?? original.object,
     complement: recoveredCore.complement ?? original.complement,
   }
-  return { ...analysis, sentenceCore: attachDerivedPattern(merged) }
+  const sentenceCoreSet = replacePrimaryCoreFromRepair(analysis.sentenceCoreSet, attachDerivedPattern(merged))
+  return { ...analysis, sentenceCoreSet, sentenceCore: projectPrimaryCore(sentenceCoreSet) }
 }

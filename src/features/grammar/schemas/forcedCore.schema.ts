@@ -12,12 +12,17 @@ import { spanSchema } from './grammarAnalysis.schema.ts'
  * forcing non-null broadly would make the model fabricate a subject/verb for genuine
  * sentence fragments (e.g. a PDF selection that isn't a full sentence).
  */
-export const forcedCoreSchema = z.object({
-  subject: spanSchema,
-  subjectHead: spanSchema,
+const forcedPredicateCoreSchema = z.object({
+  connector: spanSchema.nullable(),
   verb: spanSchema,
   indirectObject: spanSchema.nullable(),
   object: spanSchema.nullable(),
   complement: spanSchema.nullable(),
+})
+
+export const forcedCoreSchema = z.object({
+  subject: spanSchema,
+  subjectHead: spanSchema,
+  predicateCores: z.array(forcedPredicateCoreSchema).min(1),
 })
 export type ForcedCore = z.infer<typeof forcedCoreSchema>

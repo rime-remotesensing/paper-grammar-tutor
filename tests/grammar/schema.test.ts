@@ -9,8 +9,8 @@ describe('llmGrammarAnalysisSchema', () => {
   })
 
   it('rejects a payload missing a required field', () => {
-    const { sentenceCore: _sentenceCore, ...withoutSentenceCore } = validAnalysisFixture
-    const result = llmGrammarAnalysisSchema.safeParse(withoutSentenceCore)
+    const { sentenceCoreSet: _sentenceCoreSet, ...withoutSentenceCoreSet } = validAnalysisFixture
+    const result = llmGrammarAnalysisSchema.safeParse(withoutSentenceCoreSet)
     expect(result.success).toBe(false)
   })
 
@@ -26,11 +26,10 @@ describe('llmGrammarAnalysisSchema', () => {
   it('accepts null for indirectObject and a filled object together (SVOO shape)', () => {
     const svoo = {
       ...validAnalysisFixture,
-      sentenceCore: {
-        ...validAnalysisFixture.sentenceCore,
-        indirectObject: { text: 'users', start: 0, end: 5 },
-        object: { text: 'feedback', start: 6, end: 14 },
-      },
+      sentenceCoreSet: { ...validAnalysisFixture.sentenceCoreSet, predicateCores: [{
+        ...validAnalysisFixture.sentenceCoreSet.predicateCores[0],
+        indirectObject: { text: 'users', start: 0, end: 5 }, object: { text: 'feedback', start: 6, end: 14 },
+      }] },
     }
     const result = llmGrammarAnalysisSchema.safeParse(svoo)
     expect(result.success).toBe(true)
@@ -56,11 +55,9 @@ describe('llmGrammarAnalysisSchema', () => {
   it('accepts null for optional sentence-core spans', () => {
     const withNulls = {
       ...validAnalysisFixture,
-      sentenceCore: {
-        ...validAnalysisFixture.sentenceCore,
-        object: null,
-        complement: null,
-      },
+      sentenceCoreSet: { ...validAnalysisFixture.sentenceCoreSet, predicateCores: [{
+        ...validAnalysisFixture.sentenceCoreSet.predicateCores[0], object: null, complement: null,
+      }] },
     }
     const result = llmGrammarAnalysisSchema.safeParse(withNulls)
     expect(result.success).toBe(true)

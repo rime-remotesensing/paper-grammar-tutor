@@ -13,6 +13,7 @@ import type {
   ModelInfo,
 } from '../../src/llm/types'
 import { validAnalysisFixture } from '../fixtures/validAnalysisFixture'
+import { materializeSentenceCoreSet } from '../../src/features/grammar/domain/sentenceCoreSet'
 
 class StubProvider implements LLMProvider {
   callCount = 0
@@ -51,6 +52,7 @@ class ThrowingProvider implements LLMProvider {
 
 const FULL_ANALYSIS: GrammarAnalysis = {
   ...validAnalysisFixture,
+  sentenceCoreSet: materializeSentenceCoreSet(validAnalysisFixture.sentenceCoreSet),
   sentenceCore: { ...validAnalysisFixture.sentenceCore, pattern: 'SVO' },
   originalText: 'Data was recorded.',
   normalizedText: 'Data was recorded.',
@@ -298,10 +300,7 @@ describe('recoverSentenceCore', () => {
     const raw = JSON.stringify({
       subject: { text: 'Data', start: 0, end: 4 },
       subjectHead: { text: 'Data', start: 0, end: 4 },
-      verb: { text: 'was recorded', start: 5, end: 17 },
-      indirectObject: null,
-      object: null,
-      complement: null,
+      predicateCores: [{ connector: null, verb: { text: 'was recorded', start: 5, end: 17 }, indirectObject: null, object: null, complement: null }],
     })
     const provider = new StubProvider([raw])
     const result = await recoverSentenceCore({ provider, model: 'test-model', sentence, temperature: 0.1 })
@@ -318,10 +317,7 @@ describe('recoverSentenceCore', () => {
     const raw = JSON.stringify({
       subject: { text: 'Data', start: 999, end: 999 }, // deliberately wrong
       subjectHead: { text: 'Data', start: 999, end: 999 },
-      verb: { text: 'was recorded', start: 999, end: 999 },
-      indirectObject: null,
-      object: null,
-      complement: null,
+      predicateCores: [{ connector: null, verb: { text: 'was recorded', start: 999, end: 999 }, indirectObject: null, object: null, complement: null }],
     })
     const provider = new StubProvider([raw])
     const result = await recoverSentenceCore({ provider, model: 'test-model', sentence, temperature: 0.1 })
@@ -344,10 +340,7 @@ describe('recoverSentenceCore', () => {
     const raw = JSON.stringify({
       subject: null,
       subjectHead: null,
-      verb: { text: 'was recorded', start: 5, end: 17 },
-      indirectObject: null,
-      object: null,
-      complement: null,
+      predicateCores: [{ connector: null, verb: { text: 'was recorded', start: 5, end: 17 }, indirectObject: null, object: null, complement: null }],
     })
     const provider = new StubProvider([raw])
     const result = await recoverSentenceCore({ provider, model: 'test-model', sentence, temperature: 0.1 })
@@ -364,10 +357,7 @@ describe('recoverSentenceCore', () => {
     const raw = JSON.stringify({
       subject: { text: 'The sensor recorded data', start: 0, end: 24 },
       subjectHead: { text: 'sensor', start: 4, end: 10 },
-      verb: { text: 'recorded', start: 11, end: 19 },
-      indirectObject: null,
-      object: { text: 'data', start: 20, end: 24 },
-      complement: null,
+      predicateCores: [{ connector: null, verb: { text: 'recorded', start: 11, end: 19 }, indirectObject: null, object: { text: 'data', start: 20, end: 24 }, complement: null }],
     })
     const provider = new StubProvider([raw])
     const result = await recoverSentenceCore({

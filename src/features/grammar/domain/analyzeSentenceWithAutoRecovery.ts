@@ -4,6 +4,7 @@ import { mergeRecoveredSentenceCore, recoverSentenceCore } from './sentenceCoreR
 import { classifySentenceCoreFailure, type SentenceCoreFailureReason } from './sentenceCoreFailureReason.ts'
 import { getFocusedSubjectVerbRepair } from './focusedSubjectVerbRepairService.ts'
 import { mergeFocusedSubjectVerbRepair } from './mergeFocusedSubjectVerbRepair.ts'
+import { projectPrimaryCore, replacePrimaryCoreFromRepair } from './sentenceCoreSet.ts'
 
 export type AnalyzeWithAutoRecoveryPhase = 'analyzing' | 'confirmingCore' | 'repairingSubjectVerb'
 
@@ -100,7 +101,8 @@ export async function analyzeSentenceWithAutoRecovery(
     }
 
     const { core: repairedCore } = mergeFocusedSubjectVerbRepair(rawCore, focused.result)
-    const mergedAnalysis = { ...grammarResult.analysis, sentenceCore: repairedCore }
+    const sentenceCoreSet = replacePrimaryCoreFromRepair(grammarResult.analysis.sentenceCoreSet, repairedCore)
+    const mergedAnalysis = { ...grammarResult.analysis, sentenceCoreSet, sentenceCore: projectPrimaryCore(sentenceCoreSet) }
     return {
       success: true,
       result: { analysis: mergedAnalysis, meta: grammarResult.meta },
@@ -126,7 +128,7 @@ export async function analyzeSentenceWithAutoRecovery(
     return { success: false, error: '文の骨格を確定できませんでした。' }
   }
 
-  const mergedAnalysis = mergeRecoveredSentenceCore(grammarResult.analysis, recovered.sentenceCore)
+  const mergedAnalysis = mergeRecoveredSentenceCore(grammarResult.analysis, recovered.sentenceCoreSet)
   return {
     success: true,
     result: { analysis: mergedAnalysis, meta: grammarResult.meta },

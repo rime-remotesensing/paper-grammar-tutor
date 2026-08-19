@@ -22,11 +22,23 @@ export const FORCED_CORE_JSON_SCHEMA = {
   properties: {
     subject: SPAN_SCHEMA,
     subjectHead: SPAN_SCHEMA,
-    verb: SPAN_SCHEMA,
-    indirectObject: NULLABLE_SPAN_SCHEMA,
-    object: NULLABLE_SPAN_SCHEMA,
-    complement: NULLABLE_SPAN_SCHEMA,
+    predicateCores: {
+      type: 'array',
+      minItems: 1,
+      items: {
+        type: 'object',
+        properties: {
+          connector: { ...NULLABLE_SPAN_SCHEMA, description: 'Exact linking word before this predicate, or null for the first/comma-only core.' },
+          verb: { ...SPAN_SCHEMA, description: 'Exact finite/content verb words only; include auxiliaries, exclude adjectives, objects, adverbs, and prepositions.' },
+          indirectObject: { ...NULLABLE_SPAN_SCHEMA, description: 'Only the recipient in a true double-object construction; otherwise null.' },
+          object: { ...NULLABLE_SPAN_SCHEMA, description: 'Required exact direct object for a transitive predicate; never put the only object in indirectObject.' },
+          complement: { ...NULLABLE_SPAN_SCHEMA, description: 'Only an SVC/SVOC predicate noun/adjective; never an adverb or ordinary PP.' },
+        },
+        required: ['connector', 'verb', 'indirectObject', 'object', 'complement'],
+        additionalProperties: false,
+      },
+    },
   },
-  required: ['subject', 'subjectHead', 'verb', 'indirectObject', 'object', 'complement'],
+  required: ['subject', 'subjectHead', 'predicateCores'],
   additionalProperties: false,
 } as const
