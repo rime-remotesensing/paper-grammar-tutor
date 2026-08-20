@@ -1418,6 +1418,71 @@ function wrapWithMarker(markerSpan: Span, content: StructureTreeNode): Structure
   }
 }
 
+/** Prototype 2.6G2.6C6 -- Shared Auxiliary Scope Presentation. Grounds `head`'s own direct
+ * `aux`/`aux:pass` children (e.g. "were" in "were collected", "has been" in "has been tested",
+ * "can be" in "can be applied") as ONE span, sorted by source position -- multi-token
+ * auxiliary/modal chains ground as a single contiguous span the same way a multi-word marker
+ * or connector already does elsewhere in this file (`spanFromTokens`). Deliberately excludes
+ * `cop`: a copular "is"/"was" introduces a predicate-nominal/adjectival COMPLEMENT, not a
+ * further coordinated verb phrase, and treating it as shareable auxiliary scope would
+ * misrepresent "The model is accurate and predicts..." as "is" governing "predicts". Returns
+ * undefined when `head` has no aux/aux:pass child at all -- nothing to share. */
+function findSharedAuxiliarySpan(head: StanzaToken, byHead: Map<number, StanzaToken[]>, text: string): Span | undefined {
+  const auxTokens = (byHead.get(head.id) ?? []).filter((c) => {
+    const dep = normalizeDep(c.deprel)
+    return dep === 'aux' || dep === 'aux:pass'
+  })
+  if (auxTokens.length === 0) return undefined
+  return spanFromTokens(text, auxTokens) ?? undefined
+}
+
+/** Prototype 2.6G2.6C6A -- extracts the `VerbForm` value (e.g. "Part", "Fin", "Inf") from a
+ * raw UD FEATS string (e.g. "Tense=Past|VerbForm=Part|Voice=Pass"). Returns undefined when
+ * `feats` is missing/null or carries no VerbForm key -- "no evidence", never a guessed value. */
+function verbFormOf(feats: string | null | undefined): string | undefined {
+  if (!feats) return undefined
+  for (const pair of feats.split('|')) {
+    const [key, value] = pair.split('=')
+    if (key === 'VerbForm' && value) return value
+  }
+  return undefined
+}
+
+/** Prototype 2.6G2.6C6A -- Shared Auxiliary Morphosyntactic Compatibility Gate. The earlier
+ * 2.6G2.6C6 criterion ("later predicate has no auxiliary of its own") is a NECESSARY but not
+ * SUFFICIENT condition -- live-diagnosed false positives: "She has visited Paris and LIVES in
+ * London" (VerbForm=Fin, a genuinely separate finite clause, not a shared-`has` participle)
+ * and "The system was tested and WORKS well" (same class). Absence of a later auxiliary alone
+ * cannot distinguish a true non-finite continuation ("collected"/"converted", both
+ * VerbForm=Part) from an ordinary finite verb that simply never needed its own auxiliary to
+ * begin with. Positive morphosyntactic evidence is required: `laterPredicateHead`'s own
+ * VerbForm (from its real UD FEATS, never a suffix/lexical heuristic) must EQUAL
+ * `mainPredicateHead`'s own VerbForm -- both VerbForm=Part (passive/perfect participle
+ * chains: "were collected"/"converted", "has been tested"/"validated") or both VerbForm=Inf
+ * (bare-infinitive modal chains: "can collect"/"analyze"). A later VerbForm=Fin conjunct
+ * (its own independent finite clause coordinated only by proximity) never matches a
+ * VerbForm=Part or VerbForm=Inf main predicate, correctly blocking every diagnosed negative.
+ * When either head's FEATS/VerbForm is unavailable, the comparison is conservatively
+ * inconclusive and sharing is withheld (section 5's "false negatives are preferable to
+ * falsely teaching that an auxiliary is shared") -- never a fallback guess. */
+function sharedAuxiliaryFor(
+  laterPredicateHead: StanzaToken,
+  mainPredicateHead: StanzaToken,
+  byHead: Map<number, StanzaToken[]>,
+  mainAuxiliarySpan: Span | undefined,
+): boolean {
+  if (!mainAuxiliarySpan) return false
+  const hasOwnAuxiliary = (byHead.get(laterPredicateHead.id) ?? []).some((c) => {
+    const dep = normalizeDep(c.deprel)
+    return dep === 'aux' || dep === 'aux:pass'
+  })
+  if (hasOwnAuxiliary) return false
+  const mainVerbForm = verbFormOf(mainPredicateHead.feats)
+  const laterVerbForm = verbFormOf(laterPredicateHead.feats)
+  if (!mainVerbForm || !laterVerbForm) return false
+  return mainVerbForm === laterVerbForm
+}
+
 function buildClauseNode(
   clause: ClauseFrame,
   text: string,
@@ -1452,8 +1517,19 @@ function buildClauseNode(
     // subject coordination ("is stable and is durable"): there, only the first predicate has
     // its own nsubj child, so every later frame.subjToken is null and this is a no-op.
     const ownSubjToken = idx > 0 && frame.subjToken && frame.subjToken.id !== subjToken?.id ? frame.subjToken : null
-    return { node: built.node, ownSubjToken }
+    return { node: built.node, ownSubjToken, headToken }
   })
+
+  // Prototype 2.6G2.6C6 -- Shared Auxiliary Scope Presentation. The FIRST predicate's own
+  // aux/aux:pass children (never `cop` -- a copular "is"/"was" introduces a predicate-
+  // nominal/adjectival complement, not a further coordinated VERB, and merging it here would
+  // wrongly imply e.g. "is" governs "predicts" in "The model is accurate and predicts...",
+  // where "predicts" is conj of the ADJ root "accurate", not a genuine passive/perfect/modal
+  // continuation) are the candidate SHARED scope for a later same-subject coordinated
+  // predicate that has no auxiliary of its own -- see `sharedAuxiliaryFor` below for the
+  // full per-predicate eligibility check.
+  const mainPredicateHead = byId.get(clause.predicateHeadIds[0]!)!
+  const mainAuxiliarySpan = findSharedAuxiliarySpan(mainPredicateHead, byHead, text)
 
   // Connectors between coordinated predicates are carried as structured `connector` metadata
   // (Prototype 2.6G2.2 item 2) so "and is influenced" style coordination keeps its own
@@ -1465,7 +1541,7 @@ function buildClauseNode(
   // StructureTreeView is responsible for rendering it in exactly one place. Mirrors the
   // canonical connector already computed for SentenceCoreSet.predicateCores.
   let previousVerbEnd = subjectNode ? subjectNode.end : predicateNodes[0]?.node.start ?? 0
-  const predicateNodesWithConnectors = predicateNodes.map(({ node: predNode, ownSubjToken }, idx) => {
+  const predicateNodesWithConnectors = predicateNodes.map(({ node: predNode, ownSubjToken, headToken }, idx) => {
     if (idx === 0) {
       previousVerbEnd = predNode.end
       return predNode
@@ -1483,8 +1559,17 @@ function buildClauseNode(
       ownSubjectNode.children = byStart([...ownSubjectNode.children, predNode])
       return connector ? { ...ownSubjectNode, connector } : ownSubjectNode
     }
-    if (!connector) return predNode
-    return { ...predNode, connector }
+    // Prototype 2.6G2.6C6 -- this predicate inherits the main predicate's auxiliary scope
+    // ONLY when it has no auxiliary of its own (see `sharedAuxiliaryFor`'s own doc comment
+    // for the full false-positive audit -- e.g. "has finished... will write" never shares,
+    // since "write" owns its own `aux` "will"). Never fires without `mainAuxiliarySpan`
+    // (nothing to inherit) or without an eligible predicate (ownSubjToken already excludes
+    // Class B clause coordination above).
+    const withSharedAuxiliary = sharedAuxiliaryFor(headToken, mainPredicateHead, byHead, mainAuxiliarySpan)
+      ? { ...predNode, sharedAuxiliarySpan: mainAuxiliarySpan }
+      : predNode
+    if (!connector) return withSharedAuxiliary
+    return { ...withSharedAuxiliary, connector }
   })
 
   // Prototype 2.6G2.5B item B10 (restructured 2.6G2.5B3 item 2/5): a clause-introducing

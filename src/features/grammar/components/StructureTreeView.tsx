@@ -336,6 +336,15 @@ function TreeNodeButton({
   // compatibility / any future non-wrapper marker use; never fires for the current
   // wrapper-only marker design, since a wrapper's text and its marker are always equal).
   const showMarkerBadge = Boolean(node.marker) && node.marker!.text !== node.text
+  // Prototype 2.6G2.6C6 -- a coordinated predicate that grammatically inherits the main
+  // predicate's own auxiliary/passive-auxiliary scope (e.g. "were" for "converted" in "were
+  // collected and converted...") shows that REAL, already-grounded source span as a small
+  // badge before its own text -- never fused into `.text` (the Span contract stays intact;
+  // see `sharedAuxiliarySpan`'s own doc comment in structureTree.ts), never a fabricated
+  // "were converted" string. Distinguishing CSS class from the marker badge above, since the
+  // two concepts (clause-introducing subordinator vs. inherited auxiliary) are never the same
+  // node in practice but are kept visually distinct on principle.
+  const showSharedAuxiliaryBadge = Boolean(node.sharedAuxiliarySpan)
   // Item 6/9: a canonical-slot node fully decomposed into coordination-member children (or
   // a subjectless multi-predicate clause container) carries deliberately empty presentation
   // text -- rendering an empty lexical row would be a bare, meaningless label; the real
@@ -358,7 +367,7 @@ function TreeNodeButton({
           onClearPin?.()
         }
       }}
-      aria-label={`${showMarkerBadge ? node.marker!.text + ' ' : ''}${node.connector ? node.connector.text + ' ' : ''}${presentation.text}（${STRUCTURE_NODE_ROLE_LABEL[node.role]}）${pinned ? '、選択固定中' : ''}`}
+      aria-label={`${showMarkerBadge ? node.marker!.text + ' ' : ''}${node.connector ? node.connector.text + ' ' : ''}${showSharedAuxiliaryBadge ? node.sharedAuxiliarySpan!.text + ' ' : ''}${presentation.text}（${STRUCTURE_NODE_ROLE_LABEL[node.role]}）${pinned ? '、選択固定中' : ''}`}
     >
       {/* Prototype 2.6G2.3 item 2/4: connector rendering moved OUT of the node's own button
           entirely -- the sibling-level connector badge row (StructureTreeView, driven by
@@ -370,6 +379,7 @@ function TreeNodeButton({
           text (see showMarkerBadge above) -- the current marker-wrapper design (item 2/5)
           always makes them equal, so this never double-renders "if if". */}
       {showMarkerBadge && <span className="structure-tree-marker">{node.marker!.text}</span>}
+      {showSharedAuxiliaryBadge && <span className="structure-tree-shared-auxiliary">{node.sharedAuxiliarySpan!.text}</span>}
       {showNodeText && (
         <NodeText
           node={node}

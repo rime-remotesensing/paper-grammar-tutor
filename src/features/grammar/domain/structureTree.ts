@@ -108,6 +108,19 @@ export interface StructureTreeNode {
    * `groundRelativeClauseAntecedent` in stanzaStructureTree.ts) -- absence must never be
    * treated as "antecedent is the whole parent node" by any consumer. */
   antecedentSpan?: Span
+  /** Prototype 2.6G2.6C6 (Shared Auxiliary Scope Presentation) -- for a `coordinatedPredicate`
+   * node only: the grounded source span of the FIRST predicate's own auxiliary/passive-
+   * auxiliary chain (e.g. "were" in "were collected", "has been" in "has been tested", "can
+   * be" in "can be applied") when this coordinated predicate has no auxiliary of its own and
+   * therefore grammatically inherits the first predicate's scope (see
+   * `sharedAuxiliaryFor`/`findSharedAuxiliarySpan` in stanzaStructureTree.ts). This is
+   * REFERENCE metadata to a real, already-grounded source span -- never a synthesized span,
+   * never baked into this node's own `.text` (which stays exactly the coordinated predicate's
+   * own verb text, e.g. "converted", satisfying the codebase-wide Span contract
+   * unconditionally). Undefined for every ordinary node, including a coordinated predicate
+   * that owns its own distinct auxiliary (e.g. "will" in "...and will write...") or has no
+   * shareable auxiliary to inherit at all. */
+  sharedAuxiliarySpan?: Span
 }
 
 /**

@@ -303,6 +303,19 @@
   color: var(--text-muted);
 }
 
+/* Prototype 2.6G2.6C6: a coordinated predicate's inherited auxiliary scope (e.g. "were" shown
+   before "converted" in "were collected and converted..."). Visually distinct from
+   .structure-tree-marker (a different grammatical concept -- inherited auxiliary, not a
+   clause-introducing subordinator) via a lighter weight and reduced opacity, signalling
+   "understood here, not literally repeated in the source". */
+.structure-tree-shared-auxiliary {
+  margin-right: 0.35rem;
+  font-style: italic;
+  font-weight: 400;
+  color: var(--text-muted);
+  opacity: 0.85;
+}
+
 .structure-tree-role {
   margin-left: 0.5rem;
   font-size: 0.75rem;
