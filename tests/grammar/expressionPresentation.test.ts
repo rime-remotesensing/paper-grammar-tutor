@@ -70,3 +70,25 @@ describe('prepareExpressionsForDisplay', () => {
     expect(prepareExpressionsForDisplay([expr('nm', 'p1'), expr('however', 'p2')])).toEqual([])
   })
 })
+
+describe('Prototype 2.6G2.8M2.2a Track B -- synthetic math token exclusion (item 9)', () => {
+  it('excludes an expression whose entire grounded span is a MATH_EXPR synthetic run', async () => {
+    const { shieldRelationalMathRuns } = await import('../../src/features/grammar/domain/mathRunProjection')
+    const { projectionFromSource } = await import('../../src/features/grammar/domain/textProjection')
+    const source = 'the result was k = 0.5 in this case.'
+    const projection = shieldRelationalMathRuns(projectionFromSource(source), source)
+    const start = projection.text.indexOf('MATH_EXPR')
+    const end = start + 'MATH_EXPR'.length
+    const result = prepareExpressionsForDisplay(
+      [{ text: 'MATH_EXPR', pattern: 'variable = value', meaning: 'm', function: 'f', start, end }],
+      4,
+      projection,
+    )
+    expect(result).toEqual([])
+  })
+
+  it('keeps an ordinary multi-word expression unaffected when no synthetic runs are present', () => {
+    const result = prepareExpressionsForDisplay([expr('every 1 nm', 'every + number + unit')])
+    expect(result).toHaveLength(1)
+  })
+})

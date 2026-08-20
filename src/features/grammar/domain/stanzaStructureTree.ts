@@ -768,9 +768,10 @@ function buildDecomposedConstituentNode(
   const rawFullSubtree = stripCitationTokens(sourceText, head, collectConstituentTokens(head, byHead, allTokens, boundaryIds, stopDeps), byHead)
   // Prototype 2.6G2.6: restrict to the contiguous island containing `head` for every
   // canonical-slot role (subject/object/indirectObject/complement) -- ordinary modifiers,
-  // postmodifiers, relative clauses, and coordination members are unaffected (they were never
-  // the source of authority-drift; only a canonical slot's own top-level span must never
-  // exceed what canonical SentenceCoreSet grounding would produce).
+  // postmodifiers, and coordination members are unaffected (they were never the source of
+  // authority-drift; only a canonical slot's own top-level span must never exceed what
+  // canonical SentenceCoreSet grounding would produce).
+  //
   let fullSubtree = CANONICAL_SLOT_ROLES.has(role) ? contiguousIslandContaining(head, allTokens, rawFullSubtree, byHead) : rawFullSubtree
 
   // Prototype 2.6G2.6C (Generalized Tree Presentation Completion) Problem E: a conj chain
@@ -802,12 +803,37 @@ function buildDecomposedConstituentNode(
       }
       fullSubtree = fullSubtree.filter((t) => !drift.has(t.id))
     }
+  } else if (!stopDeps.has('conj') && startsCoordinationChain(head, byHead)) {
+    // Prototype 2.6G2.8E2 -- same drift class as Problem E above (a `conj` chain rooted at
+    // `head` reaching a predicate-like member that belongs to a different, neighboring clause)
+    // generalized to every non-canonical-slot role (modifiers, postmodifiers, relative
+    // clauses, ...), not just the four canonical slots -- live-traced real defect (a
+    // numbered-procedure enumeration, "(2) ... which must be ... apart; (3) establish ..."
+    // and "(3) ... by selecting ...; and (4) randomly divide ...") proved this exact drift
+    // reaches through BOTH a relative-clause predicate's own `conj` child AND an ordinary
+    // modifier's own advcl predicate's `conj` child -- structurally the same class regardless
+    // of which role happens to own the drifted head, so the fix generalizes the same way
+    // (never keyed to specific roles/verbs/enumeration markers). SELECTIVE rather than
+    // wholesale: only the specific predicate-like member's own subtree is excluded, never the
+    // whole chain, because unlike a canonical slot's own coordination (where the file's
+    // existing tests already establish "any predicate-like member voids the whole chain" as
+    // correct), a modifier/relative-clause frequently coordinates two genuine same-clause
+    // constituents (e.g. "must be at least 500 m ... AND no less than 200 m apart") that must
+    // stay visible even after the drifted member is dropped.
+    const rawChain = collectConjChain(head, byHead)
+    const drift = new Set<number>()
+    for (const member of rawChain) {
+      if (member.id === head.id) continue
+      if (!isPredicateLikeToken(member, byHead)) continue
+      for (const t of collectConstituentTokens(member, byHead, allTokens, new Set(), new Set())) drift.add(t.id)
+    }
+    if (drift.size > 0) fullSubtree = fullSubtree.filter((t) => !drift.has(t.id))
   }
 
   const fullIds = new Set(fullSubtree.map((t) => t.id))
   const fullSpan = spanFromTokens(sourceText, fullSubtree.length > 0 ? fullSubtree : rawFullSubtree)!
 
-  const childNodes: StructureTreeNode[] = []
+  let childNodes: StructureTreeNode[] = []
   const excludedIds = new Set<number>()
 
   // Prototype 2.6G2.5B3 item 6: a coordination chain rooted directly at THIS constituent's
@@ -1136,6 +1162,72 @@ function buildDecomposedConstituentNode(
   // appositive noun's own flat text (which stays correctly excluded, matching canonical
   // SentenceCoreSet). Strictly additive: every case the original head-only scan already
   // found is still found (head is trivially a member of fullSubtree).
+  // Prototype 2.6G2.5B3 item 6/9: when every one of this constituent's own tokens was
+  // reassigned to a decomposed child (the head-rooted coordination case above can consume
+  // the ENTIRE constituent, leaving no independent "trunk" prefix the way "a mixture of X
+  // and Y" leaves "a mixture of"), falling back to the full authority text here would just
+  // duplicate everything the children already show -- an empty presentation text instead
+  // (rendered as no separate lexical row by StructureTreeView, matching the "structural
+  // container != duplicate lexical row" principle already used for enumeration/clause).
+  // Prototype 2.6G2.8E2.1 -- moved ahead of the postmodifier scan below (was previously
+  // computed AFTER it) purely so numbered-marker enumeration recovery -- which needs
+  // `coreSpan.end` -- can also run BEFORE that scan; `excludedIds` is fully populated by loop
+  // 1 above by this point either way, so the VALUE of coreTokens/coreSpan is unchanged.
+  const coreTokens = fullSubtree.filter((t) => !excludedIds.has(t.id))
+  const coreSpan = coreTokens.length > 0 ? (spanFromTokens(sourceText, coreTokens) ?? fullSpan) : { text: '', start: fullSpan.start, end: fullSpan.start }
+
+  // Prototype 2.6G2.8E2.1 -- SEGMENT FIRST, moved ahead of the postmodifier scan below. An
+  // explicit sequential numbered marker run ("(1) ... ; (2) ... ; ... ") in the SOURCE TEXT is
+  // authoritative the moment it is found, regardless of what the dependency-based walk would
+  // have produced. Live-traced real defect (the KNN-GCN control, 6 numbered members): the
+  // dependency walk found >=2 "items" from member 1's own internal `nmod`-reachable `conj`
+  // ("landslide inventory development" wrongly harvested as a bogus next item) while member
+  // 2's true identity ("division") was only reachable through an `appos` buried three levels
+  // inside member 1's own "as described in the..." modifier -- Stanza's own conj/appos chain
+  // simply does not track the marker sequence reliably once a list gets long/nested. A
+  // numbered marker is a hard, unambiguous, non-lexical signal the source text itself
+  // provides; it is always preferred to Stanza's own preferred attachment point when both are
+  // available. The dependency-based walk remains the ONLY path for a list with no explicit
+  // numbering (e.g. "...into two zones: the northern ... and the southern ...") --
+  // `recoverSurfaceEnumeration` itself returns null there (fewer than 2 sequential markers),
+  // so this ordering never changes behavior for that class of list.
+  let enumSpan: Span | undefined
+  const surfaceItems = recoverSurfaceEnumeration(sourceText, coreSpan.end)
+  if (surfaceItems) {
+    enumSpan = { text: sourceText.slice(surfaceItems[0]!.start, surfaceItems.at(-1)!.end), start: surfaceItems[0]!.start, end: surfaceItems.at(-1)!.end }
+    // Prototype 2.6G2.8E2.1 -- a colon-introduced numbered list's own FIRST item can attach to
+    // `head` via a plain RESTRICTIVE deprel (e.g. `acl` with no intervening comma -- "steps:
+    // (1) collecting data; ..." has no comma before "collecting", so the earlier restrictive-
+    // postmodifier loop above treated it as an ordinary restrictive clause modifying "steps"
+    // and already built + pushed it, live-traced via a gerund-headed numbered list). Now that
+    // the numbered marker run has been recovered as the authoritative `enumeration` child,
+    // any earlier childNode whose ENTIRE span is already covered by that same range is a
+    // duplicate of content the enumeration itself now fully represents, and is dropped --
+    // retroactive rather than a preemptive skip, so content is never lost if recovery had
+    // instead failed (the original postmodifier would simply have stood, unchanged).
+    childNodes = childNodes.filter((n) => !(n.start >= enumSpan!.start && n.end <= enumSpan!.end))
+    childNodes.push(node('enumeration', enumSpan, surfaceItems))
+  } else if (!stopDeps.has('conj')) {
+    for (const t of coreTokens) {
+      // Prototype 2.6G2.8E2.1 -- this constituent's own `boundaryIds` (e.g. an enumeration
+      // item's out-of-item token set installed by structureEnumerationItem's member-local
+      // boundary clip, or an ordinary sibling-predicate boundary) marks tokens this
+      // constituent's OWN span must never reach into -- but `buildEnumerationChildren` walks
+      // `byHead` fresh from `t`, entirely independent of `boundaryIds`, so a `conj` chain that
+      // legitimately stops at the constituent's own span (per the clip above) could still
+      // surface here as a bogus nested "enumeration" child built from tokens belonging to a
+      // NEIGHBORING numbered member (live-traced: an object's own `conj`-attached NEXT member
+      // reappearing as a spurious nested list under that object once its own top-level span was
+      // already correctly clipped). Any discovered item overlapping a boundary token is dropped.
+      const items = buildEnumerationChildren(t.id, byHead, sourceText)
+        .filter((i) => i.start >= coreSpan.end)
+        .filter((i) => !allTokens.some((tok) => tok.start >= i.start && tok.end <= i.end && boundaryIds.has(tok.id)))
+      if (items.length < 2) continue // a genuine list only -- a lone appositive stays excluded (matches collectConstituentTokens)
+      enumSpan = { text: sourceText.slice(items[0]!.start, items.at(-1)!.end), start: items[0]!.start, end: items.at(-1)!.end }
+      childNodes.push(node('enumeration', enumSpan, items))
+    }
+  }
+
   for (const coreToken of fullSubtree) {
     // A token already claimed by loop 1 above (a restrictive postmodifier or coordination
     // member, each independently/recursively decomposed by its own buildDecomposedConstituentNode
@@ -1145,6 +1237,17 @@ function buildDecomposedConstituentNode(
     if (excludedIds.has(coreToken.id)) continue
     for (const child of byHead.get(coreToken.id) ?? []) {
       if (fullIds.has(child.id)) continue // already handled above, or genuinely part of the core
+      // Prototype 2.6G2.8E2.1 -- a numbered-marker enumeration recovered above (`enumSpan`)
+      // already renders EVERY member's own full content, including any acl/advcl clause
+      // attached deep inside a member (e.g. "as described..."/"based on..."). Without this
+      // check, this generic postmodifier scan independently re-discovered that same clause
+      // (reachable from `steps`/the list's own introducing noun, never excluded from
+      // `fullSubtree` the way enumeration content is) and built a SECOND, duplicate node for
+      // it -- live-traced: "of the following steps: (1) collecting data; ..." produced both
+      // the correct `enumeration` child AND a redundant flat `postmodifier` repeating the
+      // entire list's own text. Any child whose own span falls inside the recovered
+      // enumeration's range is already fully accounted for there and must not be rebuilt here.
+      if (enumSpan && child.start >= enumSpan.start && child.end <= enumSpan.end) continue
       const dep = normalizeDep(child.deprel)
       if (POSTMODIFIER_CLAUSE_DEPS.has(dep)) {
         childNodes.push(buildDecomposedConstituentNode(postmodifierRoleFor(child.deprel), child, byHead, allTokens, boundaryIds, sourceText))
@@ -1154,45 +1257,6 @@ function buildDecomposedConstituentNode(
         const relcl = (byHead.get(child.id) ?? []).find((gc) => gc.deprel === 'acl:relcl')
         if (relcl) childNodes.push(buildDecomposedConstituentNode('relativeClause', relcl, byHead, allTokens, boundaryIds, sourceText))
       }
-    }
-  }
-
-  // Prototype 2.6G2.5B3 item 6/9: when every one of this constituent's own tokens was
-  // reassigned to a decomposed child (the head-rooted coordination case above can consume
-  // the ENTIRE constituent, leaving no independent "trunk" prefix the way "a mixture of X
-  // and Y" leaves "a mixture of"), falling back to the full authority text here would just
-  // duplicate everything the children already show -- an empty presentation text instead
-  // (rendered as no separate lexical row by StructureTreeView, matching the "structural
-  // container != duplicate lexical row" principle already used for enumeration/clause).
-  const coreTokens = fullSubtree.filter((t) => !excludedIds.has(t.id))
-  const coreSpan = coreTokens.length > 0 ? (spanFromTokens(sourceText, coreTokens) ?? fullSpan) : { text: '', start: fullSpan.start, end: fullSpan.start }
-
-  // Prototype 2.6G2.5B3 item 6/9 (fix): when THIS call is itself building one coordination
-  // MEMBER (stopDeps carries 'conj', see COORDINATION_MEMBER_STOP_DEPS), the member's own
-  // head can still show a raw `conj` chain in byHead (stopDeps only bounded fullSubtree
-  // selection, it doesn't erase the dependency graph) -- that chain is precisely the
-  // sibling coordination the CALLER already split out as top-level coordination-member
-  // children, so re-discovering it here as an 'enumeration' child would visibly duplicate
-  // it (each sibling shown once as a coordination member AND again nested inside member 0's
-  // own "enumeration"). Never this member's own list to claim.
-  let dependencyEnumerationFound = false
-  if (!stopDeps.has('conj')) {
-    for (const t of coreTokens) {
-      const items = buildEnumerationChildren(t.id, byHead, sourceText).filter((i) => i.start >= coreSpan.end)
-      if (items.length < 2) continue // a genuine list only -- a lone appositive stays excluded (matches collectConstituentTokens)
-      dependencyEnumerationFound = true
-      const enumSpan: Span = { text: sourceText.slice(items[0]!.start, items.at(-1)!.end), start: items[0]!.start, end: items.at(-1)!.end }
-      childNodes.push(node('enumeration', enumSpan, items))
-    }
-  }
-  // Surface numbered-marker fallback (item 4): only tried when the clean dependency-based
-  // walk above found nothing usable for this constituent -- dependency-based enumeration
-  // remains preferred whenever it's clean, this never overrides a successful result.
-  if (!dependencyEnumerationFound) {
-    const surfaceItems = recoverSurfaceEnumeration(sourceText, coreSpan.end)
-    if (surfaceItems) {
-      const enumSpan: Span = { text: sourceText.slice(surfaceItems[0]!.start, surfaceItems.at(-1)!.end), start: surfaceItems[0]!.start, end: surfaceItems.at(-1)!.end }
-      childNodes.push(node('enumeration', enumSpan, surfaceItems))
     }
   }
 
@@ -1822,7 +1886,18 @@ function buildClauseSubtree(
   visited.add(clause.clauseId)
   const built = buildClauseNode(clause, text, tokens, byHead, byId)
   if (!built) return null
-  let children = built.opening.length > 0 ? byStart([...built.node.children, ...built.opening]) : built.node.children
+  const children = built.opening.length > 0 ? byStart([...built.node.children, ...built.opening]) : built.node.children
+  const ownedNode: StructureTreeNode = { ...built.node, children }
+
+  // Prototype 2.6G2.8 -- nest any SUBJECTLESS subordinate clause directly attached to one of
+  // THIS clause's own predicate heads as a modifier of that predicate (see
+  // `attachSubjectlessSubordinateModifiers`'s own doc comment for the full live-diagnosed
+  // defect this closes -- previously such a clause fell all the way through to the generic
+  // "extra" loop below and was appended as a bare SIBLING of the predicate instead of nested
+  // inside it, e.g. "using X" showing at the same level as "was varied" rather than under it).
+  // Mutates `ownedNode` in place; marks each attached clause `visited` so the loop below
+  // naturally skips it.
+  attachSubjectlessSubordinateModifiers(clause, ownedNode, clauses, tokens, byHead, byId, text, visited)
 
   const extra: StructureTreeNode[] = []
   for (const child of clauses) {
@@ -1832,11 +1907,10 @@ function buildClauseSubtree(
     const node = buildClauseSubtree(child, clauses, text, tokens, byHead, byId, visited, nodesByClauseId)
     if (node) extra.push(node)
   }
-  if (extra.length > 0) children = byStart([...children, ...extra])
+  if (extra.length > 0) ownedNode.children = byStart([...ownedNode.children, ...extra])
 
-  const finalNode = { ...built.node, children }
-  nodesByClauseId.set(clause.clauseId, finalNode)
-  return finalNode
+  nodesByClauseId.set(clause.clauseId, ownedNode)
+  return ownedNode
 }
 
 /** Prototype 2.6G2.5B2 item 3 (deep-nesting fallback): `stanzaSyntaxAuthority.ts`'s own
@@ -1873,6 +1947,83 @@ function findPredicateNodeContaining(nodes: StructureTreeNode[], tokenStart: num
     if (found) return found
   }
   return null
+}
+
+/** Prototype 2.6G2.8 -- generalizes the CASE A/B/C "coordinated-predicate shared trailing
+ * modifier" policy (originally scoped only to `mainClause.predicateHeadIds.length > 1`, in the
+ * sentence-level loop below) into a reusable, per-host-clause routine, applied both to the
+ * main clause and to any additional coordinate peer clause built elsewhere (see the coordinate
+ * peer merge above `buildStanzaHierarchicalTree`'s own `structureEnumerationItemsInTree` call).
+ * Live-diagnosed real defect: the ORIGINAL `.length > 1` gate meant a SUBJECTLESS subordinate
+ * clause (bare gerund/participial "using X"/"based on Y", no nsubj/csubj of its own) attaching
+ * directly to a clause with only ONE predicate (no internal `conj` coordination -- by far the
+ * more common case) never went through this attachment logic at all and fell through to being
+ * rendered as an independent top-level sibling instead of a modifier of that sole predicate
+ * (confirmed against the live Stanza service for a fresh, unrelated control sentence, "The
+ * samples were analyzed at room temperature, using a calibrated sensor." -- not specific to any
+ * one clause's own lexical content). Unifies the THREE original cases into one rule:
+ *  - exactly one predicate head, or the modifier's raw dependency parent is a NON-anchor
+ *    predicate (`predicateHeadIds[1+]`): unambiguous -- nest into that SPECIFIC predicate's own
+ *    node (found by source position via `findPredicateNodeContaining`, never a guess).
+ *  - the modifier's parent is the ANCHOR predicate while 2+ predicates are coordinated:
+ *    genuinely ambiguous which one it modifies -- conservative GROUP-SCOPE attachment as an
+ *    extra child of `hostNode` itself, preserving source order via the existing `byStart` sort.
+ * A clause with its OWN explicit subject (nsubj/csubj) is never touched here (matches the
+ * clause-level `isSubjectless` gate everywhere else in this module) -- a genuine independent
+ * proposition keeps its existing, correct top-level-sibling presentation regardless of which
+ * predicate it happens to raw-attach to. Mutates `hostNode` (and any predicate node found
+ * inside it) in place; marks each attached clause `visited` so later passes never re-process
+ * or duplicate it. */
+function attachSubjectlessSubordinateModifiers(
+  hostClause: ClauseFrame,
+  hostNode: StructureTreeNode,
+  clauses: readonly ClauseFrame[],
+  tokens: StanzaToken[],
+  byHead: Map<number, StanzaToken[]>,
+  byId: Map<number, StanzaToken>,
+  text: string,
+  visited: Set<number>,
+  isOwnedByExistingEnumeration: (clause: ClauseFrame) => boolean = () => false,
+): void {
+  for (const clause of clauses) {
+    if (clause.relation !== 'subordinate') continue
+    if (clause.parentClauseId !== hostClause.clauseId) continue
+    if (visited.has(clause.clauseId)) continue
+    if (isOwnedByExistingEnumeration(clause)) {
+      visited.add(clause.clauseId) // single-owner: already shown inside its enumeration item
+      continue
+    }
+    // Prototype 2.6G2.8 -- an INFINITIVAL marker (UD upos 'PART', e.g. "to") is distinct,
+    // structural evidence of a deliberately introduced purpose/result proposition ("to test
+    // the new method"), grammatically different from a genuine subordinating conjunction
+    // marker like "while"/"although"/"because" (upos 'SCONJ') -- the existing, already-
+    // regression-tested CASE B group-scope precedent explicitly nests a subjectless SCONJ-
+    // marked clause ("while running on the cluster") as a modifier, so only the PART case is
+    // excluded here (live-diagnosed regression: "The team built the tool to test the new
+    // method." -- "to test the new method" must remain its own independent marked 'clause'
+    // node, never collapse into a bare 'modifier' leaf of "built" the way an unmarked "using
+    // X" or an SCONJ-marked "while X" correctly does). POS-based, never a check on the literal
+    // word "to" itself.
+    if (clause.marker && clause.marker.upos === 'PART') continue
+    const clauseHeadToken = byId.get(clause.headTokenId)
+    if (!clauseHeadToken) continue
+    const isSubjectless = !(byHead.get(clauseHeadToken.id) ?? []).some((c) => c.deprel === 'nsubj' || c.deprel === 'csubj')
+    if (!isSubjectless) continue
+    const attachTarget = clauseHeadToken.head
+    if (!hostClause.predicateHeadIds.includes(attachTarget)) continue
+    const siblingBoundaryIds = new Set<number>(hostClause.predicateHeadIds)
+    const modifierNode = buildDecomposedConstituentNode('modifier', clauseHeadToken, byHead, tokens, siblingBoundaryIds, text)
+    visited.add(clause.clauseId)
+    if (hostClause.predicateHeadIds.length === 1 || attachTarget !== hostClause.predicateHeadIds[0]) {
+      const targetToken = byId.get(attachTarget)!
+      const targetPredicateNode = findPredicateNodeContaining([hostNode], targetToken.start)
+      if (targetPredicateNode) {
+        targetPredicateNode.children = byStart([...targetPredicateNode.children, modifierNode])
+        continue
+      }
+    }
+    hostNode.children = byStart([...hostNode.children, modifierNode])
+  }
 }
 
 /**
@@ -1921,6 +2072,17 @@ function findPredicateNodeContaining(nodes: StructureTreeNode[], tokenStart: num
  * into its own grammar S/V/O/C node, and the item's own row never repeats text its children
  * already show (no visible duplication).
  */
+
+/** Prototype 2.6G2.8E2 -- true when `position` falls within `node`'s own span OR any
+ * descendant's span, searched recursively (a top-level unit's own span is often narrower
+ * than its children's combined extent -- e.g. a 'predicate' node's span is just the verb
+ * token itself, while its object/modifier children cover much more text). Used to detect
+ * "this token's content was already built somewhere inside an existing unit" before adding
+ * a second, independent, duplicate top-level unit for the exact same source content. */
+function unitSubtreeContainsPosition(node: StructureTreeNode, position: number): boolean {
+  if (position >= node.start && position < node.end) return true
+  return node.children.some((child) => unitSubtreeContainsPosition(child, position))
+}
 function structureEnumerationItem(
   item: StructureTreeNode,
   clauses: readonly ClauseFrame[],
@@ -1958,10 +2120,54 @@ function structureEnumerationItem(
     for (const headId of clause.predicateHeadIds) {
       const token = byId.get(headId)
       if (!token) continue
-      if (token.start >= item.start && token.end <= item.end) candidates.push({ clause, headId, token })
+      if (!(token.start >= item.start && token.end <= item.end)) continue
+      // Prototype 2.6G2.8E2.1 -- a plain `acl` clause head (never `acl:relcl`, which keeps its
+      // own separate relativeClause handling) is by UD definition an ADNOMINAL modifier of some
+      // noun -- it is never itself a list member's own independent identity/action. Live-traced
+      // real defect: "(1) data collection ... , as described in the previous section" -- Stanza
+      // attaches "described" via `acl` directly to "collection" (member 1's own nominal head,
+      // never predicate-like), so it passed this loop's filters and got hoisted as the item's
+      // ONLY top-level unit, silently replacing "data collection ..." with "as described ..."
+      // in the rendered member. A NOMINAL/GERUNDIAL member has no constituent-level pass that
+      // would otherwise nest this `acl` as an ordinary postmodifier (that machinery only runs
+      // for canonical predicate/object/subject slots, never for a flat enumeration item's own
+      // head), so excluding it here just leaves it correctly embedded in the item's own flat
+      // fallback text -- never dropped, never promoted to replace the member's identity.
+      //
+      // The exclusion applies ONLY when the modified noun itself (`token.head`) lies INSIDE
+      // this SAME item -- i.e. genuinely modifying a sibling identity this item already has.
+      // When `token.head` lies OUTSIDE the item (cross-member UD attachment drift -- live-
+      // traced via a gerund-headed list: "(2) removing outliers ..." attaches via `acl`
+      // straight to "points", member 1's OWN head noun, not anything inside member 2), this
+      // `acl` clause is this item's ONLY candidate identity and must still be promoted --
+      // otherwise the item would collapse to an empty/marker-only flat node for no reason,
+      // exactly the NOMINAL_MEMBER_ERASURE this exclusion exists to prevent, not cause.
+      const modifiedNoun = byId.get(token.head)
+      const modifiesSiblingInsideItem = modifiedNoun != null && modifiedNoun.start >= item.start && modifiedNoun.end <= item.end
+      if (normalizeDep(token.deprel) === 'acl' && modifiesSiblingInsideItem) continue
+      candidates.push({ clause, headId, token })
     }
   }
   candidates.sort((a, b) => a.token.start - b.token.start)
+
+  // Prototype 2.6G2.8E2.1 -- MEMBER-LOCAL BOUNDARY CLIP. Once an explicit numbered marker has
+  // established this item's own span as authoritative (see the SEGMENT FIRST fix above), every
+  // constituent this function builds INSIDE the member must never walk past that boundary via
+  // its own raw `conj`/dependency chain, regardless of whether the drifted content happens to
+  // be predicate-like (the existing Problem E / E2 drift-trim only fires for a PREDICATE-like
+  // drifted member -- this is the general case, e.g. a plain NOMINAL object head's own `conj`
+  // chain reaching straight into the NEXT numbered member, live-traced via the KNN-GCN control:
+  // "(5) constraining and training the KNN-GCN model" -- "model" is `training`'s object, and
+  // "(6) model evaluation..." attaches via `conj` directly to that SAME "model" token, so
+  // building the object naively absorbed all of member 6's own text too). Every token outside
+  // this item's own [start, end) span is added to the boundary stop-set passed to every
+  // constituent build below -- `collectConstituentTokens` already stops the walk the instant it
+  // would cross into a boundary-listed token (see stanzaSyntaxAuthority.ts), so this reuses the
+  // exact same mechanism `siblingBoundaryIds` already relies on, just widened.
+  const outOfItemIds = new Set<number>()
+  for (const t of tokens) {
+    if (!(t.start >= item.start && t.end <= item.end)) outOfItemIds.add(t.id)
+  }
 
   const units: StructureTreeNode[] = []
   // Maps a claimed predicate head's own token id to the ACTUAL predicate-role node object
@@ -1972,11 +2178,18 @@ function structureEnumerationItem(
   const predicateNodeByHeadId = new Map<number, StructureTreeNode>()
   for (const { clause, headId, token } of candidates) {
     if (usedHeadIds.has(headId)) continue
+    // Prototype 2.6G2.8E2 -- SOURCE OWNERSHIP DUPLICATION GUARD (candidates loop): candidates
+    // are processed in source order, so an EARLIER candidate's own built unit may already have
+    // recursively absorbed a LATER candidate's own head token as a nested child (e.g. "select"
+    // built first, its object's own relativeClause child already contains "which"'s own
+    // position) -- building "which" AGAIN here as an independent top-level sibling would
+    // duplicate that exact source text. Positional/recursive, never identity-based.
     usedHeadIds.add(headId)
     touchedClauseIds.add(clause.clauseId)
+    if (units.some((u) => unitSubtreeContainsPosition(u, token.start))) continue
     const isFirst = clause.predicateHeadIds[0] === headId
     const frame = buildPredicateFrame(token, clause, byHead, isFirst)
-    const siblingBoundaryIds = new Set<number>(clause.predicateHeadIds)
+    const siblingBoundaryIds = new Set<number>([...clause.predicateHeadIds, ...outOfItemIds])
     const built = buildPredicateNode(frame, text, tokens, byHead, siblingBoundaryIds, item.start)
     predicateNodeByHeadId.set(headId, built.node)
     if (frame.subjToken) {
@@ -1986,6 +2199,47 @@ function structureEnumerationItem(
     } else {
       units.push(built.node)
     }
+  }
+
+  // Prototype 2.6G2.8E2.2 TRACK A -- SHARED ARGUMENT UNDER COORDINATION. When a clause built
+  // more than one coordinated predicate node in this item (e.g. "constraining and training the
+  // KNN-GCN model" -- Stanza attaches the shared object's `obj` deprel to only the FIRST
+  // conjunct, `training` has none of its own) and exactly ONE of those predicate nodes carries
+  // an argument-slot child (object/indirectObject/complement) while every OTHER coordinated
+  // predicate in the SAME clause has none, nesting that argument exclusively under the one
+  // predicate that happens to hold the raw dependency edge visually implies sole ownership --
+  // misleading, since the source coordination scopes the argument over the whole group ("[X
+  // and Y] [the model]", not "[X [the model]] and [Y]"). Conservative GROUP-SCOPE placement,
+  // the SAME precedent already established elsewhere in this file for an ambiguous subjectless
+  // modifier's clause-mate attachment ("never asserting it belongs to predicate 1
+  // specifically"): the argument is hoisted OUT of its sole owner's own children and re-parented
+  // as an item-level sibling of every coordinated predicate in the group instead -- rendered
+  // exactly once (moved, never copied), positioned by its own natural source order via the
+  // final `byStart` sort below. General/structural (dependency-shape based: "N>=2 coordinated
+  // predicates of one clause, argument present on exactly one"), never keyed to a specific verb
+  // or noun -- applies identically to "collecting and analyzing the data", "detecting and
+  // removing outliers", etc. Never fires for a clause with only one predicate (ordinary case,
+  // completely unaffected), and never fires when EVERY coordinated predicate already has its
+  // own argument (the negative case -- "collecting temperature data and analyzing precipitation
+  // data" -- each keeps its own object, nothing to hoist).
+  const ARGUMENT_SLOT_ROLES = new Set<StructureDisplayRole>(['object', 'indirectObject', 'complement'])
+  const clauseHeadIdsInItem = new Map<number, number[]>()
+  for (const { clause, headId } of candidates) {
+    if (!predicateNodeByHeadId.has(headId)) continue
+    const list = clauseHeadIdsInItem.get(clause.clauseId) ?? []
+    list.push(headId)
+    clauseHeadIdsInItem.set(clause.clauseId, list)
+  }
+  for (const headIds of clauseHeadIdsInItem.values()) {
+    if (headIds.length < 2) continue
+    const predicateNodes = headIds.map((id) => predicateNodeByHeadId.get(id)!)
+    const ownersWithArgs = predicateNodes
+      .map((n) => ({ node: n, args: n.children.filter((c) => ARGUMENT_SLOT_ROLES.has(c.role)) }))
+      .filter((o) => o.args.length > 0)
+    if (ownersWithArgs.length !== 1) continue // 0 owners (nothing to hoist) or >=2 owners (each keeps its own -- negative case)
+    const [{ node: owner, args }] = ownersWithArgs
+    owner.children = owner.children.filter((c) => !ARGUMENT_SLOT_ROLES.has(c.role))
+    for (const arg of args) units.push(arg)
   }
 
   // Every ClauseFrame that contributed at least one predicate head above is now fully
@@ -2017,9 +2271,38 @@ function structureEnumerationItem(
     if (governingPredicateNode) {
       visited.add(clause.clauseId)
       const owningClause = clauses.find((c) => c.predicateHeadIds.includes(headToken.head))
-      const siblingBoundaryIds = owningClause ? new Set<number>(owningClause.predicateHeadIds) : new Set<number>()
+      const siblingBoundaryIds = new Set<number>([...(owningClause ? owningClause.predicateHeadIds : []), ...outOfItemIds])
       const modifierNode = buildDecomposedConstituentNode('modifier', headToken, byHead, tokens, siblingBoundaryIds, text)
       governingPredicateNode.children = byStart([...governingPredicateNode.children, modifierNode])
+      continue
+    }
+
+    // Prototype 2.6G2.8E2.1 -- same adnominal-`acl`-is-never-a-member's-own-identity principle
+    // as the candidates loop above, for the case where no governing predicate node exists in
+    // this item to nest it under either (a NOMINAL/GERUNDIAL member, e.g. "(2) slope unit
+    // division based on DEM ..." -- "based" is `acl` of "division", never predicate-like, so
+    // it never gets its own predicate node above): without this, it fell straight through to
+    // `buildClauseSubtree` below and was hoisted as a bogus flat top-level sibling, replacing
+    // the member's own nominal identity exactly like the "described" case. Left unclaimed here,
+    // it stays correctly embedded in the item's own flat fallback text. Same cross-member-drift
+    // exception as the candidates loop above: only excluded when the modified noun is a sibling
+    // INSIDE this same item -- an `acl` reaching a noun in a DIFFERENT member is this item's
+    // only available identity and must still be promoted.
+    const modifiedNoun2 = byId.get(headToken.head)
+    const modifiesSiblingInsideItem2 = modifiedNoun2 != null && modifiedNoun2.start >= item.start && modifiedNoun2.end <= item.end
+    if (normalizeDep(headToken.deprel) === 'acl' && modifiesSiblingInsideItem2) continue
+
+    // Prototype 2.6G2.8E2 -- SOURCE OWNERSHIP DUPLICATION GUARD: a subordinate/other clause
+    // whose own head token's position already falls INSIDE an already-built unit's own span
+    // was already recursively absorbed there (e.g. an advcl modifier's own nested postmodifier)
+    // -- building it AGAIN here as a flat top-level sibling would present the exact same
+    // source text twice within one enumeration member (live-traced: "to represent the
+    // attributes..." nested under "establish"'s own "by selecting..." modifier, then rebuilt
+    // a second time as an independent unit). Positional, never identity-based -- generalizes
+    // to any clause reached this way, not just relative/advcl-attached ones.
+    const alreadyOwned = units.some((u) => unitSubtreeContainsPosition(u, headToken.start))
+    if (alreadyOwned) {
+      visited.add(clause.clauseId)
       continue
     }
 
@@ -2197,6 +2480,69 @@ export function buildStanzaHierarchicalTree(text: string, rawTokens: StanzaToken
     return isWithinAny({ text: headToken.text, start: headToken.start, end: headToken.end }, enumerationOwnedSpans)
   }
 
+  // Prototype 2.6G2.8 -- THREE-WAY (AND BEYOND) COORDINATED FINITE CLAUSE PEER FLATTENING.
+  // Stanza's own UD analysis of several coordinate finite clauses joined by commas plus one
+  // final "and" does not attach every peer the same way: the FIRST becomes `root`; a peer
+  // attached via a bare `conj` shares the root's own ClauseFrame as an additional coordinated
+  // predicate head (already correctly split into its own subject -> predicate branch by the
+  // "Class B explicit-subject clause coordination" logic inside `buildClauseNode` above,
+  // nested INSIDE `mainNode` as one of its own children); but a peer Stanza attaches via
+  // `parataxis` instead receives its OWN entirely separate ClauseFrame, built below via the
+  // ordinary `collectAllParataticClauses` -> `topLevelCandidates` path as its own flat
+  // top-level array entry. Live-diagnosed on the real sentence "Slope values were varied
+  // between 0 and 46 at 2 intervals, aspect was varied over the full 360 range, using a 20
+  // increment, and crown closure was varied between 10% and 90% CC at 10% increments." --
+  // Stanza attaches "varied"(crown closure) via `conj` (folded inside `mainNode`) but
+  // "varied"(aspect) via `parataxis` (its own top-level array entry) -- so the RETURNED
+  // array itself mixed one 'clause'-role WRAPPER node (mainNode, containing the Class-B
+  // "Slope values"/"crown closure" branches as its OWN children) with one flat 'subject'-role
+  // sibling (aspect) alongside it. `layoutSiblingsWithCoordinationGroups`
+  // (coordinationGroupPresentation.ts) -- the general, ALREADY-EXISTING render-time mechanism
+  // that visually brackets a run of same-`groupingKey` siblings together -- groups 'subject'
+  // nodes with each other by design, but a 'clause' wrapper's own groupingKey is simply its
+  // literal role ('clause'), never matching 'subject' -- so the wrapper and the flat sibling
+  // could never be recognized as one group no matter what connector metadata either carried.
+  // The general fix is therefore to never let the two shapes coexist for genuine coordinate
+  // peers: when `mainNode` is itself a Class-B coordination wrapper (multiple conj-branches,
+  // each already 'subject'-rooted) AND a qualifying paratactic peer exists, UNWRAP the
+  // wrapper's own branches back into flat top-level entries so every peer -- conj-attached or
+  // parataxis-attached alike -- ends up as an ordinary flat sibling, exactly matching the
+  // established "flat coordinate top-level siblings" convention already used elsewhere in
+  // this module (e.g. a semicolon-joined multi-clause list) and already correctly regression-
+  // tested. `layoutSiblingsWithCoordinationGroups` then brackets all three together at render
+  // time using its own existing connector-metadata/text-gap evidence -- no new presentation
+  // logic, no new node shape, no lexical special-casing: the qualifying evidence is purely
+  // structural, the same two checks `findParataticSiblingClauses` and the rest of this module
+  // already use elsewhere -- (a) the peer's own `parentClauseId` anchors directly to the main
+  // clause's own head, (b) the peer clause has an explicit subject of its own (nsubj/csubj),
+  // distinguishing a genuine independent coordinate clause from a dependent modifier. Each
+  // qualifying peer is built via the SAME `buildClauseSubtree` the ordinary paratactic loop
+  // below already uses (so it gets its own subject/predicate/modifier/shared-auxiliary
+  // structure, AND the same generalized subjectless-modifier nesting for e.g. "using a 20
+  // increment", entirely for free) -- built and `visited`-marked HERE so the paratactic loop
+  // below naturally skips it instead of building it a second time.
+  let mainLevelNodes: StructureTreeNode[] = [mainNode]
+  const explicitSubjectPeers = findParataticSiblingClauses(mainClause.headTokenId, clauses, byHead, byId, text).filter((peer) => {
+    const head = byId.get(peer.headTokenId)
+    return head ? (byHead.get(head.id) ?? []).some((c) => normalizeDep(c.deprel) === 'nsubj' || normalizeDep(c.deprel) === 'csubj') : false
+  })
+  if (explicitSubjectPeers.length > 0) {
+    const peerBranches: StructureTreeNode[] = []
+    for (const peer of explicitSubjectPeers) {
+      if (visited.has(peer.clauseId)) continue
+      if (isOwnedByExistingEnumeration(peer)) {
+        visited.add(peer.clauseId) // single-owner: already shown inside its enumeration item
+        continue
+      }
+      const peerNode = buildClauseSubtree(peer, clauses, text, tokens, byHead, byId, visited, nodesByClauseId)
+      if (peerNode) peerBranches.push(peerNode)
+    }
+    if (peerBranches.length > 0) {
+      const existingBranches = mainNode.role === 'clause' && mainNode.text === '' ? mainNode.children : [mainNode]
+      mainLevelNodes = byStart([...existingBranches, ...peerBranches])
+    }
+  }
+
   // Sentence-level subordinate clauses: a clause whose relation is 'subordinate' and whose
   // parentClauseId anchors directly to the main clause is a top-level sibling, not nested
   // inside any constituent -- placed before the main clause node when its own span precedes
@@ -2214,79 +2560,20 @@ export function buildStanzaHierarchicalTree(text: string, rawTokens: StanzaToken
   // 2.6G2.5B item B8: a subordinate clause's OWN opening modifiers stay scoped to that
   // clause (merged into its own children inside buildClauseSubtree), never hoisted here.
   const topLevelCandidates: StructureTreeNode[] = [...mainOpeningModifiers]
+  // Prototype 2.6G2.6C3 Part B / generalized 2.6G2.8 -- COORDINATED_PREDICATE_SHARED_TRAILING_
+  // MODIFIER, now unified into `attachSubjectlessSubordinateModifiers` (see its own doc comment
+  // for the full CASE A/B/C policy and the live-diagnosed single-predicate gap it closes).
+  // Anything it successfully attaches is marked `visited`, so the loop below -- unchanged
+  // otherwise -- naturally skips it and only builds a genuine independent top-level sibling for
+  // every subordinate clause that ISN'T a dependent modifier of the main clause's own predicate.
+  attachSubjectlessSubordinateModifiers(mainClause, mainNode, clauses, tokens, byHead, byId, text, visited, isOwnedByExistingEnumeration)
   for (const clause of clauses) {
     if (clause.relation !== 'subordinate') continue
     if (clause.parentClauseId !== mainClause.clauseId) continue
+    if (visited.has(clause.clauseId)) continue
     if (isOwnedByExistingEnumeration(clause)) {
       visited.add(clause.clauseId) // single-owner: already shown inside its enumeration item
       continue
-    }
-    // Prototype 2.6G2.6C3 Part B item 11-17 -- COORDINATED_PREDICATE_SHARED_TRAILING_MODIFIER.
-    // When the main clause has 2+ coordinated predicates (predicateHeadIds.length > 1) and
-    // this subordinate clause's own raw dependency parent (headToken.head, the frozen,
-    // unmodified Stanza field ClauseFrame itself never reads for parentClauseId resolution --
-    // this reads it, never touches ClauseFrame) is exactly one of those predicate heads,
-    // placement follows the CASE A/B/C policy instead of unconditionally falling through to
-    // the flat top-level-sibling path below:
-    //  - CASE A: attaches to a NON-ANCHOR coordinated predicate (predicateHeadIds[1+]) --
-    //    reliable, specific structural evidence (UD would not have anchored it to a
-    //    NON-head conjunct unless deliberately marking that one) -- nested under that exact
-    //    predicate's own node (already the existing/correct behavior for a plain `obl`,
-    //    e.g. "designed and applied for Z"; this branch generalizes it to `advcl`/subordinate
-    //    clauses attaching the same way).
-    //  - CASE B: attaches to the ANCHOR predicate (predicateHeadIds[0]) -- structurally
-    //    ambiguous between "modifies predicate 1 only" and "modifies the whole coordinated-
-    //    predicate construction" (live-diagnosed: "collected and analyzed using X" -- "using"
-    //    raw-attaches to "collected", predicateHeadIds[0], yet plausibly describes both).
-    //    Conservative GROUP-SCOPE placement: nested as an additional child of the SAME
-    //    container that already holds every coordinated predicate as a sibling (`mainNode`),
-    //    preserving source reading order via the existing `byStart` sort -- never asserting
-    //    it belongs to predicate 1 specifically, never claiming semantic certainty that it
-    //    modifies every predicate equally (section 14).
-    //  - CASE C (predicateHeadIds.length === 1): this whole block never fires; falls through
-    //    to the ordinary, unchanged top-level-sibling path.
-    //
-    // Restricted to SUBJECTLESS subordinate clauses (no nsubj/csubj of its own) -- a genuine
-    // independent finite clause with its own subject (e.g. "if conditions allow", already an
-    // accepted precedent from an earlier phase: a full conditional proposition, self-
-    // sufficient regardless of which specific coordinated predicate it happens to raw-attach
-    // to) stays exactly where it already correctly renders today, a clearly-delineated
-    // top-level sibling with its own marker -- this policy targets only DEPENDENT modifiers
-    // (bare gerund/participial "using X"/"based on Y"/"applied for Z"-shaped clauses) that
-    // have no independent proposition of their own and therefore genuinely need a host.
-    const clauseHeadToken = byId.get(clause.headTokenId)
-    const isSubjectless = clauseHeadToken ? !(byHead.get(clauseHeadToken.id) ?? []).some((c) => c.deprel === 'nsubj' || c.deprel === 'csubj') : false
-    if (isSubjectless && clauseHeadToken && mainClause.predicateHeadIds.length > 1) {
-      const attachTarget = clauseHeadToken.head
-      if (mainClause.predicateHeadIds.includes(attachTarget)) {
-        // Prototype 2.6G2.6C3 Part B: built as a neutral 'modifier' node via the SAME
-        // governing-predicate pattern `structureEnumerationItem` already established for a
-        // subjectless subordinate clause (see that function's own `governingPredicateNode`
-        // handling) -- deliberately NOT `buildClauseSubtree` (which would return a
-        // role:'predicate' node). `groupingKey` in coordinationGroupPresentation.ts treats
-        // 'predicate' and 'coordinatedPredicate' as the SAME "predicateFamily" run for
-        // sibling-level coordination-group detection; a role:'predicate' node injected here
-        // (which has no `.connector` of its own) would join that SAME run as mainNode's
-        // OWN "were collected"/"analyzed" coordinatedPredicate siblings and fail
-        // `buildGroupFromConnectors`' "every non-first member has a connector" check for the
-        // WHOLE run -- silently dropping the "and" connector badge that must keep rendering
-        // between the genuinely coordinated predicates (caught live while verifying this
-        // exact fix). 'modifier' shares no groupingKey with 'predicate'/'coordinatedPredicate'
-        // and cannot cause this collision.
-        const siblingBoundaryIds = new Set<number>(mainClause.predicateHeadIds)
-        const modifierNode = buildDecomposedConstituentNode('modifier', clauseHeadToken, byHead, tokens, siblingBoundaryIds, text)
-        visited.add(clause.clauseId)
-        if (attachTarget !== mainClause.predicateHeadIds[0]) {
-          const targetToken = byId.get(attachTarget)!
-          const targetPredicateNode = findPredicateNodeContaining(mainNode.children, targetToken.start)
-          if (targetPredicateNode) {
-            targetPredicateNode.children = byStart([...targetPredicateNode.children, modifierNode])
-            continue
-          }
-        }
-        mainNode.children = byStart([...mainNode.children, modifierNode])
-        continue
-      }
     }
     const subNode = buildClauseSubtree(clause, clauses, text, tokens, byHead, byId, visited, nodesByClauseId)
     if (subNode) topLevelCandidates.push(subNode)
@@ -2341,8 +2628,9 @@ export function buildStanzaHierarchicalTree(text: string, rawTokens: StanzaToken
     }
   }
 
-  const before = topLevelCandidates.filter((n) => n.end <= mainNode.start)
-  const after = topLevelCandidates.filter((n) => n.end > mainNode.start)
+  const mainLevelStart = mainLevelNodes[0]!.start
+  const before = topLevelCandidates.filter((n) => n.end <= mainLevelStart)
+  const after = topLevelCandidates.filter((n) => n.end > mainLevelStart)
 
-  return [...byStart(before), mainNode, ...byStart(after)]
+  return [...byStart(before), ...mainLevelNodes, ...byStart(after)]
 }

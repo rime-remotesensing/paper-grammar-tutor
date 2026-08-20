@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { buildStanzaHierarchicalTree } from '../../src/features/grammar/domain/stanzaStructureTree.ts'
 import type { StanzaToken } from '../../src/features/grammar/domain/stanzaSyntaxAuthority.ts'
-import type { StructureTreeNode } from '../../src/features/grammar/domain/structureTree.ts'
 
 /**
  * Prototype 2.6G2.6C3 (Conservative Relative Scope + Coordinated-Predicate Clause Scope
@@ -17,10 +16,6 @@ import type { StructureTreeNode } from '../../src/features/grammar/domain/struct
 
 function tok(partial: Partial<StanzaToken> & { id: number; text: string; head: number; deprel: string; start: number; end: number }): StanzaToken {
   return { lemma: null, upos: null, ...partial }
-}
-
-function flatten(nodes: StructureTreeNode[]): StructureTreeNode[] {
-  return nodes.flatMap((n) => [n, ...flatten(n.children)])
 }
 
 describe('Prototype 2.6G2.6C3 Part B -- coordinated-predicate shared trailing modifier (controls A-E)', () => {
@@ -147,7 +142,7 @@ describe('Prototype 2.6G2.6C3 Part B -- coordinated-predicate shared trailing mo
     expect(analyzedNode.children.some((c) => c.role === 'modifier' && c.text === 'using automated software')).toBe(true)
   })
 
-  it('(E) single predicate + advcl -- unchanged (baseline, no group-scope logic ever fires for a non-coordinated clause)', () => {
+  it('(E) single predicate + advcl -- subjectless modifier nests under the sole predicate (Prototype 2.6G2.8: CASE C previously fell through unhandled, live-diagnosed as the general "using X" top-level-promotion defect; a subjectless subordinate clause attaching directly to a clause with only one predicate is now unambiguously nested there instead of promoted to an independent sibling)', () => {
     const text = 'The model was trained using standard protocols.'
     const tokens: StanzaToken[] = [
       tok({ id: 1, text: 'The', upos: 'DET', head: 2, deprel: 'det', start: 0, end: 3 }),
@@ -160,12 +155,14 @@ describe('Prototype 2.6G2.6C3 Part B -- coordinated-predicate shared trailing mo
       tok({ id: 8, text: '.', upos: 'PUNCT', head: 4, deprel: 'punct', start: 46, end: 47 }),
     ]
     const tree = buildStanzaHierarchicalTree(text, tokens)
-    // Unchanged from the pre-existing (already-correct) behavior for a single-predicate main
-    // clause: the subordinate clause remains its OWN top-level sibling structure.
-    expect(tree).toHaveLength(2)
-    expect(tree[0]!.role).toBe('subject')
-    const usingTop = tree[1]!
-    expect(usingTop.text).toBe('using')
-    expect(flatten([usingTop]).some((n) => n.role === 'object' && n.text === 'standard protocols')).toBe(true)
+    // Single top-level structure -- never orphaned as an independent sibling.
+    expect(tree).toHaveLength(1)
+    const subject = tree[0]!
+    expect(subject.role).toBe('subject')
+    const predicate = subject.children.find((c) => c.role === 'predicate')!
+    expect(predicate).toBeDefined()
+    const usingNode = predicate.children.find((c) => c.role === 'modifier' && c.text.startsWith('using'))
+    expect(usingNode).toBeDefined()
+    expect(usingNode!.text).toBe('using standard protocols')
   })
 })

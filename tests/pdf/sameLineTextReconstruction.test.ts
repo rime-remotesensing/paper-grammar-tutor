@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { joinTextSegments, type TextSegment } from '../../src/features/pdf/domain/sameLineTextReconstruction.ts'
+import { isSameVisualLine, joinTextSegments, type TextSegment, type VerticalExtent } from '../../src/features/pdf/domain/sameLineTextReconstruction.ts'
 
 /**
  * Prototype 2.6G2.5A -- mirrors the backend's own calibration
@@ -78,5 +78,60 @@ describe('Prototype 2.6G2.5A -- joinTextSegments', () => {
 
   it('an empty segment list returns an empty string', () => {
     expect(joinTextSegments([])).toBe('')
+  })
+})
+
+/**
+ * Prototype 2.6G2.8D1 -- geometric same-visual-line test. Added because a real live trace
+ * (2.6G2.8C) proved the DOM-structural `<br>` check `extractWithinLine` (PdfViewer.tsx) used
+ * alone is not reliable: an italic variable ("k") with no DOM text-node representation at all
+ * left pdf.js without a `<br>` at that line's true end either, so a forward walk silently
+ * continued onto the next visual line. This function is the general, glyph-independent
+ * geometric line-boundary check added alongside (never replacing) the `<br>` check.
+ */
+function vext(top: number, bottom: number, fontSize = 12): VerticalExtent {
+  return { top, bottom, fontSize }
+}
+
+describe('Prototype 2.6G2.8D1 -- isSameVisualLine', () => {
+  it('two segments with identical vertical extent are the same line', () => {
+    expect(isSameVisualLine(vext(100, 116), vext(100, 116))).toBe(true)
+  })
+
+  it('ordinary sub-pixel line-height jitter within one line stays the same line', () => {
+    expect(isSameVisualLine(vext(100, 116), vext(101, 117))).toBe(true)
+  })
+
+  it('a superscript/subscript baseline shift within the same line is still the same line', () => {
+    // A ~30% font-size vertical shift (typical superscript offset), well under the tolerance.
+    expect(isSameVisualLine(vext(100, 116), vext(96, 112))).toBe(true)
+  })
+
+  it('a genuinely adjacent visual line (about one line-height apart) is a different line', () => {
+    // fontSize 12, line box 16 tall -- the next line's box starts about a full line-height
+    // below, e.g. centered around 118 vs this line's center at 108.
+    expect(isSameVisualLine(vext(100, 116, 12), vext(118, 134, 12))).toBe(false)
+  })
+
+  it('scales with font size, not a fixed pixel number -- the same absolute gap flips at a different size', () => {
+    // A 10px center-to-center gap is within tolerance at fontSize 30 (0.5*30=15)...
+    expect(isSameVisualLine(vext(100, 130, 30), vext(110, 140, 30))).toBe(true)
+    // ...but the SAME 10px gap is a different line at a much smaller font size (0.5*8=4).
+    expect(isSameVisualLine(vext(100, 108, 8), vext(110, 118, 8))).toBe(false)
+  })
+
+  it('is symmetric -- order of reference/candidate never changes the result', () => {
+    const a = vext(100, 116)
+    const b = vext(140, 156)
+    expect(isSameVisualLine(a, b)).toBe(isSameVisualLine(b, a))
+  })
+
+  it('regression: the exact traced shape -- a missing-glyph gap must not bridge two real lines', () => {
+    // Modeling the real 2.6G2.8C trace geometry class: line 0 ("In the case of lower") and
+    // line 1 ("values, the denominator is increased and") are on two different visual lines
+    // despite the invisible "k" glyph between them having no DOM node of its own to stop at.
+    const line0 = vext(300, 316, 12)
+    const line1 = vext(318, 334, 12) // next line, ~one line-height below
+    expect(isSameVisualLine(line0, line1)).toBe(false)
   })
 })

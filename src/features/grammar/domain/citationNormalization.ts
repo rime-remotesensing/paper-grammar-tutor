@@ -17,10 +17,19 @@
  * whitespace character, so removal never leaves double spaces or a dangling leading space
  * before trailing punctuation (item 7/19).
  */
+import { collapseInternalSpaces, removeMatches, type Projection } from './textProjection.ts'
 
 const CITATION_TOKEN = '\\[\\d{1,4}\\]'
 const CITATION_CONNECTOR = '(?:\\s*[\\u2013-]\\s*|\\s*,\\s*)' // en dash (–) or hyphen for ranges; comma for lists
-const CITATION_SEQUENCE_SOURCE = `${CITATION_TOKEN}(?:${CITATION_CONNECTOR}${CITATION_TOKEN})*`
+// Prototype 2.6G2.8A: a citation list/range can also be written as ONE bracket containing
+// multiple numbers joined internally by a dash/en dash (range, "[3-6]"/"[3–6]") or comma
+// (list, "[5, 7]") -- distinct from the sequence-of-separate-brackets shape above
+// ("[5], [7]"), which papers also use. Requires at least two numbers so this never
+// re-matches a plain "[9]" a second way, and "\d{1,4}" on both sides of the connector keeps
+// a malformed lookalike like "[1-foo]" unmatched (item 30's own existing negative control).
+const CITATION_LIST_TOKEN = `\\[\\d{1,4}(?:${CITATION_CONNECTOR}\\d{1,4})+\\]`
+const CITATION_UNIT = `(?:${CITATION_LIST_TOKEN}|${CITATION_TOKEN})`
+const CITATION_SEQUENCE_SOURCE = `${CITATION_UNIT}(?:${CITATION_CONNECTOR}${CITATION_UNIT})*`
 
 /** "...as a moderator [9] for..." -> "...as a moderator for..."
  *  "...areas [1]–[3], [9], [11] and..." -> "...areas and..." */
@@ -36,4 +45,20 @@ export function removeCitationMarkersForAnalysis(text: string): string {
   // (e.g. two adjacent, independently-removed citation groups).
   result = result.replace(/[ \t]{2,}/g, ' ')
   return result.trim()
+}
+
+/**
+ * Prototype 2.6G2.8E — `Projection`-carrying twin of `removeCitationMarkersForAnalysis`,
+ * mirroring its exact same three-step regex sequence (space-preceded removal, start-anchored
+ * removal, double-space collapse -- `.trim()` is intentionally NOT applied here; the shared
+ * pipeline in grammarInputNormalization.ts trims once, at the very end, after every step).
+ * Reuses the SAME `CITATION_SEQUENCE_SOURCE` pattern so the two functions can never drift
+ * apart -- this is not a reimplementation of the citation rule, only of how its removal is
+ * recorded against the source mapping.
+ */
+export function removeCitationMarkersFromProjection(input: Projection): Projection {
+  let result = removeMatches(input, new RegExp(`\\s+(?:${CITATION_SEQUENCE_SOURCE})`, 'g'))
+  result = removeMatches(result, new RegExp(`^(?:${CITATION_SEQUENCE_SOURCE})\\s*`, 'g'))
+  result = collapseInternalSpaces(result)
+  return result
 }

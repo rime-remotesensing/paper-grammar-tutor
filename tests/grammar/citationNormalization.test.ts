@@ -102,3 +102,52 @@ describe('removeCitationMarkersForAnalysis', () => {
     expect(removeCitationMarkersForAnalysis(text)).toBe(text)
   })
 })
+
+/**
+ * Prototype 2.6G2.8A: a single bracket containing multiple numbers ("[5, 7]", "[3-6]",
+ * "[3–6]") is a different, also-common citation shape from the sequence-of-separate-brackets
+ * form above ("[5], [7]") -- both are numeric bibliographic citations and must both be
+ * stripped for analysis while leaving the source display untouched (that remains App.tsx's
+ * responsibility; this module only ever produces the analysis-facing string).
+ */
+describe('removeCitationMarkersForAnalysis -- single-bracket list/range citations', () => {
+  it('removes a single-bracket comma list "[5, 7]"', () => {
+    expect(removeCitationMarkersForAnalysis('The method [5, 7] was applied.')).toBe('The method was applied.')
+  })
+
+  it('removes a single-bracket hyphen range "[3-6]"', () => {
+    expect(removeCitationMarkersForAnalysis('The method [3-6] was applied.')).toBe('The method was applied.')
+  })
+
+  it('removes a single-bracket en-dash range "[3–6]"', () => {
+    expect(removeCitationMarkersForAnalysis('The method [3–6] was applied.')).toBe('The method was applied.')
+  })
+
+  it('removes a single-bracket list with three or more numbers "[5, 7, 9]"', () => {
+    expect(removeCitationMarkersForAnalysis('reported widely [5, 7, 9] in the literature.')).toBe('reported widely in the literature.')
+  })
+
+  it('handles a single-bracket list adjacent to a coordinated constituent', () => {
+    expect(removeCitationMarkersForAnalysis('temperature and pressure [5, 7] were measured.')).toBe('temperature and pressure were measured.')
+  })
+
+  it('handles a single-bracket list adjacent to a supplement/parenthetical', () => {
+    expect(removeCitationMarkersForAnalysis('the correction factor (see Table 2) [5, 7] was applied.')).toBe(
+      'the correction factor (see Table 2) was applied.',
+    )
+  })
+
+  it('still does not remove the malformed lookalike "[1-foo]" (mixed digit/non-digit)', () => {
+    const text = 'unclear reference [1-foo] here'
+    expect(removeCitationMarkersForAnalysis(text)).toBe(text)
+  })
+
+  it('does not collide with the equation placeholder forms', () => {
+    const text = 'reported widely [5, 7] as [式 (5)]'
+    expect(removeCitationMarkersForAnalysis(text)).toBe('reported widely as [式 (5)]')
+  })
+
+  it('combines with a separate-bracket sequence on the same sentence', () => {
+    expect(removeCitationMarkersForAnalysis('as shown [5, 7], [11] previously.')).toBe('as shown previously.')
+  })
+})

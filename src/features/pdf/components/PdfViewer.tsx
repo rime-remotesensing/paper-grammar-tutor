@@ -21,7 +21,7 @@ import {
   type PointerPoint,
 } from '../domain/pdfViewerState'
 import { normalizePdfSelectionText } from '../utils/pdfTextNormalize'
-import { joinTextSegments, type TextSegment } from '../domain/sameLineTextReconstruction'
+import { isSameVisualLine, joinTextSegments, type TextSegment } from '../domain/sameLineTextReconstruction'
 import { extractPageLines, classifyPageLines, type PageLine, type RawTextItem } from '../domain/pageTextClassifier'
 import { buildFilteredFragmentText, buildNuisancePredicate, combineFragments, type SelectionFragment } from '../domain/crossPageSelection'
 import {
@@ -32,6 +32,8 @@ import {
   type SelectionEndpointInput,
 } from '../domain/pymupdfLayoutService'
 import { createRequestGuard } from '../../ocr/domain/requestGuard'
+import { selectCurrentPageByScroll, type PageGeometry } from '../domain/currentPageTracking.ts'
+import { computeFitWidthScale, type ZoomMode } from '../domain/fitWidthScale.ts'
 import { PdfPageView } from './PdfPageView'
 
 /**
@@ -187,13 +189,23 @@ function normalizedPointOfBoundary(node: Node, offset: number, canvasRect: DOMRe
  * bounding box, in CSS pixels) plus a representative font-size measure -- the sole input
  * `joinTextSegments` needs to decide whether a gap between two adjacent DOM segments is a
  * genuine word boundary. Falls back to the rect's own height when computed font-size isn't
- * available (e.g. in a non-browser test environment), never a fixed pixel guess. */
-function segmentGeometry(node: Text): { left: number; right: number; fontSize: number } {
+ * available (e.g. in a non-browser test environment), never a fixed pixel guess.
+ * Prototype 2.6G2.8D1: also includes `top`/`bottom` -- unused by `joinTextSegments` itself,
+ * but `extractWithinLine`'s own geometric same-line check (`isSameVisualLine`) needs a
+ * segment's vertical extent, and this is the one place in this file that already reads a
+ * text node's rect, so it is exposed here rather than duplicating the DOM read elsewhere. */
+function segmentGeometry(node: Text): { left: number; right: number; top: number; bottom: number; fontSize: number } {
   const el = node.parentElement
   const rect = el?.getBoundingClientRect()
-  if (!rect) return { left: 0, right: 0, fontSize: 0 }
+  if (!rect) return { left: 0, right: 0, top: 0, bottom: 0, fontSize: 0 }
   const computed = el && typeof getComputedStyle === 'function' ? parseFloat(getComputedStyle(el).fontSize) : NaN
-  return { left: rect.left, right: rect.right, fontSize: Number.isFinite(computed) && computed > 0 ? computed : rect.height }
+  return {
+    left: rect.left,
+    right: rect.right,
+    top: rect.top,
+    bottom: rect.bottom,
+    fontSize: Number.isFinite(computed) && computed > 0 ? computed : rect.height,
+  }
 }
 
 /**
@@ -232,6 +244,18 @@ function reconstructRangeText(range: Range, layer: HTMLElement): string {
  * direction — a small, local DOM operation, not a page-wide sweep. Every other included
  * line in a multi-page/multi-column selection comes from the geometric line model's own
  * text instead (never from this function or from DOM traversal).
+ *
+ * Prototype 2.6G2.8D1 root-cause fix: the `<br>` check alone is not reliable. Live-traced
+ * (2.6G2.8C) real failure: an italic variable ("k") with literally no DOM text-node
+ * representation at all also left pdf.js without a `<br>` at that visual line's true end (its
+ * own internal text-item merging saw no boundary there), so the DOM walk silently continued
+ * onto the NEXT visual line's own text nodes -- producing a boundary string that already
+ * contained two lines' worth of text with the missing glyph's position simply skipped. Now
+ * ALSO checks each candidate segment's own rendered geometry against the starting segment's
+ * (`isSameVisualLine`, sameLineTextReconstruction.ts) and stops the walk the moment a
+ * candidate fails that check, exactly like hitting a `<br>` -- independent of which glyph (if
+ * any) is missing, so this generalizes to α/β/x/T/R²/any other extraction-invisible glyph,
+ * never a special case for "k".
  */
 function extractWithinLine(layer: HTMLElement, node: Text, offset: number, direction: 'forward' | 'backward'): string {
   const walker = document.createTreeWalker(layer, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT, {
@@ -246,14 +270,18 @@ function extractWithinLine(layer: HTMLElement, node: Text, offset: number, direc
   const nodeIndex = flatNodes.indexOf(node)
   if (nodeIndex === -1) return node.textContent ?? ''
 
+  const lineReference = segmentGeometry(node)
+
   if (direction === 'forward') {
     const nodeText = node.textContent ?? ''
     const firstText = sliceBetweenCaretOffsets(nodeText, offset, nodeText.length)
-    const segments: TextSegment[] = [{ text: firstText, ...segmentGeometry(node) }]
+    const segments: TextSegment[] = [{ text: firstText, ...lineReference }]
     for (let i = nodeIndex + 1; i < flatNodes.length; i++) {
       const cur = flatNodes[i]
       if (cur.nodeType === Node.ELEMENT_NODE) break
-      segments.push({ text: cur.textContent ?? '', ...segmentGeometry(cur as Text) })
+      const geometry = segmentGeometry(cur as Text)
+      if (!isSameVisualLine(lineReference, geometry)) break
+      segments.push({ text: cur.textContent ?? '', ...geometry })
     }
     return joinTextSegments(segments)
   }
@@ -261,9 +289,11 @@ function extractWithinLine(layer: HTMLElement, node: Text, offset: number, direc
   for (let i = nodeIndex - 1; i >= 0; i--) {
     const cur = flatNodes[i]
     if (cur.nodeType === Node.ELEMENT_NODE) break
-    segments.unshift({ text: cur.textContent ?? '', ...segmentGeometry(cur as Text) })
+    const geometry = segmentGeometry(cur as Text)
+    if (!isSameVisualLine(lineReference, geometry)) break
+    segments.unshift({ text: cur.textContent ?? '', ...geometry })
   }
-  segments.push({ text: sliceBetweenCaretOffsets(node.textContent ?? '', 0, offset), ...segmentGeometry(node) })
+  segments.push({ text: sliceBetweenCaretOffsets(node.textContent ?? '', 0, offset), ...lineReference })
   return joinTextSegments(segments)
 }
 
@@ -319,9 +349,30 @@ export const PdfViewer = forwardRef<PdfViewerHandle, PdfViewerProps>(function Pd
   // academic PDFs are overwhelmingly one uniform page size, so this avoids fetching every
   // page's real geometry up front just for placeholder sizing -- item 68).
   const [estimatedPageSize, setEstimatedPageSize] = useState({ width: 600, height: 800 })
+  // Prototype 2.6G2.7C part B: a newly-loaded PDF defaults to FIT_WIDTH (scale derived from
+  // the pane's own measured width) instead of a fixed default the user has to zoom out/in
+  // from by hand every time. Switches to MANUAL the moment the user clicks 縮小/拡大, and
+  // stays MANUAL across ordinary resizes until 幅に合わせる is clicked again.
+  const [zoomMode, setZoomMode] = useState<ZoomMode>('fit-width')
+  const zoomModeRef = useRef<ZoomMode>('fit-width')
+  useEffect(() => {
+    zoomModeRef.current = zoomMode
+  }, [zoomMode])
+  // The current document's first page viewport at scale 1 -- the fixed reference fit-width
+  // is computed against; independent of whatever `scale` happens to be right now.
+  const basePageSizeRef = useRef<{ width: number; height: number } | null>(null)
 
   const pageLinesCacheRef = useRef<Map<number, Promise<PageLine[]>>>(new Map())
+  // `.pdf-scroll-container` (this ref) is a plain flex column with NO overflow of its own --
+  // it exists purely as the page-content wrapper the mouse-selection code queries
+  // (pageContainerOf/.closest('[data-page-number]')/etc.), which only need DOM-tree lookups,
+  // never scroll-position math, so this ref is fine for that purpose. The element that
+  // ACTUALLY scrolls is its parent, `.pdf-canvas-area` (`overflow: auto; max-height: 75vh` in
+  // App.css) -- see `scrollViewportRef` below, which every current-page/fit-width geometry
+  // read must use instead (Prototype 2.6G2.7D root-cause fix; see the doc comment on
+  // `recomputeCurrentPage`).
   const scrollContainerRef = useRef<HTMLDivElement>(null)
+  const scrollViewportRef = useRef<HTMLDivElement>(null)
   const dragStartPointRef = useRef<PointerPoint | null>(null)
   const docRef = useRef<PDFDocumentProxy | null>(null)
   useEffect(() => {
@@ -405,6 +456,11 @@ export const PdfViewer = forwardRef<PdfViewerHandle, PdfViewerProps>(function Pd
       setErrorMessage(null)
       setStatus('loading')
       pageLinesCacheRef.current = new Map()
+      // B2: every newly-loaded document starts in FIT_WIDTH -- never carries over a
+      // previous document's MANUAL choice.
+      setZoomMode('fit-width')
+      zoomModeRef.current = 'fit-width'
+      basePageSizeRef.current = null
 
       // Item 55: release the previous document's layout-service handle before registering
       // the new one -- never left registered indefinitely across a file change.
@@ -448,6 +504,11 @@ export const PdfViewer = forwardRef<PdfViewerHandle, PdfViewerProps>(function Pd
         const firstPage = await pdf.getPage(1)
         const firstViewport = firstPage.getViewport({ scale: initial.scale })
         setEstimatedPageSize({ width: firstViewport.width, height: firstViewport.height })
+        // B1: the fixed scale-1 reference `computeFitWidthScale` measures fit against --
+        // independent of `initial.scale`, which is only a provisional placeholder size until
+        // the fit-width effect (below) measures the actual pane width and corrects it.
+        const baseViewport = firstPage.getViewport({ scale: 1 })
+        basePageSizeRef.current = { width: baseViewport.width, height: baseViewport.height }
 
         setDoc(pdf)
         setNumPages(pdf.numPages)
@@ -460,45 +521,111 @@ export const PdfViewer = forwardRef<PdfViewerHandle, PdfViewerProps>(function Pd
     [onDocumentChange],
   )
 
-  // Prototype 2.4B item 16: tracks whichever rendered page is nearest the viewport center
-  // as "current", for the page indicator -- driven by the same scroll container every page
-  // is mounted in, independent of which pages have actually rendered yet.
+  // Prototype 2.6G2.7D root cause: `recomputeCurrentPage`/`applyFitWidthScale`/the scroll
+  // listener had been reading scrollTop/clientHeight/clientWidth from `scrollContainerRef`
+  // (`.pdf-scroll-container`) in every prior attempt (2.7A/B/C) -- but that element has NO
+  // `overflow` of its own (confirmed in App.css: only `.pdf-canvas-area`, its PARENT, has
+  // `overflow: auto`). A non-scrolling element's `scrollTop` is always 0 by construction (a
+  // browser only tracks scroll offset for an element that actually clips its content), and
+  // its `clientHeight` equals its own full un-clipped content height -- the sum of every
+  // page's height, not the visible ~75vh window. This made `viewportCenter = scrollTop +
+  // clientHeight/2` a CONSTANT equal to roughly half the entire document's height, regardless
+  // of actual scroll position -- for a uniform 29-page document that constant lands almost
+  // exactly on page 14-15, exactly matching the live "stuck near the middle page" symptom
+  // seen across all three prior attempts. The `'scroll'` event itself also never fires on a
+  // non-scrolling element, so nothing ever corrected it. (The same wrong-root mistake, on
+  // this same element, is also why 2.7A/B's IntersectionObserver-based versions failed: an IO
+  // `root` with no clipping of its own children reports every target as always-intersecting.)
+  // `scrollViewportRef` (`.pdf-canvas-area`) is the actual scrolling ancestor and is now the
+  // sole source for every scroll/viewport measurement below; `scrollContainerRef` remains the
+  // content wrapper used only for DOM-tree lookups elsewhere in this file (mouse selection),
+  // which never needed scroll-position math and are unaffected by this fix.
+  const recomputeCurrentPage = useCallback(() => {
+    const viewport = scrollViewportRef.current
+    if (!viewport) return
+    const viewportRect = viewport.getBoundingClientRect()
+    const pages: PageGeometry[] = []
+    for (const el of viewport.querySelectorAll<HTMLElement>('[data-page-number]')) {
+      const attr = el.getAttribute('data-page-number')
+      if (!attr) continue
+      const rect = el.getBoundingClientRect()
+      pages.push({
+        pageNumber: Number(attr),
+        // Content-coordinate top, directly comparable to `scrollTop` regardless of current
+        // scroll position -- A5: never a cached viewport rect.
+        offsetTop: rect.top - viewportRect.top + viewport.scrollTop,
+        offsetHeight: rect.height,
+      })
+    }
+    const selected = selectCurrentPageByScroll(pages, viewport.scrollTop, viewport.clientHeight)
+    if (selected !== null) setCurrentPageNumber(selected)
+  }, [])
+
+  // B1-B3: recomputes and applies the FIT_WIDTH scale from the pane's current measured width
+  // and the document's own scale-1 base page width -- never a magic fixed percentage. A no-op
+  // whenever zoom mode is MANUAL (unless `force`, used by the 幅に合わせる button itself) --
+  // B4: an ordinary container resize must never silently override a manual zoom choice.
+  const applyFitWidthScale = useCallback((force = false) => {
+    if (!force && zoomModeRef.current !== 'fit-width') return
+    const viewport = scrollViewportRef.current
+    const baseSize = basePageSizeRef.current
+    if (!viewport || !baseSize) return
+    const fitScale = computeFitWidthScale(viewport.clientWidth, baseSize.width, PDF_MIN_SCALE, PDF_MAX_SCALE)
+    setScale(fitScale)
+    setEstimatedPageSize({ width: baseSize.width * fitScale, height: baseSize.height * fitScale })
+  }, [])
+
+  // A2/A3: scroll-driven, requestAnimationFrame-throttled (at most one pending measurement
+  // per frame, never uncontrolled per-scroll-event work) recomputation, plus a ResizeObserver
+  // on the actual scrolling viewport so a layout-mode switch, window resize, or auto-layout
+  // transition also re-measures (A8) -- and, while in FIT_WIDTH mode, also re-fits the scale
+  // (B3). Re-created (and cleanly torn down first) whenever a new document loads (A5/A9: no
+  // stale observer/listener can survive into a new document).
   useEffect(() => {
-    const container = scrollContainerRef.current
-    if (!container || status !== 'ready') return
-    const observer = new IntersectionObserver(
-      (entries) => {
-        const visible = entries.filter((e) => e.isIntersecting)
-        if (visible.length === 0) return
-        // Nearest to vertical center of the viewport wins.
-        const containerRect = container.getBoundingClientRect()
-        const centerY = containerRect.top + containerRect.height / 2
-        let best: { pageNumber: number; distance: number } | null = null
-        for (const entry of visible) {
-          const attr = entry.target.getAttribute('data-page-number')
-          if (!attr) continue
-          const rect = entry.boundingClientRect
-          const distance = Math.abs((rect.top + rect.bottom) / 2 - centerY)
-          if (best === null || distance < best.distance) best = { pageNumber: Number(attr), distance }
-        }
-        if (best) setCurrentPageNumber(best.pageNumber)
-      },
-      { root: container, threshold: [0, 0.25, 0.5, 0.75, 1] },
-    )
-    for (const el of container.querySelectorAll('[data-page-number]')) observer.observe(el)
-    return () => observer.disconnect()
-  }, [status, numPages])
+    const viewport = scrollViewportRef.current
+    if (!viewport || status !== 'ready') return
+
+    let rafId: number | null = null
+    const scheduleRecompute = (alsoRefit: boolean) => {
+      if (rafId !== null) return
+      rafId = requestAnimationFrame(() => {
+        rafId = null
+        if (alsoRefit) applyFitWidthScale()
+        recomputeCurrentPage()
+      })
+    }
+
+    // A6: run once immediately after this document's page wrappers have their first layout
+    // (this effect runs after commit, i.e. after the DOM has the real wrapper boxes) --
+    // establishes fit-width scale and confirms page 1 as current without waiting for a
+    // scroll/resize event.
+    scheduleRecompute(true)
+
+    const handleScroll = () => scheduleRecompute(false)
+    viewport.addEventListener('scroll', handleScroll, { passive: true })
+
+    const resizeObserver = new ResizeObserver(() => scheduleRecompute(true))
+    resizeObserver.observe(viewport)
+
+    return () => {
+      if (rafId !== null) cancelAnimationFrame(rafId)
+      viewport.removeEventListener('scroll', handleScroll)
+      resizeObserver.disconnect()
+    }
+  }, [status, numPages, applyFitWidthScale, recomputeCurrentPage])
+
+  // A8/B8: a zoom-mode change (manual 縮小/拡大, or 幅に合わせる) changes every page's
+  // rendered geometry once PdfPageView re-renders at the new scale -- re-measure current page
+  // afterward, on the next frame (after the DOM has committed the resulting layout).
+  useEffect(() => {
+    if (status !== 'ready') return
+    const raf = requestAnimationFrame(() => recomputeCurrentPage())
+    return () => cancelAnimationFrame(raf)
+  }, [scale, status, recomputeCurrentPage])
 
   useEffect(() => {
     if (doc) onPageChange?.(currentPageNumber, numPages)
   }, [doc, currentPageNumber, numPages, onPageChange])
-
-  const scrollToPage = useCallback((pageNumber: number) => {
-    const container = scrollContainerRef.current
-    if (!container) return
-    const target = pageContainerOf(pageNumber, container)
-    target?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-  }, [])
 
   const handleMeasured = useCallback((_pageNumber: number, _width: number, _height: number) => {
     // Reserved for a future per-page geometry cache; PdfPageView already keeps its own
@@ -777,22 +904,20 @@ export const PdfViewer = forwardRef<PdfViewerHandle, PdfViewerProps>(function Pd
         />
         {status === 'ready' && (
           <>
-            <button type="button" onClick={() => scrollToPage(Math.max(1, currentPageNumber - 1))} disabled={currentPageNumber <= 1}>
-              前へ
-            </button>
+            {/* Prototype 2.6G2.7A item 2: 前へ/次へ removed now that reading is continuous-
+                scroll -- the indicator below is purely observational (IntersectionObserver-
+                driven, see the effect above) and updates automatically as the reader
+                scrolls; it is no longer a navigation control, so it never needs a
+                disabled/boundary state of its own. */}
             <span className="pdf-page-indicator">
               {currentPageNumber} / {numPages}
             </span>
             <button
               type="button"
-              onClick={() => scrollToPage(Math.min(numPages, currentPageNumber + 1))}
-              disabled={currentPageNumber >= numPages}
-            >
-              次へ
-            </button>
-            <button
-              type="button"
-              onClick={() => setScale((s) => Math.max(PDF_MIN_SCALE, Number((s - PDF_SCALE_STEP).toFixed(2))))}
+              onClick={() => {
+                setZoomMode('manual')
+                setScale((s) => Math.max(PDF_MIN_SCALE, Number((s - PDF_SCALE_STEP).toFixed(2))))
+              }}
               disabled={scale <= PDF_MIN_SCALE}
             >
               縮小
@@ -800,16 +925,32 @@ export const PdfViewer = forwardRef<PdfViewerHandle, PdfViewerProps>(function Pd
             <span className="pdf-page-indicator">{Math.round(scale * 100)}%</span>
             <button
               type="button"
-              onClick={() => setScale((s) => Math.min(PDF_MAX_SCALE, Number((s + PDF_SCALE_STEP).toFixed(2))))}
+              onClick={() => {
+                setZoomMode('manual')
+                setScale((s) => Math.min(PDF_MAX_SCALE, Number((s + PDF_SCALE_STEP).toFixed(2))))
+              }}
               disabled={scale >= PDF_MAX_SCALE}
             >
               拡大
+            </button>
+            {/* B5: returns from a manual zoom back to FIT_WIDTH and immediately recomputes --
+                `force: true` since zoomModeRef hasn't been updated to 'fit-width' yet at the
+                moment this click handler runs (the setZoomMode call below is async/batched). */}
+            <button
+              type="button"
+              onClick={() => {
+                setZoomMode('fit-width')
+                applyFitWidthScale(true)
+              }}
+              disabled={zoomMode === 'fit-width'}
+            >
+              幅に合わせる
             </button>
           </>
         )}
       </div>
 
-      <div className="pdf-canvas-area">
+      <div className="pdf-canvas-area" ref={scrollViewportRef}>
         {status === 'idle' && <p className="empty-note">PDFファイルを選択してください。</p>}
         {status === 'loading' && <p className="empty-note">読み込み中…</p>}
         {status === 'error' && (

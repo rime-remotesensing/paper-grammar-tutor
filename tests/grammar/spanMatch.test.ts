@@ -44,15 +44,15 @@ describe('resolveSpan', () => {
     expect(withEquation.slice(result.start, result.end)).toBe('as [EQUATION_5]')
   })
 
-  it('Prototype 2.5H item 32/12: resolves spans against the citation-free NORMALIZED analysis text, never raw source offsets', () => {
+  it('Prototype 2.5H item 32/12 (updated 2.6G2.8A): resolves spans against the citation-free, equation-shielded NORMALIZED analysis text, never raw source offsets', () => {
     const source = 'The value of k can then be used as a moderator [9] for the cosine equation, as [式 (5)]'
     const analysisText = normalizeSentenceForGrammarAnalysis(source)
-    expect(analysisText).toBe('The value of k can then be used as a moderator for the cosine equation, as [EQUATION_5]')
-    // A span the LLM reports (e.g. the object/adverbial "as [EQUATION_5]") must resolve
+    expect(analysisText).toBe('The value of k can then be used as a moderator for the cosine equation, as the formula.')
+    // A span the LLM reports (e.g. the object/adverbial "as the formula") must resolve
     // against THIS normalized text -- its offsets would be meaningless against `source`,
-    // which still contains "[9]" and has different character positions entirely.
-    const result = resolveSpan(analysisText, { text: 'as [EQUATION_5]', start: 0, end: 0 })
+    // which still contains "[9]"/"[式 (5)]" and has entirely different character positions.
+    const result = resolveSpan(analysisText, { text: 'as the formula', start: 0, end: 0 })
     expect(result.resolved).toBe(true)
-    expect(analysisText.slice(result.start, result.end)).toBe('as [EQUATION_5]')
+    expect(analysisText.slice(result.start, result.end)).toBe('as the formula')
   })
 })

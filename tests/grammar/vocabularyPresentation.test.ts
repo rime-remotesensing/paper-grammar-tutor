@@ -200,3 +200,24 @@ describe('grounded contextual vocabulary', () => {
     expect(findVocabularyForTreeNode({ start: 5, end: 6 }, grounded)).toEqual([])
   })
 })
+
+describe('Prototype 2.6G2.8M2.2a Track B -- synthetic math token exclusion (item 9)', () => {
+  it('excludes a vocabulary entry that grounds entirely inside a MATH_EXPR synthetic run', async () => {
+    const { shieldRelationalMathRuns } = await import('../../src/features/grammar/domain/mathRunProjection')
+    const { projectionFromSource } = await import('../../src/features/grammar/domain/textProjection')
+    const source = 'the result was k = 0.5 in this case.'
+    const projection = shieldRelationalMathRuns(projectionFromSource(source), source)
+    const items = [{ word: 'MATH_EXPR', contextualMeaning: '数学式', partOfSpeech: 'noun' as const }]
+    const grounded = groundVocabularyForDisplay(items, projection.text, projection)
+    expect(grounded).toEqual([])
+  })
+
+  it('keeps an ordinary vocabulary entry unaffected when projection has no synthetic runs at all', () => {
+    const grounded = groundVocabularyForDisplay(
+      [{ word: 'alpha', contextualMeaning: 'A', partOfSpeech: 'noun' as const }],
+      'alpha beta gamma',
+      undefined,
+    )
+    expect(grounded.map(({ word }) => word)).toEqual(['alpha'])
+  })
+})

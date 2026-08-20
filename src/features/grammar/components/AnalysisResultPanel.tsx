@@ -22,8 +22,10 @@ import type { StructureTreeNode } from '../domain/structureTree'
 import { structureTreeNodeKey, structureTreeNodeSpan } from '../domain/treeReadingMatching'
 import { activeTreeNodeKey, EMPTY_TREE_READING_INTERACTION, reduceTreeReadingInteraction } from '../domain/treeReadingInteraction'
 import { findVocabularyForTreeNode, groundVocabularyForDisplay, vocabularyPartOfSpeechLabel } from '../domain/vocabularyPresentation'
+import { restoreMathRunsInStructureTree } from '../domain/mathRunPresentation'
 import { prepareExpressionsForDisplay } from '../domain/expressionPresentation'
-import { buildSourceHighlightSegments } from '../domain/sourceSentenceHighlight'
+import { projectAnalysisSpanToSourceHighlight } from '../domain/sourceSentenceHighlight'
+import type { Projection } from '../domain/textProjection'
 import { deriveTreeReadingTargets, findTreeReadingTargetForNode } from '../domain/treeReadingTargets'
 import { isStructureTreeSuppliedByStanza, shouldShowPredicateStructureFailureWarning } from '../domain/structureFailurePresentation'
 import type {
@@ -35,6 +37,23 @@ import type {
 
 interface AnalysisResultPanelProps {
   result: VerifiedSentenceAnalysisWithSyntaxAuthority
+  /** Prototype 2.6G2.8B item 17: the true selected/typed source sentence (citations, equation
+   * placeholders, and every scientific glyph intact) at the moment this result was produced --
+   * distinct from `result.analysis.originalText`, the internal Stanza-facing projection. The
+   * "英文" panel below displays THIS, never the projection. */
+  sourceText: string
+  /** Prototype 2.6G2.8E: the exact source->analysis character mapping captured at the same
+   * moment as `sourceText`/`result` -- the authority for projecting an active Tree span back
+   * to its true, exact source range (see sourceSentenceHighlight.ts's
+   * projectAnalysisSpanToSourceHighlight). Text search is no longer used for this. */
+  projection: Projection
+  /** Prototype 2.6G2.8M2.2c -- source-faithful text for ReadingGuide/Ollama ONLY (citation
+   * removal + equation-placeholder renaming + display-equation shielding, deliberately
+   * WITHOUT the final math-run shielding step Stanza needs) -- see
+   * grammarInputNormalization.ts's normalizeSentenceForReadingGuide. MATH_EXPR is a Stanza
+   * syntax-shielding token; it must never leak into the ReadingGuide/Ollama prompt or its
+   * generated output. */
+  readingGuideText: string
   provider: LLMProvider
   model: string | null
 }
@@ -81,7 +100,7 @@ function findTreeNode(nodes: readonly StructureTreeNode[], key: string): Structu
   return null
 }
 
-export function AnalysisResultPanel({ result, provider, model }: AnalysisResultPanelProps) {
+export function AnalysisResultPanel({ result, sourceText, projection, readingGuideText, provider, model }: AnalysisResultPanelProps) {
   const { meta, analysis, rawCore, effectiveCore, effectiveCoreSet, verification, coreRepair } = result
   const { syntaxAuthority, stanzaTokens } = result
   const [userNote, setUserNote] = useState('')
@@ -220,14 +239,16 @@ export function AnalysisResultPanel({ result, provider, model }: AnalysisResultP
     setRelations(nextRelations)
 
     const targets = deriveTreeReadingTargets(
-      buildFinalTree(nextStructure, nextRelations),
+      restoreMathRunsInStructureTree(buildFinalTree(nextStructure, nextRelations), projection, sourceText),
       analysis.normalizedText,
+      projection,
+      sourceText,
     )
     try {
       const outcome = await getReadingGuide({
         provider,
         model,
-        originalText: analysis.normalizedText,
+        originalText: readingGuideText,
         sentenceCore: core,
         targets,
         temperature: DEFAULT_TEMPERATURE,
@@ -253,11 +274,13 @@ export function AnalysisResultPanel({ result, provider, model }: AnalysisResultP
       const outcome = await getReadingGuide({
         provider,
         model,
-        originalText: analysis.normalizedText,
+        originalText: readingGuideText,
         sentenceCore: core,
         targets: deriveTreeReadingTargets(
-          buildFinalTree(structureStatus === 'success' ? structure : null, relations),
+          restoreMathRunsInStructureTree(buildFinalTree(structureStatus === 'success' ? structure : null, relations), projection, sourceText),
           analysis.normalizedText,
+          projection,
+          sourceText,
         ),
         temperature: DEFAULT_TEMPERATURE,
       })
@@ -315,14 +338,16 @@ export function AnalysisResultPanel({ result, provider, model }: AnalysisResultP
     }
 
     const targets = deriveTreeReadingTargets(
-      buildFinalTree(repairedStructure, relations),
+      restoreMathRunsInStructureTree(buildFinalTree(repairedStructure, relations), projection, sourceText),
       analysis.normalizedText,
+      projection,
+      sourceText,
     )
     try {
       const readingOutcome = await getReadingGuide({
         provider,
         model,
-        originalText: analysis.normalizedText,
+        originalText: readingGuideText,
         sentenceCore: core,
         targets,
         temperature: DEFAULT_TEMPERATURE,
@@ -367,7 +392,13 @@ export function AnalysisResultPanel({ result, provider, model }: AnalysisResultP
   // this to the raw-SVO case (rawCore never even had a complement candidate, so the
   // Verifier was correctly never called at all) via the same conservative comma+-ing
   // surface signal, applied to the hybrid predicate directly — see supplementSpanResolution.ts.
-  const tree = buildFinalTree(structureStatus === 'success' ? structure : null, relations)
+  const rawTree = buildFinalTree(structureStatus === 'success' ? structure : null, relations)
+  // Prototype 2.6G2.8M2.2a Track B: restores every text-bearing field of the tree so the
+  // internal "MATH_EXPR" Stanza-shielding token (mathRunProjection.ts) can never be shown to
+  // the user -- applied ONCE, here, before anything downstream (reading targets, vocabulary
+  // matching, node rendering) ever sees the tree. `.start`/`.end` are untouched, so every
+  // offset-based consumer below (activeSpan, source highlighting) is unaffected.
+  const tree = restoreMathRunsInStructureTree(rawTree, projection, sourceText)
 
   // Prototype 2.6G2-D2: on the Stanza authority path, `tree` above is built directly from
   // Stanza (buildFinalTree's own early-return, unconditional on `structure`/`structureStatus`)
@@ -382,15 +413,21 @@ export function AnalysisResultPanel({ result, provider, model }: AnalysisResultP
   const activeKey = activeTreeNodeKey(treeInteraction)
   const activeNode = activeKey ? findTreeNode(tree, activeKey) : null
   const activeSpan = activeNode ? structureTreeNodeSpan(activeNode) : null
-  const readingTargets = deriveTreeReadingTargets(tree, analysis.normalizedText)
+  const readingTargets = deriveTreeReadingTargets(tree, analysis.normalizedText, projection, sourceText)
   const activeReadingTarget = findTreeReadingTargetForNode(activeNode, readingTargets)
   const readingSteps = readingGuide?.readingSteps ?? []
+  // Prototype 2.6G2.8M2.2c: `readingGuide.expressions` are now grounded against
+  // `readingGuideText` (source-faithful, never MATH_EXPR-shielded -- see the ReadingGuide
+  // call sites above), a DIFFERENT coordinate space than `projection` (which is
+  // Stanza-facing/`analysis.normalizedText`-relative). MATH_EXPR can no longer appear in
+  // ReadingGuide's own input at all, so the synthetic-range exclusion this used to need is
+  // moot; passing `projection` here would compare mismatched coordinate spaces.
   const displayedExpressions = prepareExpressionsForDisplay(readingGuide?.expressions ?? [])
-  const groundedVocabulary = groundVocabularyForDisplay(analysis.vocabulary, analysis.normalizedText)
+  const groundedVocabulary = groundVocabularyForDisplay(analysis.vocabulary, analysis.normalizedText, projection)
   const displayedVocabulary = activeSpan
     ? findVocabularyForTreeNode(activeSpan, groundedVocabulary)
     : groundedVocabulary
-  const sourceHighlight = buildSourceHighlightSegments(analysis.normalizedText, activeSpan)
+  const sourceHighlight = projectAnalysisSpanToSourceHighlight(sourceText, projection, activeSpan)
 
   return (
     <div className="analysis-result">
@@ -452,17 +489,24 @@ export function AnalysisResultPanel({ result, provider, model }: AnalysisResultP
           <div className="source-reference">
             <h2>英文</h2>
             <p className="source-reference-text">
-              {sourceHighlight.active === null ? (
-                sourceHighlight.before
+              {sourceHighlight.activeRuns.length === 0 ? (
+                sourceHighlight.sourceText
               ) : (
                 <>
-                  {sourceHighlight.before}
-                  <mark className="source-active-span">{sourceHighlight.active}</mark>
-                  {sourceHighlight.after}
+                  {sourceHighlight.activeRuns.map((run, index) => {
+                    const previousEnd = index === 0 ? 0 : sourceHighlight.activeRuns[index - 1].end
+                    return (
+                      <span key={`${run.start}-${run.end}`}>
+                        {sourceHighlight.sourceText.slice(previousEnd, run.start)}
+                        <mark className="source-active-span">{sourceHighlight.sourceText.slice(run.start, run.end)}</mark>
+                      </span>
+                    )
+                  })}
+                  {sourceHighlight.sourceText.slice(sourceHighlight.activeRuns[sourceHighlight.activeRuns.length - 1].end)}
                 </>
               )}
             </p>
-            <p className="source-reference-note">文構造と同じ解析用表記です。</p>
+            <p className="source-reference-note">選択した原文です。文構造の要素によっては、この原文中でハイライトされない場合があります。</p>
           </div>
           <h2>文の構造</h2>
           <StructureTreeView

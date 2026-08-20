@@ -109,7 +109,7 @@ import re
 import unicodedata
 import uuid
 from contextlib import asynccontextmanager
-from typing import Optional
+from typing import NamedTuple, Optional
 
 import httpx
 import pymupdf
@@ -134,6 +134,7 @@ def _trace(label: str, **fields) -> None:
         return
     rendered = " ".join(f"{k}={fields[k]!r}" for k in fields)
     print(f"[PGT-TRACE] {label} {rendered}")
+
 
 # Prototype 2.5B item 4/5: an "equation-number-like" block is a single-line block whose
 # ENTIRE text is nothing but "(N)" -- deliberately narrow (see docs/design-notes.md,
@@ -330,9 +331,23 @@ class SelectionRequest(BaseModel):
     end: SelectionEndpoint
 
 
+class MathRun(BaseModel):
+    """Prototype 2.6G2.8M2 -- a contiguous, evidence-seeded inline/display math run within
+    one `Fragment`'s own `.text` (offsets are LOCAL to that fragment, never global across a
+    multi-page selection -- the client's own fragment-combination step is responsible for
+    shifting these when it concatenates fragments, exactly as it already does for the plain
+    text itself). See `_detect_math_runs`'s own doc comment for the detection/grouping rule."""
+
+    start: int
+    end: int
+    text: str
+    classification: str  # "inline" | "display"
+
+
 class Fragment(BaseModel):
     pageNumber: int
     text: str
+    mathRuns: list[MathRun] = []
 
 
 class SelectionResponse(BaseModel):
@@ -391,6 +406,372 @@ _WORD_GAP_MIN_PT = 0.3
 
 def _bbox_key(bbox: tuple[float, float, float, float]) -> tuple[float, float, float, float]:
     return tuple(round(v, 1) for v in bbox)
+
+
+# Prototype 2.6G2.8D3 -- superscript fidelity. PyMuPDF's own dict/rawdict-mode span "flags"
+# is a per-span bitmask sourced directly from the font/glyph encoding (never inferred from
+# neighboring text) -- bit 0 is TEXT_FONT_SUPERSCRIPT (see PyMuPDF's own documented flag
+# bits). Live-verified (2.6G2.8D3 trace against the real "m²" case): the superscript "2"
+# in "200,000 m2"/"5,000 m2" sits in its OWN span, distinct from the surrounding body-text
+# span, with flags=5 (bit 0 set) and size=7.57pt vs the body span's flags=4/size=9.96pt --
+# i.e. PyMuPDF already tells us, from the font encoding itself, exactly which characters are
+# genuinely rendered as superscripts. This is therefore glyph-identity/encoding evidence, not
+# a word-pattern rule ("m followed by a raised digit") -- the SAME span-flags check applies
+# regardless of which letter/word precedes the superscript.
+TEXT_FONT_SUPERSCRIPT_BIT = 1
+
+# Deliberately narrow to the characters with a well-established, unambiguous Unicode
+# superscript codepoint (item 8's own audited cases: m/x/R + digit). A superscript-flagged
+# character with NO entry here is left completely unchanged -- never fabricated, never
+# dropped -- so an as-yet-unaudited superscript (e.g. a footnote marker using a symbol
+# outside this table) safely falls back to plain baseline text instead of guessing.
+SUPERSCRIPT_CHAR_MAP: dict[str, str] = {
+    "0": "⁰", "1": "¹", "2": "²", "3": "³", "4": "⁴",
+    "5": "⁵", "6": "⁶", "7": "⁷", "8": "⁸", "9": "⁹",
+}
+
+
+def _apply_superscript_encoding(span_text: str, flags: int) -> str:
+    """Prototype 2.6G2.8D3: maps each character of `span_text` through
+    `SUPERSCRIPT_CHAR_MAP` when the span's own PyMuPDF flags mark it as a genuine encoded
+    superscript (never when the bit is unset, and never for a character with no table
+    entry -- both left byte-for-byte unchanged, no fabrication)."""
+    if not (flags & TEXT_FONT_SUPERSCRIPT_BIT):
+        return span_text
+    return "".join(SUPERSCRIPT_CHAR_MAP.get(c, c) for c in span_text)
+
+
+# Prototype 2.6G2.8D3 -- SUSPECT_NATIVE classification and recovery (item 5/6). Live-traced
+# real case: the "=" glyph in "t = 200,000" decodes, via PyMuPDF's own dict/rawdict
+# extraction, to U+0002 (a C0 control code) in the "MTSYN" font -- a MathType-style embedded
+# symbol font with no usable ToUnicode mapping for this glyph. A control codepoint can NEVER
+# be genuine visible document text (unlike an uncommon-but-legitimate scientific symbol --
+# alpha/beta/<=/>=/degree/superscript-two/mu/... are never flagged), so this is an
+# objective, general signal -- never a per-document/per-glyph special case.
+_ORDINARY_WHITESPACE_CONTROL_CODEPOINTS = {0x09, 0x0A, 0x0D, 0x0B, 0x0C}  # tab/LF/CR/VT/FF
+
+
+def _is_suspect_native_codepoint(c: str) -> bool:
+    if len(c) != 1:
+        return False
+    cp = ord(c)
+    if cp in _ORDINARY_WHITESPACE_CONTROL_CODEPOINTS:
+        return False
+    return cp < 0x20 or 0x7F <= cp <= 0x9F
+
+
+# Prototype 2.6G2.8M2.2 -- authoritative scientific source reconstruction plumbing. Live-
+# traced root cause: `_extract_page_blocks` applies D3's suspect-native/superscript recovery
+# to `Line.text`, but for a selection whose start/end boundary falls MID-LINE, the boundary
+# line's own contribution comes not from `Line.text` at all -- it comes from the CLIENT's own
+# boundaryText (PDF.js's raw DOM Range extraction), needed because only the client knows
+# exactly where within the line the click landed. PDF.js decodes the SAME broken MTSYN
+# ToUnicode mapping PyMuPDF's own dict-mode text does (confirmed live: the client's own raw
+# selected text also shows literal U+0002), so this was a genuine SECOND, uncorrected text
+# authority competing with the first -- D3's corrections never had a chance to reach a
+# boundary line's own content, only interior lines.
+#
+# This is TWO representations of the exact same underlying glyphs, not two different pieces
+# of content -- so reconciling them is a per-character alignment, not a guess: the client's
+# boundary text and the trusted line's own (already-corrected) text differ ONLY at the exact
+# positions D3 already knows how to correct (a suspect codepoint, or a plain digit standing
+# in for a corrected superscript). Wherever they align this way, the trusted, corrected
+# characters become authoritative for the boundary line too -- collapsing this back down to
+# ONE text authority (item 5's own explicit requirement), never two. Abstains (returns
+# `boundary_text` completely unchanged) whenever the two strings don't align cleanly -- a
+# structurally different string is never assumed to be "the same text with typos".
+_MAX_TOLERATED_BOUNDARY_CORRECTIONS = 32
+_SUPERSCRIPT_DIGIT_TO_PLAIN = {v: k for k, v in SUPERSCRIPT_CHAR_MAP.items()}
+
+
+def _try_align_boundary_to_trusted_line(boundary_text: str, own_text: str, from_end: bool) -> Optional[str]:
+    n = len(boundary_text)
+    if n == 0 or n > len(own_text):
+        return None
+    aligned = own_text[-n:] if from_end else own_text[:n]
+    if aligned == boundary_text:
+        return None  # already identical -- nothing to correct, let the caller keep the original
+    diff_positions = [i for i in range(n) if boundary_text[i] != aligned[i]]
+    if len(diff_positions) > _MAX_TOLERATED_BOUNDARY_CORRECTIONS:
+        return None  # too different to confidently be "the same text" -- abstain
+    for i in diff_positions:
+        client_char, trusted_char = boundary_text[i], aligned[i]
+        is_suspect_correction = _is_suspect_native_codepoint(client_char)
+        is_superscript_correction = client_char.isdigit() and _SUPERSCRIPT_DIGIT_TO_PLAIN.get(trusted_char) == client_char
+        if not (is_suspect_correction or is_superscript_correction):
+            return None  # a difference outside D3's own known correction classes -- abstain
+    return aligned
+
+
+def _prefer_trusted_line_text_for_boundary(boundary_text: str, own_line: Line) -> str:
+    """Tries aligning `boundary_text` against `own_line.text` as BOTH a suffix (the common
+    'forward'/click-to-line-end shape) and a prefix (the common 'backward'/line-start-to-
+    click shape) -- a reverse-drag selection can swap which of `req.start`/`req.end` ends up
+    owning `line_texts[0]` vs `line_texts[-1]` in the same-block branch, so the caller cannot
+    always know which shape applies just from array position. Returns the FIRST alignment
+    that succeeds (a wrong-shape attempt is expected to show far more than
+    `_MAX_TOLERATED_BOUNDARY_CORRECTIONS` differences and abstain on its own), or
+    `boundary_text` unchanged if neither alignment succeeds."""
+    for from_end in (True, False):
+        aligned = _try_align_boundary_to_trusted_line(boundary_text, own_line.text, from_end)
+        if aligned is not None:
+            return aligned
+    return boundary_text
+
+
+def _recover_suspect_native_char(
+    doc: "pymupdf.Document",
+    page_number: int,
+    width: float,
+    height: float,
+    char_bbox_pt: tuple[float, float, float, float],
+    left_anchor: str,
+    right_anchor: str,
+) -> Optional[str]:
+    """Item 6's SUSPECT_NATIVE_RECOVERY contract: native geometry (`char_bbox_pt`) is
+    authoritative for LOCATION only; a confident OCR read of a tightly local crop is the sole
+    source ever trusted for WHICH character is actually rendered there. Requires rendered ink
+    at the suspect glyph's own location (the same visual-ink gate gap recovery already uses),
+    OCR confidence >= OCR_CONFIDENCE_THRESHOLD, and an anchor-bounded recovered result that is
+    EXACTLY ONE character -- never a multi-character substitution for a single glyph (that
+    would risk duplication/false insertion). Returns None (leave the suspect character
+    exactly as extracted) whenever any of these can't be confidently established -- never
+    guesses, e.g. never infers "=" merely because parameter assignments usually use it."""
+    cx0, cy0, cx1, cy1 = char_bbox_pt
+    cw = max(cx1 - cx0, 1.0)
+    chh = max(cy1 - cy0, 1.0)
+    # Prototype 2.6G2.8M2.2a Track A -- live-traced real defect: `left_anchor`/`right_anchor`
+    # can be up to 6 characters of SURROUNDING text (see `_recover_suspect_native_in_span`),
+    # but the horizontal padding here was scaled only by the SUSPECT GLYPH's own width (`cw`)
+    # -- often much narrower than an ordinary text character (a symbol-font "=" measured
+    # ~7.8pt wide in the real trace, giving only ~15.5pt of padding per side, nowhere near
+    # enough to render 5-6 digit/letter characters for OCR to read). Three of four real "="
+    # occurrences failed anchor matching for exactly this reason (`outcome="not_single_char"`
+    # with `recovered=None`, i.e. the anchor was never found because the crop was cropped
+    # before reaching it) -- only the one whose neighboring text happened to be short enough
+    # to fit within the too-narrow crop recovered. `chh` (line/character HEIGHT, correlated
+    # with the surrounding TEXT's own font size regardless of how narrow the suspect glyph
+    # itself is) is a more reliable proxy for "how wide is a typical neighboring character
+    # here" -- floored against the existing `cw`-based term so neither shrinks the crop for
+    # font/glyph combinations where `cw` was already generous.
+    horizontal_padding = max(cw * 2.0, chh * 3.0)
+    crop_rect = (cx0 - horizontal_padding, cy0 - chh * 0.5, cx1 + horizontal_padding, cy1 + chh * 0.5)
+    ink_ratio = _render_gap_ink_ratio(doc, page_number, (crop_rect[0] / width, crop_rect[1] / height, crop_rect[2] / width, crop_rect[3] / height), width, height)
+    if ink_ratio < VISUAL_INK_CENTRAL_RATIO_THRESHOLD:
+        _trace("SUSPECT_NATIVE_RECOVERY", cropRectPt=crop_rect, leftAnchor=left_anchor, rightAnchor=right_anchor, inkRatio=ink_ratio, outcome="no_ink")
+        return None
+    page = doc[page_number - 1]
+    pix = page.get_pixmap(matrix=pymupdf.Matrix(VISUAL_INK_RENDER_SCALE, VISUAL_INK_RENDER_SCALE), clip=pymupdf.Rect(*crop_rect))
+    ocr_lines = _call_paddle_ocr(pix.tobytes("png"))
+    if not ocr_lines:
+        _trace("SUSPECT_NATIVE_RECOVERY", cropRectPt=crop_rect, leftAnchor=left_anchor, rightAnchor=right_anchor, outcome="no_ocr_result")
+        return None
+    best = max(ocr_lines, key=lambda l: l.get("confidence") or 0.0)
+    confidence = best.get("confidence") or 0.0
+    if confidence < OCR_CONFIDENCE_THRESHOLD:
+        _trace("SUSPECT_NATIVE_RECOVERY", cropRectPt=crop_rect, leftAnchor=left_anchor, rightAnchor=right_anchor, ocrText=best.get("text"), confidence=confidence, outcome="low_confidence")
+        return None
+    fragment = _recover_gap_text(left_anchor, right_anchor, best.get("text") or "")
+    if fragment is None or len(fragment.text) != 1:
+        _trace(
+            "SUSPECT_NATIVE_RECOVERY",
+            cropRectPt=crop_rect, leftAnchor=left_anchor, rightAnchor=right_anchor, ocrText=best.get("text"), confidence=confidence, recovered=fragment, outcome="not_single_char",
+        )
+        return None
+    _trace(
+        "SUSPECT_NATIVE_RECOVERY",
+        cropRectPt=crop_rect, leftAnchor=left_anchor, rightAnchor=right_anchor, ocrText=best.get("text"), confidence=confidence, recovered=fragment, outcome="recovered",
+    )
+    return fragment.text
+
+
+def _recover_suspect_native_in_span(
+    doc: "pymupdf.Document",
+    page_number: int,
+    width: float,
+    height: float,
+    span_text: str,
+    raw_chars: list[dict],
+    prev_span_tail: str,
+    next_span_head: str,
+) -> str:
+    """Scans `span_text` for SUSPECT_NATIVE characters and attempts to recover each one via
+    `_recover_suspect_native_char`. `raw_chars` is this span's own rawdict character list,
+    used only to find the suspect character's exact bbox (never its text -- that's the same
+    value already in `span_text`). `span_text` may contain extra inserted spaces relative to
+    `raw_chars` (see `_reconstruct_line_span_texts`'s own contract: it only ever ADDS spaces,
+    never removes/reorders characters), so a simple two-pointer walk stays correctly aligned
+    without needing its own separate reconciliation pass."""
+    if not any(_is_suspect_native_codepoint(c) for c in span_text):
+        return span_text
+    result_chars = list(span_text)
+    raw_idx = 0
+    for i, c in enumerate(result_chars):
+        if raw_idx < len(raw_chars) and raw_chars[raw_idx].get("c") == c:
+            if _is_suspect_native_codepoint(c):
+                char_bbox = raw_chars[raw_idx].get("bbox")
+                if char_bbox is not None:
+                    left_anchor = (prev_span_tail + span_text[:i])[-6:]
+                    right_anchor = (span_text[i + 1 :] + next_span_head)[:6]
+                    recovered = _recover_suspect_native_char(doc, page_number, width, height, char_bbox, left_anchor, right_anchor)
+                    if recovered is not None:
+                        result_chars[i] = recovered
+            raw_idx += 1
+        # else: `c` is a gap-recovery-inserted space with no `raw_chars` counterpart --
+        # skip it without advancing raw_idx, keeping the two streams aligned.
+    return "".join(result_chars)
+
+
+# --- Prototype 2.6G2.8M2: math-run detection (foundation) -------------------------------
+#
+# Operates on already-ASSEMBLED text (a Fragment's own final `.text`, after D1/D2/D3
+# recovery has already run) rather than on raw PyMuPDF spans. This intentionally trades away
+# font/flag-based evidence (only available earlier, per-span, inside `_extract_page_blocks`)
+# for the ability to run uniformly across every text-producing branch of `/layout/selection`
+# (same-block multi-line, cross-block, equation-aware) without threading detection through
+# each one's own bespoke assembly logic -- a real architectural simplification for this
+# foundation phase, reported honestly rather than claimed complete (font-based `symbol_font`/
+# `native_ink_mismatch` evidence from the M1 report is NOT wired into this pass; see the
+# M2 report's own "files M3 might implement" note).
+#
+# STRONG evidence only (M1.1 item 2's own requirement): weak typography evidence (font/size/
+# baseline/style differences) is not even inspected here, so it can never seed OR extend a
+# run -- trivially satisfying "weak evidence alone must never seed math" for this phase.
+# A genuinely uncommon scientific Unicode character is never itself suspicious (item 4's own
+# explicit non-goal) -- only a CLOSED, evidence-based set of operators/Greek letters/symbols
+# that essentially never occur in ordinary English running prose is used. "_" is included
+# because it essentially never appears in ordinary English prose either, and is the one
+# widely-used plain-ASCII convention for subscript notation in scientific text ("x_i") --
+# still a structural/character-class signal, never a word/phrase rule.
+_MATH_EVIDENCE_UNICODE_CHARS: frozenset[str] = frozenset(
+    "<>=≤≥≠≈±×·°_"
+    "¹²³⁰⁴⁵⁶⁷⁸⁹"
+    "αβγδεζηθικλμνξοπρστυφχψω"
+    "ΓΔΘΛΞΠΣΦΨΩ"
+    "∑∫√∞"
+)
+
+# Item 9's own default policy split: an expression carrying one of these characters is
+# "RELATIONAL/ASSIGNMENT" (Stanza-unreliable, per M1.1's live-traced "t = 0.5" fabricated-
+# clause finding) rather than "SIMPLE/STABLE".
+_RELATIONAL_OPERATOR_CHARS: frozenset[str] = frozenset("=<>≤≥≠≈")
+
+_NUMERIC_TOKEN_PATTERN = re.compile(r"^[\d.,%]+$")
+_SYMBOL_TOKEN_PATTERN = re.compile(r"^[^\w\s]+$")
+_ALLCAPS_IDENTIFIER_PATTERN = re.compile(r"^[A-Z]{2,}$")
+
+
+def _is_text_math_evidence_char(c: str) -> bool:
+    return c in _MATH_EVIDENCE_UNICODE_CHARS or _is_suspect_native_codepoint(c)
+
+
+def _classify_math_token(token: str) -> str:
+    """Purely structural classification (never a word/phrase dictionary): EVIDENCE (contains
+    a strong math-evidence character), NUMERIC (digits/decimal/comma/percent only, an
+    optional single trailing period stripped first -- a sentence-final period is handled
+    separately, at the run level, in `_detect_math_runs`), SYMBOL (pure punctuation, no
+    letters/digits -- e.g. a lone "+"), SINGLE_LETTER (one alphabetic character -- a bare
+    variable name), ALLCAPS_IDENTIFIER (2+ letters, ALL uppercase -- the common scientific
+    convention for a multi-letter symbolic name like "NDVI"/"SUM", distinguished from an
+    ordinary word purely by capitalization pattern, never by a word list), or PROSE
+    (anything else, i.e. an ordinary multi-letter word)."""
+    if any(_is_text_math_evidence_char(c) for c in token):
+        return "EVIDENCE"
+    stem = token[:-1] if token.endswith(".") and len(token) > 1 else token
+    if _NUMERIC_TOKEN_PATTERN.match(stem):
+        return "NUMERIC"
+    if _SYMBOL_TOKEN_PATTERN.match(token):
+        return "SYMBOL"
+    if len(token) == 1 and token.isalpha():
+        return "SINGLE_LETTER"
+    if _ALLCAPS_IDENTIFIER_PATTERN.match(token):
+        return "ALLCAPS_IDENTIFIER"
+    return "PROSE"
+
+
+_BRIDGEABLE_TOKEN_KINDS = {"EVIDENCE", "NUMERIC", "SYMBOL", "SINGLE_LETTER", "ALLCAPS_IDENTIFIER"}
+
+
+def _detect_math_runs(text: str) -> list[tuple[int, int]]:
+    """Prototype 2.6G2.8M2 -- groups EVIDENCE-seeded tokens with their immediately
+    surrounding BRIDGEABLE tokens (NUMERIC/SYMBOL/SINGLE_LETTER/ALLCAPS_IDENTIFIER -- never a
+    genuine multi-letter PROSE word) into contiguous character ranges. A PROSE token always
+    terminates extension in that direction -- this is a deliberate, honestly-reported
+    limitation: "sin θ"/"cos i" only detect the evidence-bearing symbol itself ("θ") when the
+    function name ("sin"/"cos") is ordinary lowercase prose with no evidence of its own (see
+    the M2 report's own coverage matrix; M1.1 already flagged this as unproven). Multiple
+    EVIDENCE tokens separated only by bridgeable tokens merge into ONE run (the real live
+    "t = 200,000 m²" shape: "=" and "²" are two separate EVIDENCE tokens bridged by the
+    NUMERIC/SINGLE_LETTER tokens between them). A lone EVIDENCE token with no bridgeable
+    neighbor stays a single-token run. A trailing sentence period is trimmed off the very end
+    of a run when it looks sentence-final (the same general capitalization signal
+    `scientificTextShielding.ts` already uses client-side -- never a word-specific rule)."""
+    tokens: list[tuple[int, int, str]] = []
+    for m in re.finditer(r"\S+", text):
+        tokens.append((m.start(), m.end(), _classify_math_token(m.group())))
+
+    evidence_indices = [i for i, (_s, _e, kind) in enumerate(tokens) if kind == "EVIDENCE"]
+    if not evidence_indices:
+        return []
+
+    included = [False] * len(tokens)
+    for idx in evidence_indices:
+        included[idx] = True
+        i = idx - 1
+        while i >= 0 and tokens[i][2] in _BRIDGEABLE_TOKEN_KINDS:
+            included[i] = True
+            i -= 1
+        i = idx + 1
+        while i < len(tokens) and tokens[i][2] in _BRIDGEABLE_TOKEN_KINDS:
+            included[i] = True
+            i += 1
+
+    runs: list[tuple[int, int]] = []
+    run_start: Optional[int] = None
+    prev_end: Optional[int] = None
+    for i, (start, end, _kind) in enumerate(tokens):
+        if included[i]:
+            if run_start is None:
+                run_start = start
+            prev_end = end
+        else:
+            if run_start is not None:
+                runs.append((run_start, prev_end))
+                run_start = None
+    if run_start is not None:
+        runs.append((run_start, prev_end))
+
+    trimmed: list[tuple[int, int]] = []
+    for start, end in runs:
+        if end > start and text[end - 1] == ".":
+            rest = text[end:].lstrip()
+            if rest == "" or rest[0].isupper() or not rest[0].isalnum():
+                end -= 1
+        if end > start:
+            trimmed.append((start, end))
+    return trimmed
+
+
+_DISPLAY_MATH_TOKEN_PATTERN = re.compile(r"\[式\s*(?:\(\d{1,3}\))?\]")
+
+
+def _build_fragment(page_number: int, text: str) -> Fragment:
+    """Prototype 2.6G2.8M2 -- the single construction point for every `Fragment` this
+    endpoint returns, so math-run detection runs uniformly rather than being repeated (and
+    risking drift) at each of this file's several `Fragment(...)` call sites. Display-
+    equation placeholders (`_equation_display_token`'s own "[式 (N)]" spelling) are always
+    surfaced as their own `classification="display"` run -- reusing that ALREADY-established
+    provenance, never re-detected from scratch. Inline runs come from `_detect_math_runs`."""
+    runs: list[MathRun] = []
+    for m in _DISPLAY_MATH_TOKEN_PATTERN.finditer(text):
+        runs.append(MathRun(start=m.start(), end=m.end(), text=m.group(), classification="display"))
+    display_ranges = [(r.start, r.end) for r in runs]
+    for start, end in _detect_math_runs(text):
+        if any(start < de and ds < end for ds, de in display_ranges):
+            continue  # never double-count text already claimed by a display placeholder
+        runs.append(MathRun(start=start, end=end, text=text[start:end], classification="inline"))
+    runs.sort(key=lambda r: r.start)
+    return Fragment(pageNumber=page_number, text=text, mathRuns=runs)
 
 
 def _rawdict_chars_by_line(page: "pymupdf.Page") -> dict[tuple[float, float, float, float], list[list[dict]]]:
@@ -491,7 +872,23 @@ def _extract_page_blocks(document_id: str, page_number: int) -> PageBlocks:
             # reconstruction (_line_text_from_raw_chars) proves a different, gap-justified
             # result -- see that function's own docs for why this is a strict repair, never a
             # wholesale replacement of PyMuPDF's own text.
-            span_texts = _reconstruct_line_span_texts(raw_line["spans"], raw_chars_by_line.get(_bbox_key(raw_line["bbox"])))
+            line_raw_chars = raw_chars_by_line.get(_bbox_key(raw_line["bbox"]))
+            span_texts = _reconstruct_line_span_texts(raw_line["spans"], line_raw_chars)
+            span_texts = [_apply_superscript_encoding(t, s.get("flags", 0)) for t, s in zip(span_texts, raw_line["spans"])]
+            # Prototype 2.6G2.8D3 item 6: SUSPECT_NATIVE recovery -- applied AFTER superscript
+            # encoding (unrelated concerns; superscript only ever touches digits with a table
+            # entry, never a control codepoint) and BEFORE anything downstream ever sees this
+            # line's text, so a recovered "=" is indistinguishable from ordinary trusted text
+            # to every later consumer (gap detection, boundary clipping, etc).
+            if line_raw_chars and len(line_raw_chars) == len(span_texts):
+                for span_index in range(len(span_texts)):
+                    if not any(_is_suspect_native_codepoint(c) for c in span_texts[span_index]):
+                        continue
+                    prev_tail = span_texts[span_index - 1][-6:] if span_index > 0 else ""
+                    next_head = span_texts[span_index + 1][:6] if span_index + 1 < len(span_texts) else ""
+                    span_texts[span_index] = _recover_suspect_native_in_span(
+                        doc, page_number, width, height, span_texts[span_index], line_raw_chars[span_index], prev_tail, next_head
+                    )
             line_text_parts = []
             for raw_span, span_text in zip(raw_line["spans"], span_texts):
                 bx0, by0, bx1, by1 = raw_span["bbox"]
@@ -610,6 +1007,64 @@ def _gap_between_lines(page_blocks: PageBlocks, line_a: Line, line_b: Line) -> O
     return None
 
 
+def _find_trailing_adjacent_line(page_blocks: PageBlocks, line: Line) -> Optional[Line]:
+    """Prototype 2.6G2.8D2 -- TYPE C (trailing/edge) gap support. `_assemble_lines_with_gap_
+    recovery`'s own loop only ever checks `_gap_between_lines` for CONSECUTIVE lines already
+    inside the one selection's own assembled `lines` list -- the LAST line has no `lines[i+1]`
+    to pair against at all, so a genuine missing glyph sitting between its own last character
+    and whatever native text immediately follows it (in a different, not-necessarily-selected
+    block -- e.g. the very next sentence's own leading punctuation, exactly the real "90°."
+    case: PyMuPDF splits "angle approaches 90" and ". In several studies..." into two separate
+    blocks) was never inspected at all.
+
+    Purely geometric (item 1: never special-cased to any specific glyph/paper/font): searches
+    every block's own lines for one on the SAME visual row (y-overlap) whose own left edge
+    sits at or immediately after `line`'s own right edge, and returns the closest such line
+    (or None). This only ever LOCATES a candidate right-anchor for the existing anchor-bounded
+    gap-recovery pipeline below (`_gap_between_lines` / `_attempt_gap_recovery`, both
+    completely unchanged) -- it never contributes its own text to the reconstructed selection
+    beyond what that pipeline's own confidence-gated recovery actually returns."""
+    candidates = [
+        candidate
+        for block in page_blocks.blocks
+        for candidate in block.lines
+        if candidate is not line
+        and candidate.bbox[1] < line.bbox[3]
+        and candidate.bbox[3] > line.bbox[1]
+        and candidate.bbox[0] >= line.bbox[2] - _LINE_GAP_X_TOL
+    ]
+    return min(candidates, key=lambda c: c.bbox[0]) if candidates else None
+    return None
+
+
+def _find_leading_adjacent_line(page_blocks: PageBlocks, line: Line) -> Optional[Line]:
+    """Prototype 2.6G2.8S1.2 TRACK A -- symmetric to `_find_trailing_adjacent_line` above, for
+    the START side. Live-traced real defect: the selection's own resolved start line (") and
+    solar") begins partway across its visual row (x ~= 0.417, not the page's own left margin)
+    -- a SIBLING BLOCK occupies the same row to its left ("...zenith angle (39.31", ending
+    right where the missing degree symbol sits), split off into its own block by the exact
+    same unextractable-glyph mechanism that splits a trailing row (D2). The assembly loop only
+    ever pairs CONSECUTIVE lines already inside `lines[]` -- the FIRST line has no `lines[-1]`
+    on its own left to pair against, so this gap was never inspected at all.
+
+    Purely geometric, same shape as the trailing search: same visual row (y-overlap), closest
+    candidate whose own RIGHT edge sits at or immediately before `line`'s own LEFT edge. Never
+    contributes text beyond what the confidence-gated recovery pipeline actually returns --
+    boundary safety comes from the caller's own requirement that the client's boundary text
+    already ends with `line`'s own trusted text (see the leading-gap block below), so a
+    candidate whose content the user never actually selected can never expand the result."""
+    candidates = [
+        candidate
+        for block in page_blocks.blocks
+        for candidate in block.lines
+        if candidate is not line
+        and candidate.bbox[1] < line.bbox[3]
+        and candidate.bbox[3] > line.bbox[1]
+        and candidate.bbox[2] <= line.bbox[0] + _LINE_GAP_X_TOL
+    ]
+    return max(candidates, key=lambda c: c.bbox[2]) if candidates else None
+
+
 def _render_gap_ink_ratio(doc: "pymupdf.Document", page_number: int, gap_bbox_norm: tuple[float, float, float, float], width: float, height: float) -> float:
     """Prototype 2.5D visual-ink gate, ported to plain PyMuPDF grayscale pixel bytes (no
     numpy in production -- item 10/78 of Prototype 2.5E; numerically validated against the
@@ -661,19 +1116,43 @@ def _call_paddle_ocr(png_bytes: bytes) -> Optional[list[dict]]:
     return lines if isinstance(lines, list) else None
 
 
-def _recover_gap_text(left_anchor: str, right_anchor: str, ocr_text: str) -> Optional[str]:
+class RecoveredFragment(NamedTuple):
+    """Prototype 2.6G2.8M1.2a -- CONTENT and BOUNDARY SPACING are different pieces of source
+    evidence (item 5's own explicit requirement): `text` is the recovered content with no
+    surrounding whitespace; `leading_separator`/`trailing_separator` carry whatever
+    whitespace (if any) the OCR text itself showed immediately before/after that content,
+    evidence-based, never fabricated -- "" when the OCR text shows the content touching its
+    neighbor directly (e.g. "90" immediately followed by "°"), a single space when it shows a
+    genuine word gap (e.g. "of" followed by " cos i"). Callers decide what to do with the
+    separator; `_recover_gap_text` itself never guesses spacing from the content's own
+    semantic identity (a letter-string is not, by itself, evidence of a preceding space)."""
+
+    text: str
+    leading_separator: str
+    trailing_separator: str
+
+
+def _recover_gap_text(left_anchor: str, right_anchor: str, ocr_text: str) -> Optional[RecoveredFragment]:
     """Prototype 2.5C/E item 30/31/32: recovery is allowed ONLY when both trusted anchors
     (the two bounding lines' own PyMuPDF-extracted text) are found in `ocr_text`, in
     order -- the recovered substring is exactly what lies between them. Never trusts OCR
     beyond that bounded substring; never invents/guesses (item 34).
 
-    Item 31's comparison-only normalization (ligatures + NFKC + whitespace collapse) is
-    applied to BOTH the anchors and the OCR text before searching (real PyMuPDF text can
-    contain a ligature codepoint like "reﬂectance" that an OCR engine naturally outputs as
-    plain "reflectance" -- without this, a perfectly correct OCR read fails to anchor-match
-    and gets discarded as unrecoverable). The recovered substring itself is taken from the
+    Item 31's comparison-only normalization (ligatures + quote-folding + NFKC + whitespace
+    collapse) is applied to BOTH the anchors and the OCR text before searching (real PyMuPDF
+    text can contain a ligature codepoint like "reﬂectance" that an OCR engine naturally
+    outputs as plain "reflectance", or a typographic apostrophe an OCR engine emits as a
+    plain ASCII one -- without this, a perfectly correct OCR read fails to anchor-match and
+    gets discarded as unrecoverable). The recovered substring itself is taken from the
     NORMALIZED text, which is safe here: what's actually being recovered is a single
-    inline-math variable/symbol (k, e, theta, ...), never a ligature-bearing word run."""
+    inline-math variable/symbol/short run (k, e, theta, cos i, ...), never a
+    ligature/quote-bearing word run.
+
+    Prototype 2.6G2.8M1.2a: because `_normalize_for_match`'s own whitespace collapse
+    (`\\s+` -> single space) already runs before this search, any separator surviving in the
+    sliced substring is either "" (content touches its neighbor with no gap at all) or
+    exactly one space (a genuine gap) -- never fabricated, always read directly off what the
+    OCR text itself showed at that exact position."""
     norm_left, norm_right = _normalize_for_match(left_anchor), _normalize_for_match(right_anchor)
     if not norm_left or not norm_right:
         return None
@@ -684,41 +1163,360 @@ def _recover_gap_text(left_anchor: str, right_anchor: str, ocr_text: str) -> Opt
     right_idx = norm_ocr_text.find(norm_right, left_idx + len(norm_left))
     if right_idx == -1:
         return None
-    recovered = norm_ocr_text[left_idx + len(norm_left) : right_idx].strip()
-    return recovered or None
+    raw_between = norm_ocr_text[left_idx + len(norm_left) : right_idx]
+    content = raw_between.strip()
+    if not content:
+        return None
+    leading_separator = raw_between[: len(raw_between) - len(raw_between.lstrip())]
+    trailing_separator = raw_between[len(raw_between.rstrip()) :]
+    return RecoveredFragment(text=content, leading_separator=leading_separator, trailing_separator=trailing_separator)
 
 
-def _attempt_gap_recovery(doc: "pymupdf.Document", page_number: int, width: float, height: float, line_a: Line, line_b: Line) -> Optional[str]:
+def _attempt_gap_recovery(
+    doc: "pymupdf.Document",
+    page_number: int,
+    width: float,
+    height: float,
+    line_a: Line,
+    line_b: Line,
+    reading_order: bool = False,
+    extra_crop_bbox: Optional[tuple[float, float, float, float]] = None,
+) -> Optional[RecoveredFragment]:
     """Prototype 2.5E item 24-30: renders the LOCAL two-line crop (never the whole page-wide
     row -- item 25, a two-column PDF may have unrelated content at the same y in the other
     column) bounding a visual-ink-positive gap, OCRs it via the existing Paddle service, and
-    returns only the anchor-aligned recovered substring, or None if recovery can't be
-    confidently completed (Paddle unavailable, low confidence, anchors not found/ordered)."""
-    left_line, right_line = (line_a, line_b) if line_a.bbox[0] <= line_b.bbox[0] else (line_b, line_a)
+    returns only the anchor-aligned recovered fragment, or None if recovery can't be
+    confidently completed (Paddle unavailable, low confidence, anchors not found/ordered).
+    Prototype 2.6G2.8M1.2a: returns the full `RecoveredFragment` (content + evidence-based
+    separators), not just its `.text` -- callers that only ever needed bare content (the
+    ordinary inter-line loop below) use `.text` unchanged; the trailing-gap splice uses
+    `.leading_separator` too, since that is exactly where the real "of"+"cos i" bug lived.
+
+    `reading_order`: Prototype 2.6G2.8S1.3 -- the default x-position sort below is only valid
+    when both lines sit on the SAME visual row (the overwhelming common case this function was
+    built for). For a genuine LINE-WRAP gap (`line_a` ends one row, `line_b` is the true next
+    line in reading order but starts the FOLLOWING row back at the page's own left margin),
+    x-sorting silently SWAPS the anchors -- `line_b`'s smaller x0 would be read as "left" even
+    though it comes SECOND -- and `_recover_gap_text` then searches for the wrong anchor order
+    entirely, live-traced as a spurious `anchor_not_found` on a real, genuinely-recoverable
+    gap. Callers that already know the true reading order (never inferred from geometry alone)
+    pass `reading_order=True` to use `line_a`/`line_b` exactly as given, unsorted."""
+    left_line, right_line = (line_a, line_b) if reading_order or line_a.bbox[0] <= line_b.bbox[0] else (line_b, line_a)
     crop_rect = _lines_pt_bbox_union(left_line, right_line, width, height)
+    if extra_crop_bbox is not None:
+        # Prototype 2.6G2.8S1.3a -- live-traced real defect: the union of the two TRUSTED
+        # lines' own extracted bboxes does not always contain the missing glyph's actual
+        # pixels. For the wrap-trailing case specifically, the glyph sits in the small
+        # ink-verified region immediately past `line_a`'s own trailing edge (that is the
+        # whole reason a synthetic probe was needed at all) -- `line_b` (the next row) starts
+        # further LEFT, back at the page margin, so the plain two-line union never reaches
+        # that region. OCR then reads real neighboring text but never sees the glyph itself,
+        # producing an empty (not missing) gap between the two anchors -- a silent false
+        # negative, not the anchor-order bug already fixed above. Extending the crop with the
+        # caller's own already-ink-verified probe bbox (never a blind guess) fixes this
+        # without touching the same-row default path, which never passes this parameter.
+        ex0, ey0, ex1, ey1 = extra_crop_bbox
+        cx0, cy0, cx1, cy1 = crop_rect
+        crop_rect = (min(cx0, ex0 * width), min(cy0, ey0 * height), max(cx1, ex1 * width), max(cy1, ey1 * height))
     page = doc[page_number - 1]
     pix = page.get_pixmap(matrix=pymupdf.Matrix(VISUAL_INK_RENDER_SCALE, VISUAL_INK_RENDER_SCALE), clip=pymupdf.Rect(*crop_rect))
     ocr_lines = _call_paddle_ocr(pix.tobytes("png"))
     if not ocr_lines:
         _trace("GAP_RECOVERY", cropRectPt=crop_rect, leftAnchor=left_line.text, rightAnchor=right_line.text, ocrResult=None, outcome="no_ocr_result")
         return None
-    best = max(ocr_lines, key=lambda l: l.get("confidence") or 0.0)
-    confidence = best.get("confidence") or 0.0
+    if reading_order:
+        # Prototype 2.6G2.8S1.3a -- live-traced real defect: a wrap-fallback crop spans TWO
+        # separate visual rows by construction (`left_line` ends one row, `right_line` starts
+        # the next), so Paddle legitimately detects and returns TWO separate text-line entries
+        # in `lines` (already in top-to-bottom detection order -- confirmed by the OCR
+        # service's own multi-line test fixture). Picking only the single highest-confidence
+        # entry (the same-row default below) silently discards whichever row lost that
+        # comparison -- observed live as `rightAnchor` never appearing in `ocrText` at all,
+        # a spurious `anchor_not_found` on a genuinely recoverable gap. Joining every detected
+        # line keeps this confined to the wrap path alone: `reading_order` is only ever True
+        # from the wrap-trailing caller, never the same-row default below.
+        best_text = " ".join((l.get("text") or "") for l in ocr_lines)
+        confidence = min((l.get("confidence") or 0.0) for l in ocr_lines)
+    else:
+        best = max(ocr_lines, key=lambda l: l.get("confidence") or 0.0)
+        best_text = best.get("text") or ""
+        confidence = best.get("confidence") or 0.0
     if confidence < OCR_CONFIDENCE_THRESHOLD:
-        _trace("GAP_RECOVERY", cropRectPt=crop_rect, leftAnchor=left_line.text, rightAnchor=right_line.text, ocrText=best.get("text"), confidence=confidence, outcome="low_confidence")
+        _trace("GAP_RECOVERY", cropRectPt=crop_rect, leftAnchor=left_line.text, rightAnchor=right_line.text, ocrText=best_text, confidence=confidence, outcome="low_confidence")
         return None
-    recovered = _recover_gap_text(left_line.text, right_line.text, best.get("text") or "")
+    fragment = _recover_gap_text(left_line.text, right_line.text, best_text)
     _trace(
         "GAP_RECOVERY",
         cropRectPt=crop_rect,
         leftAnchor=left_line.text,
         rightAnchor=right_line.text,
-        ocrText=best.get("text"),
+        ocrText=best_text,
         confidence=confidence,
-        recovered=recovered,
-        outcome="recovered" if recovered is not None else "anchor_not_found",
+        recovered=fragment,
+        outcome="recovered" if fragment is not None else "anchor_not_found",
     )
-    return recovered
+    return fragment
+
+
+MICRO_GAP_MAX_WIDTH_EM = 1.5  # generous upper bound for a SINGLE missing glyph's own width --
+# never a whole missing word/phrase/column jump (section 9's own "locally bounded and sane").
+
+# Prototype 2.6G2.8S1.3a -- used ONLY by the wrap-trailing synthetic probe in
+# `_try_trailing_gap_recovery` (never `_probe_micro_gap_ink`'s own same-line/inter-line
+# candidates above, which stay on `MICRO_GAP_MAX_WIDTH_EM` unchanged). The wrap-trailing case
+# has no real right-anchor block to bound the probe region against (that is precisely why it
+# falls to a synthetic guess at all) -- live-traced real defect: reusing the SAME generous
+# 1.5em bound here diluted a real, ink-positive degree-symbol region (an isolated glyph
+# occupying only a small fraction of that width, with mostly blank page margin filling the
+# rest) below `VISUAL_INK_CENTRAL_RATIO_THRESHOLD` (0.0238 measured vs. 0.05 required) --
+# NOT an ink-negative case, a too-wide-probe case. Rather than guess a second single magic
+# width, try increasingly wide probes (narrowest first) and stop at the first one that clears
+# the ink threshold -- the narrowest width that already contains the glyph gives the least-
+# diluted ratio. Capped at `MICRO_GAP_MAX_WIDTH_EM`, the same bound the same-line/inter-line
+# probes already enforce, so this never searches wider than an ordinary character either.
+WRAP_TRAILING_PROBE_WIDTHS_EM = (0.35, 0.5, 0.75, 1.0, MICRO_GAP_MAX_WIDTH_EM)
+
+
+def _probe_micro_gap_ink(
+    doc: "pymupdf.Document", page_number: int, page_blocks: PageBlocks, left_bbox: tuple[float, float, float, float], right_bbox: tuple[float, float, float, float], ref_size: float
+) -> Optional[SuspiciousGap]:
+    """Prototype 2.6G2.8S1.2 TRACK B -- root cause D (CANDIDATE_REJECTED_BY_GEOMETRY). The
+    real second degree-symbol gap (~4.8pt) sits BELOW `_detect_suspicious_gaps`'s own
+    `SUSPICIOUS_GAP_EM_MULTIPLIER (0.6) x font_size (~9.96pt) ~= 5.98pt` threshold -- that
+    page-wide detector is deliberately tuned for a FULL missing character (the original "k"/
+    "cos i" cases) and never emitted a `SuspiciousGap` here at all, so nothing downstream
+    (same-line or inter-line) ever had one to match against.
+
+    Per section 8's own key principle: candidate strength for a SAME-ROW adjacent-native
+    interval should come from NO NATIVE OWNERSHIP + LOCAL RENDERED INK, never from requiring
+    the missing region to be as wide as an ordinary character -- small scientific glyphs
+    (deg., middle dot, primes, ...) are legitimately narrower than that. This performs a
+    LOCAL, targeted ink probe directly on the geometric interval between two specific
+    candidate anchors (reusing the exact same `_render_gap_ink_ratio` machinery the page-wide
+    detector's own downstream ink gate already uses) -- never a second page-wide detection
+    pass, and never globally loosening `SUSPICIOUS_GAP_EM_MULTIPLIER` (section 7's explicit
+    prohibition: that would raise false candidates across ALL ordinary typography). Bounded to
+    `MICRO_GAP_MAX_WIDTH_EM` so a genuine missing WORD or a large column gap can never reach
+    this path (that shape stays exclusively the page-wide detector's own concern). Requires a
+    real, positive Y-overlap (same visual row) and a real, positive X interval (spans/lines
+    that already touch or overlap have nothing to probe). Ordinary word-spacing reliably has
+    NO ink in its own interval (section 17's own required negative) -- this is what keeps the
+    mechanism from firing on ordinary prose: the geometry alone never decides, only rendered
+    ink does."""
+    gx0, gx1 = min(left_bbox[2], right_bbox[0]), max(left_bbox[2], right_bbox[0])
+    if gx1 <= gx0:
+        return None
+    gy0, gy1 = max(left_bbox[1], right_bbox[1]), min(left_bbox[3], right_bbox[3])
+    if gy1 <= gy0:
+        return None  # no real Y overlap -- not the same visual row
+    width_pt = (gx1 - gx0) * page_blocks.width
+    if width_pt > MICRO_GAP_MAX_WIDTH_EM * max(ref_size, 1.0):
+        return None  # too wide to be a single missing glyph
+    candidate_bbox = (gx0, gy0, gx1, gy1)
+    ink_ratio = _render_gap_ink_ratio(doc, page_number, candidate_bbox, page_blocks.width, page_blocks.height)
+    _trace("MICRO_GAP_PROBE", gapBbox=candidate_bbox, widthPt=width_pt, refSize=ref_size, visualInkRatio=ink_ratio, outcome="ink_positive" if ink_ratio > VISUAL_INK_CENTRAL_RATIO_THRESHOLD else "no_ink")
+    if ink_ratio <= VISUAL_INK_CENTRAL_RATIO_THRESHOLD:
+        return None
+    return SuspiciousGap(bbox=candidate_bbox)
+
+
+def _find_span_gap_candidates(doc: "pymupdf.Document", page_number: int, page_blocks: PageBlocks, line: Line) -> list[tuple[Span, Span, SuspiciousGap]]:
+    """Prototype 2.6G2.8S1.1 -- root cause C (same-line native intervals are never
+    inspected). `_gap_between_lines` only ever checks a `SuspiciousGap` against two
+    DIFFERENT `Line` objects that are consecutive in a selection's own assembled sequence --
+    a gap sitting between two SPANS of the SAME line (the live-traced real shape: "...angle
+    (39.31" and ") and solar..." are two spans of ONE PyMuPDF line once the surrounding text
+    is close enough together not to force a separate line) was never checked against
+    anything at all.
+
+    Two independent shapes are checked, both reusing the exact SuspiciousGap list
+    `_detect_suspicious_gaps` already computed (never a second gap-detection pass):
+
+    (a) EMPTY-INTERVAL shape: an ordinary gap sitting strictly BETWEEN two adjacent spans'
+    own bboxes, with no span at all inside it (the shape `_gap_between_lines` already
+    handles, here applied at span- rather than line-granularity).
+
+    (b) PLACEHOLDER-SPAN shape (the live-traced real one): PyMuPDF's own dict-mode text
+    extraction sometimes synthesizes a SEPARATE SPAN for an unrecognized glyph's own
+    geometric region, containing nothing but a single space character, its bbox exactly
+    matching one of `_detect_suspicious_gaps`'s own detected gaps -- not an empty interval
+    between two spans, but a real (whitespace-only) span coinciding with one. The flanking
+    NON-whitespace spans immediately before/after it are the genuine anchors."""
+    spans_sorted = sorted(line.spans, key=lambda s: s.bbox[0])
+    candidates: list[tuple[Span, Span, SuspiciousGap]] = []
+    seen_gap_ids: set[int] = set()
+
+    def _gap_key(gap: SuspiciousGap) -> int:
+        return id(gap)
+
+    # Shape (a): empty interval between two adjacent spans.
+    for a, b in zip(spans_sorted, spans_sorted[1:]):
+        for gap in page_blocks.suspiciousGaps:
+            gx0, gy0, gx1, gy1 = gap.bbox
+            y_ok = (a.bbox[1] <= gy1 and gy0 <= a.bbox[3]) and (b.bbox[1] <= gy1 and gy0 <= b.bbox[3])
+            if not y_ok:
+                continue
+            if abs(a.bbox[2] - gx0) <= _LINE_GAP_X_TOL and abs(b.bbox[0] - gx1) <= _LINE_GAP_X_TOL:
+                candidates.append((a, b, gap))
+                seen_gap_ids.add(_gap_key(gap))
+                break
+
+    # Shape (b): a whitespace-only span whose own bbox coincides with a detected gap.
+    for idx, mid in enumerate(spans_sorted):
+        if mid.text.strip() or idx == 0 or idx == len(spans_sorted) - 1:
+            continue
+        prev_span, next_span = spans_sorted[idx - 1], spans_sorted[idx + 1]
+        for gap in page_blocks.suspiciousGaps:
+            if _gap_key(gap) in seen_gap_ids:
+                continue
+            gx0, gy0, gx1, gy1 = gap.bbox
+            y_ok = mid.bbox[1] <= gy1 and gy0 <= mid.bbox[3]
+            x_ok = abs(mid.bbox[0] - gx0) <= _LINE_GAP_X_TOL and abs(mid.bbox[2] - gx1) <= _LINE_GAP_X_TOL
+            if y_ok and x_ok:
+                candidates.append((prev_span, next_span, gap))
+                seen_gap_ids.add(_gap_key(gap))
+                break
+
+    # Shape (b2) -- Prototype 2.6G2.8S1.2 TRACK B: the SAME placeholder-span shape as (b),
+    # but no page-wide `SuspiciousGap` survived the em-multiplier width gate for a narrow
+    # scientific glyph (root cause D -- the real second degree symbol's own placeholder span
+    # is exactly this shape at ~4.8pt, under the ~5.98pt threshold). Probes the placeholder
+    # span's OWN bbox directly -- shape (c) below only ever looks at the interval BETWEEN two
+    # adjacent non-empty spans, which is zero-width here since the placeholder span already
+    # fills it edge-to-edge.
+    already_placeholder_paired = {(prev.bbox, nxt.bbox) for prev, nxt, _ in candidates}
+    for idx, mid in enumerate(spans_sorted):
+        if mid.text.strip() or idx == 0 or idx == len(spans_sorted) - 1:
+            continue
+        prev_span, next_span = spans_sorted[idx - 1], spans_sorted[idx + 1]
+        if (prev_span.bbox, next_span.bbox) in already_placeholder_paired:
+            continue
+        probed = _probe_micro_gap_ink(doc, page_number, page_blocks, prev_span.bbox, next_span.bbox, _line_font_size(line))
+        if probed is not None:
+            candidates.append((prev_span, next_span, probed))
+            already_placeholder_paired.add((prev_span.bbox, next_span.bbox))
+
+    # Shape (c) -- Prototype 2.6G2.8S1.2 TRACK B: no page-wide `SuspiciousGap` survived the
+    # em-multiplier width gate (root cause D), but a genuinely ink-positive micro-interval
+    # still exists between two adjacent spans. Priority: an existing page-wide match (shapes
+    # a/b above) always wins first (section 10 -- never a duplicate probe when one already
+    # succeeded); this only ever fires for a pair with NO match in either shape.
+    already_paired = {(a.bbox, b.bbox) for a, b, _ in candidates}
+    for a, b in zip(spans_sorted, spans_sorted[1:]):
+        if (a.bbox, b.bbox) in already_paired:
+            continue
+        probed = _probe_micro_gap_ink(doc, page_number, page_blocks, a.bbox, b.bbox, _line_font_size(line))
+        if probed is not None:
+            candidates.append((a, b, probed))
+
+    return candidates
+
+
+def _recover_interior_line_gaps(doc: "pymupdf.Document", page_number: int, page_blocks: PageBlocks, line: Line, text: str) -> str:
+    """Prototype 2.6G2.8S1.1 -- for each genuinely ink-positive same-line span gap (see
+    `_find_span_gap_candidates`), reuses the EXACT same OCR-recovery mechanism the D2
+    inter-line/trailing-gap pipeline already uses (`_attempt_gap_recovery`/
+    `_recover_gap_text`/`RecoveredFragment`) -- never a separate OCR architecture -- by
+    wrapping each of the two flanking spans in a minimal pseudo-`Line` (same `.text`/`.bbox`
+    contract `_attempt_gap_recovery` already reads). `text` (not `line.text`) is the value
+    actually being spliced, matching the caller's own boundary-substitution -- a gap whose
+    flanking span text is no longer findable in `text` (fully clipped out of the selection by
+    a boundary) is silently skipped, never recovered from outside the user's own selection.
+
+    Splice position: `_reconstruct_line_span_texts` (D1) may have already converted the exact
+    same missing-glyph gap into a bare inserted SPACE (proven word-gap geometry, no character
+    evidence to insert one) -- if `text` has a single space immediately at the splice point,
+    it is CONSUMED (not left behind alongside the recovered glyph), matching hard gate
+    SAME_LINE_FALSE_SPACE_INSERTION -- never `"39.31 °"`, always `"39.31°"` unless the OCR
+    evidence itself showed a genuine separator (`RecoveredFragment.leading_separator`/
+    `.trailing_separator`, honored below, never a universal prepend-space rule)."""
+    for a, b, gap in _find_span_gap_candidates(doc, page_number, page_blocks, line):
+        idx = text.find(a.text)
+        if idx == -1:
+            continue
+        insert_at = idx + len(a.text)
+        if text.find(b.text, insert_at) == -1:
+            continue
+        ink_ratio = _render_gap_ink_ratio(doc, page_number, gap.bbox, page_blocks.width, page_blocks.height)
+        if ink_ratio <= VISUAL_INK_CENTRAL_RATIO_THRESHOLD:
+            _trace("GAP_INK", scope="same_line", gapBbox=gap.bbox, visualInkRatio=ink_ratio, outcome="no_ink_dropped")
+            continue  # ordinary whitespace -- never OCR'd (SAME_LINE_FALSE_RECOVERY = 0)
+        _trace("GAP_INK", scope="same_line", gapBbox=gap.bbox, visualInkRatio=ink_ratio, outcome="ink_positive_candidate")
+        pseudo_a = Line(text=a.text, bbox=a.bbox, spans=[a])
+        pseudo_b = Line(text=b.text, bbox=b.bbox, spans=[b])
+        fragment = _attempt_gap_recovery(doc, page_number, page_blocks.width, page_blocks.height, pseudo_a, pseudo_b)
+        if fragment is None:
+            raise HTTPException(
+                status_code=422,
+                detail={"error": "missing_glyph_unresolved", "message": "a visually-present but text-unextractable glyph could not be confidently recovered"},
+            )
+        remainder = text[insert_at:]
+        consumed_placeholder = 1 if remainder.startswith(" ") else 0
+        spliced = fragment.leading_separator + fragment.text + fragment.trailing_separator
+        text = text[:insert_at] + spliced + remainder[consumed_placeholder:]
+    return text
+
+
+def _clip_forward_boundary_overreach(boundary_text: str, subsequent_lines: list[Line]) -> str:
+    """Prototype 2.6G2.8D1 -- server-side defense in depth (item 5/8): even though the client
+    (PdfViewer.tsx's `extractWithinLine`) now scopes its own boundary text geometrically, this
+    service must not blindly trust that a client-supplied boundary string never overreaches
+    into a SUBSEQUENT trusted line's own content -- the traced live bug (2.8C) was exactly a
+    client boundary text ("In the case of lower values, the denominator is increased and")
+    that already contained the ENTIRE next trusted line ("values, the denominator is increased
+    and") glued onto the click line, which then got emitted a SECOND time as that next line's
+    own normal contribution.
+
+    This is ownership CLIPPING by trusted-line identity, in strict source order -- never
+    arbitrary output-string deduplication (item 1/10/11): `subsequent_lines` (already in
+    reading order, starting immediately after the boundary line) form a set of CONSECUTIVE
+    candidate runs -- all of them, then all but the last, and so on down to just the first --
+    and the LONGEST run whose joined text is an exact trailing match of `boundary_text` is
+    clipped away in one step (this correctly handles an overreach spanning more than one
+    subsequent line, never just the immediately-next one, while still only ever considering a
+    CONSECUTIVE prefix of `subsequent_lines` starting at the boundary line -- never skipping
+    ahead to a later line, never matching a non-contiguous run). A genuinely repeated phrase
+    that is not an exact trailing match to any such consecutive run (e.g. "The value was
+    measured" followed by "The value was measured again" -- item 11's own required negative)
+    is left completely untouched, because no run's joined text is ever a trailing match there.
+
+    Uses plain, exact (not ligature/whitespace-normalized) matching only -- normalizing for
+    comparison would require re-deriving the matched length in the ORIGINAL string, which is
+    not always safe when normalization changes string length (e.g. a ligature codepoint
+    collapsing to two ASCII characters); the traced bug and its regression fixture are both
+    exact-text overreaches, so the simpler, safer rule is preferred and a normalization-
+    requiring overreach (rare) is left unclipped rather than risk a wrong clip.
+    """
+    stripped = boundary_text.rstrip()
+    for run_length in range(len(subsequent_lines), 0, -1):
+        candidates = [subsequent_lines[i].text.strip() for i in range(run_length)]
+        if any(not c for c in candidates):
+            continue
+        joined = " ".join(candidates)
+        if stripped.endswith(joined):
+            return stripped[: len(stripped) - len(joined)].rstrip()
+    return boundary_text
+
+
+def _clip_backward_boundary_overreach(boundary_text: str, preceding_lines: list[Line]) -> str:
+    """Mirror image of `_clip_forward_boundary_overreach` for the 'backward' direction (the
+    selection's END boundary, which owns text from the start of its own line up to the click):
+    checks CONSECUTIVE runs of `preceding_lines` (already in reverse reading order, starting
+    immediately before the boundary line) against the accumulated text's own LEADING region
+    instead of its trailing one, trimming the longest matching run from the front. Same exact-
+    match-only, strict-order, longest-consecutive-run discipline."""
+    stripped = boundary_text.lstrip()
+    for run_length in range(len(preceding_lines), 0, -1):
+        candidates = [preceding_lines[i].text.strip() for i in range(run_length)]
+        if any(not c for c in candidates):
+            continue
+        # preceding_lines[0] is the line immediately before the boundary line, i.e. the one
+        # closest to the boundary text's own leading edge -- so the run must be joined in
+        # REVERSE of `preceding_lines`' own order to read correctly left-to-right.
+        joined = " ".join(reversed(candidates))
+        if stripped.startswith(joined):
+            return stripped[len(joined):].lstrip()
+    return boundary_text
 
 
 def _line_texts_with_boundary(lines: list[Line], boundary_text: str, direction: str) -> list[str]:
@@ -726,14 +1524,22 @@ def _line_texts_with_boundary(lines: list[Line], boundary_text: str, direction: 
     `boundary_text` (click-to-end-of-line, or start-of-line-to-click) -- never its own full
     `line.text`, which could include content before/after the click that isn't part of the
     selection. `lines` is `_block_boundary_lines`'s own output: the click line is first for
-    'forward', last for 'backward'."""
+    'forward', last for 'backward'.
+
+    Prototype 2.6G2.8D1: `boundary_text` passed in here is expected to have ALREADY been
+    clipped by the caller (`_clip_forward_boundary_overreach`/`_clip_backward_boundary_
+    overreach`) against the FULL reading-order line sequence for this fragment -- which, for
+    a same-page cross-BLOCK selection, spans more than just this one block's own `lines` (see
+    `_layout_selection_impl`'s own call site, which clips against `combined_lines` before
+    calling this function). This function itself only knows about one block's lines, so it
+    cannot safely re-derive that broader context -- it stays a plain substitution."""
     texts = [l.text for l in lines]
     if not texts:
         return texts
     if direction == "forward":
-        texts[0] = boundary_text
+        texts[0] = _prefer_trusted_line_text_for_boundary(boundary_text, lines[0])
     else:
-        texts[-1] = boundary_text
+        texts[-1] = _prefer_trusted_line_text_for_boundary(boundary_text, lines[-1])
     return texts
 
 
@@ -774,7 +1580,108 @@ def _join_prose_fragments(fragments: list[str]) -> str:
     return result
 
 
-def _assemble_lines_with_gap_recovery(doc: "pymupdf.Document", page_number: int, page_blocks: PageBlocks, lines: list[Line], line_texts: list[str]) -> str:
+def _try_trailing_gap_recovery(doc: "pymupdf.Document", page_number: int, page_blocks: PageBlocks, line: Line, text: str, wrap_next_line: Optional[Line] = None) -> str:
+    """Prototype 2.6G2.8D2 (TYPE C trailing/edge gap), factored out unchanged and generalized
+    in Prototype 2.6G2.8S1.3 to run for ANY line reached by the assembly, not only the true
+    final line of the whole selection. Live-traced real defect (the "at 2[°] intervals,"
+    shape): the missing glyph sits at a genuine LINE-WRAP boundary interior to the selection
+    -- `line`'s own same-row trailing sibling is NOT `lines[i + 1]` in the assembled sequence
+    at all (that next entry is the FOLLOWING VISUAL ROW, on a completely different Y), so
+    neither the ordinary inter-line loop nor the same-line micro-gap fallback (both of which
+    only ever compare `line` against the sequence's own declared "next" line) can find it. The
+    original `check_trailing_gap`-only version of this logic only ever ran once, for
+    `lines[-1]`; this same, otherwise-unmodified mechanism is now reusable for every interior
+    line too. Same non-blocking abstain semantics as the original: the adjacent line sits
+    OUTSIDE the user's own selected line sequence, so failing to recover it must never fail
+    the whole request -- it silently leaves `text` unchanged instead.
+
+    `wrap_next_line`: a SECOND live-traced shape, one level narrower than the block-sibling
+    case above -- the missing glyph sits at `line`'s own row's own RIGHT MARGIN, with no
+    further block on that row at all (the row has too little remaining width for the next
+    WORD to also fit, so it wraps -- the classic word-wrap point, just with the wrapped
+    glyph itself unowned). `_find_trailing_adjacent_line` finds nothing here by construction
+    (there is no candidate block to find). When the caller supplies the TRUE next line in
+    reading order (which visually sits on the FOLLOWING row, geometrically unrelated to
+    `line`'s own row), a small synthetic probe immediately past `line`'s own trailing edge
+    is ink-checked instead of a discovered block's own geometry, and that same next-line
+    text is used as `_attempt_gap_recovery`'s own right anchor -- OCR crops the union of the
+    two lines' bboxes regardless of row difference, exactly as the ordinary D2 trailing case
+    already does when the two lines it bridges are NOT visually adjacent either."""
+    trailing_adjacent = _find_trailing_adjacent_line(page_blocks, line)
+    is_wrap_fallback = False
+    if trailing_adjacent is not None:
+        gap_width_pt = (trailing_adjacent.bbox[0] - line.bbox[2]) * page_blocks.width
+        if gap_width_pt <= SUSPICIOUS_GAP_MIN_PT:
+            return text
+        trailing_gap_bbox = (line.bbox[2], min(line.bbox[1], trailing_adjacent.bbox[1]), trailing_adjacent.bbox[0], max(line.bbox[3], trailing_adjacent.bbox[3]))
+    elif wrap_next_line is not None:
+        # Prototype 2.6G2.8S1.3a -- there is no real right-anchor block to bound this probe
+        # against (that is precisely why this is a synthetic guess at all), so a SINGLE fixed
+        # width risks either missing a narrow glyph (too tight) or diluting a real one below
+        # threshold with surrounding blank margin (too wide -- the live-traced actual defect:
+        # a 1.5em probe measured 0.0238 ink, under the 0.05 gate, on a genuinely ink-positive
+        # degree symbol). Adaptive instead of a second guessed magic number: try increasingly
+        # wide probes, narrowest first, and use the FIRST one that clears the ink threshold --
+        # a real, isolated trailing glyph is concentrated near `line`'s own edge, so the
+        # narrowest width that already contains it gives the least-diluted, most reliable
+        # ratio; still hard-capped at `MICRO_GAP_MAX_WIDTH_EM` (the same "never wider than an
+        # ordinary character" bound the same-line/inter-line probes already enforce).
+        font_size = max(_line_font_size(line), 1.0)
+        trailing_gap_bbox = None
+        trailing_ink_ratio = 0.0
+        for probe_em in WRAP_TRAILING_PROBE_WIDTHS_EM:
+            probe_width_norm = (probe_em * font_size) / page_blocks.width
+            candidate_bbox = (line.bbox[2], line.bbox[1], min(line.bbox[2] + probe_width_norm, 1.0), line.bbox[3])
+            candidate_ratio = _render_gap_ink_ratio(doc, page_number, candidate_bbox, page_blocks.width, page_blocks.height)
+            _trace("S1_3A_WRAP_PROBE", probeEm=probe_em, gapBbox=candidate_bbox, visualInkRatio=candidate_ratio)
+            if candidate_ratio > VISUAL_INK_CENTRAL_RATIO_THRESHOLD:
+                trailing_gap_bbox = candidate_bbox
+                trailing_ink_ratio = candidate_ratio
+                break
+        if trailing_gap_bbox is None:
+            trailing_gap_bbox = (line.bbox[2], line.bbox[1], min(line.bbox[2] + (WRAP_TRAILING_PROBE_WIDTHS_EM[-1] * font_size) / page_blocks.width, 1.0), line.bbox[3])
+        trailing_adjacent = wrap_next_line
+        is_wrap_fallback = True
+    else:
+        return text
+    if not is_wrap_fallback:
+        trailing_ink_ratio = _render_gap_ink_ratio(doc, page_number, trailing_gap_bbox, page_blocks.width, page_blocks.height)
+    if trailing_ink_ratio <= VISUAL_INK_CENTRAL_RATIO_THRESHOLD:
+        _trace("GAP_INK", i="trailing", gapBbox=trailing_gap_bbox, visualInkRatio=trailing_ink_ratio, outcome="no_ink_dropped")
+        return text
+    _trace("GAP_INK", i="trailing", gapBbox=trailing_gap_bbox, visualInkRatio=trailing_ink_ratio, outcome="ink_positive_candidate")
+    # is_wrap_fallback: `line`/`trailing_adjacent` are on DIFFERENT rows -- `trailing_adjacent`
+    # (the next row) always has a SMALLER x0 (back at the left margin) despite coming SECOND
+    # in reading order, so the default x-position sort would silently swap the anchors.
+    trailing_recovered = _attempt_gap_recovery(
+        doc,
+        page_number,
+        page_blocks.width,
+        page_blocks.height,
+        line,
+        trailing_adjacent,
+        reading_order=is_wrap_fallback,
+        extra_crop_bbox=trailing_gap_bbox if is_wrap_fallback else None,
+    )
+    if trailing_recovered is None:
+        _trace("ASSEMBLE_TRAILING_GAP", recovered=None, adjacentLineText=trailing_adjacent.text, outcome="abstained_unresolved")
+        return text
+    trusted_prefix = line.text
+    if text.startswith(trusted_prefix):
+        insert_at = len(trusted_prefix)
+        remainder = text[insert_at:]
+        if remainder[:1].isspace():
+            remainder = remainder[1:]
+        result = trusted_prefix + trailing_recovered.leading_separator + trailing_recovered.text + remainder
+    else:
+        result = text + trailing_recovered.leading_separator + trailing_recovered.text
+    _trace("ASSEMBLE_TRAILING_GAP", recovered=trailing_recovered, adjacentLineText=trailing_adjacent.text, textAfter=result)
+    return result
+
+
+def _assemble_lines_with_gap_recovery(
+    doc: "pymupdf.Document", page_number: int, page_blocks: PageBlocks, lines: list[Line], line_texts: list[str], check_trailing_gap: bool = False, check_leading_gap: bool = False
+) -> str:
     """Joins `line_texts` in order with `_join_prose_fragments` (ordinary visual prose
     boundaries remain ``\\n`` so the frontend's existing normalizePdfSelectionText applies
     its established whitespace/hyphenation policy); `lines` supplies
@@ -833,6 +1740,11 @@ def _assemble_lines_with_gap_recovery(doc: "pymupdf.Document", page_number: int,
     pending_tight_merge = False
     skip_next_text = False
     for i, text in enumerate(line_texts):
+        # Prototype 2.6G2.8S1.1 -- same-line interior gap recovery, checked for EVERY line
+        # actually reached by this assembly (not just the two ordinary-loop endpoints below,
+        # which only ever compare ADJACENT LINES against each other -- a gap living entirely
+        # inside one line's own span sequence needs its own, independent check here).
+        text = _recover_interior_line_gaps(doc, page_number, page_blocks, lines[i], text)
         if LAYOUT_TRACE_ENABLED:
             _trace(
                 "ASSEMBLE_ITER_START",
@@ -842,6 +1754,14 @@ def _assemble_lines_with_gap_recovery(doc: "pymupdf.Document", page_number: int,
                 pendingTightMergeBefore=pending_tight_merge,
                 skipNextTextBefore=skip_next_text,
                 partsBefore=list(parts),
+            )
+        if os.environ.get("PGT_S1_1A_DEBUG") == "1":
+            _trace(
+                "S1_1A_LINE_SPANS",
+                i=i,
+                lineBbox=lines[i].bbox,
+                lineText=lines[i].text,
+                spans=[{"bbox": s.bbox, "text": s.text, "font": s.font, "size": s.size} for s in lines[i].spans],
             )
         if skip_next_text:
             skip_next_text = False
@@ -856,6 +1776,42 @@ def _assemble_lines_with_gap_recovery(doc: "pymupdf.Document", page_number: int,
             continue
         gap = _gap_between_lines(page_blocks, lines[i], lines[i + 1])
         if gap is None:
+            # Prototype 2.6G2.8S1.2 TRACK B -- the real second degree-symbol gap is this
+            # exact shape: TWO SEPARATE `Line` objects, genuinely adjacent on the same visual
+            # row, whose own micro-gap never survived `_detect_suspicious_gaps`'s em-width
+            # gate (root cause D). Same local-ink-probe fallback as the same-line span case,
+            # applied here for cross-Line same-row adjacency instead.
+            gap = _probe_micro_gap_ink(doc, page_number, page_blocks, lines[i].bbox, lines[i + 1].bbox, max(_line_font_size(lines[i]), _line_font_size(lines[i + 1])))
+        if os.environ.get("PGT_S1_1A_DEBUG") == "1":
+            nearby = [
+                g.bbox
+                for g in page_blocks.suspiciousGaps
+                if (lines[i].bbox[1] <= g.bbox[3] and g.bbox[1] <= lines[i].bbox[3])
+                or (lines[i + 1].bbox[1] <= g.bbox[3] and g.bbox[1] <= lines[i + 1].bbox[3])
+            ]
+            _trace(
+                "S1_1A_GAP_CHECK",
+                i=i,
+                lineIBbox=lines[i].bbox,
+                lineI1Bbox=lines[i + 1].bbox,
+                matchedGap=gap.bbox if gap else None,
+                nearbySuspiciousGaps=nearby,
+            )
+        if gap is None:
+            # Prototype 2.6G2.8S1.3 -- root cause "interior line-wrap trailing gap": neither
+            # the ordinary inter-line check nor the same-row micro-gap fallback above found
+            # anything between `lines[i]` and `lines[i + 1]` -- meaning, if `lines[i]` has its
+            # OWN same-row trailing sibling at all, it is NOT `lines[i + 1]` (which therefore
+            # sits on a genuinely different row: the natural line-wrap continuation). The real
+            # "at 2[°] intervals," case is exactly this shape: "2" ends its own row's own last
+            # included block, the wrap continues on the NEXT VISUAL ROW ("intervals,..."),
+            # and the missing glyph sits in the gap between "2" and whatever ELSE shares its
+            # own row (never `lines[i + 1]`). Reuses `_try_trailing_gap_recovery` (the SAME
+            # mechanism previously only applied to the whole sequence's own final line) for
+            # every interior line too -- if `lines[i]` has no same-row trailing sibling at all
+            # (the overwhelmingly common case, ordinary paragraph text), this is a no-op.
+            if parts:
+                parts[-1] = _try_trailing_gap_recovery(doc, page_number, page_blocks, lines[i], parts[-1], wrap_next_line=lines[i + 1])
             if LAYOUT_TRACE_ENABLED:
                 _trace("ASSEMBLE_ITER_END", i=i, nextTrustedLineText=lines[i + 1].text, partsAfter=list(parts), gapCandidate=False)
             continue
@@ -864,16 +1820,33 @@ def _assemble_lines_with_gap_recovery(doc: "pymupdf.Document", page_number: int,
             _trace("GAP_INK", i=i, gapBbox=gap.bbox, visualInkRatio=ink_ratio, outcome="no_ink_dropped")
             continue  # ordinary whitespace/gutter -- ignore entirely, no warning, no OCR (item 19)
         _trace("GAP_INK", i=i, gapBbox=gap.bbox, visualInkRatio=ink_ratio, outcome="ink_positive_candidate")
-        recovered = _attempt_gap_recovery(doc, page_number, page_blocks.width, page_blocks.height, lines[i], lines[i + 1])
-        if recovered is None:
+        recovered_fragment = _attempt_gap_recovery(doc, page_number, page_blocks.width, page_blocks.height, lines[i], lines[i + 1])
+        if recovered_fragment is None:
             raise HTTPException(
                 status_code=422,
                 detail={"error": "missing_glyph_unresolved", "message": "a visually-present but text-unextractable glyph could not be confidently recovered"},
             )
+        # Prototype 2.6G2.8S1.3 -- this ordinary inter-line/inter-span gap loop now DOES use
+        # the fragment's own separator evidence (previously bare-content-only, "audited and
+        # deliberately left alone" -- but that left every recovered glyph reached THIS path,
+        # rather than the same-line splice path, with a stray preceding space after the
+        # frontend's own "\n" -> " " normalization: real "0[gap]and 46" -- three genuinely
+        # separate LINES/blocks, so this IS the path they take -- rendered "0 °" instead of
+        # "0°" for exactly this reason). Same principle M1.2a already established for the
+        # trailing-gap case: `leading_separator`/`trailing_separator` are read directly off
+        # the OCR evidence, never inferred from content -- "of" + " cos i" still gets its
+        # genuine space (separator is a real " " there), only a PROVEN-touching glyph like a
+        # degree symbol collapses tight.
+        recovered = recovered_fragment.text
         next_text = line_texts[i + 1]
         is_parenthesized = lines[i].text.rstrip().endswith(PARENTHESIZED_GAP_OPEN) and lines[i + 1].text.lstrip().startswith(PARENTHESIZED_GAP_CLOSE)
         if not is_parenthesized:
-            parts.append(recovered)
+            if recovered_fragment.leading_separator == "" and parts:
+                parts[-1] += recovered
+            else:
+                parts.append(recovered)
+            if recovered_fragment.trailing_separator == "":
+                pending_tight_merge = True
             if LAYOUT_TRACE_ENABLED:
                 _trace("ASSEMBLE_ITER_END", i=i, nextTrustedLineText=lines[i + 1].text, gapCandidate=True, isParenthesized=False, recovered=recovered, branch="ordinary_append", partsAfter=list(parts))
             continue
@@ -915,6 +1888,97 @@ def _assemble_lines_with_gap_recovery(doc: "pymupdf.Document", page_number: int,
                     "ASSEMBLE_ITER_END", i=i, nextTrustedLineText=lines[i + 1].text, gapCandidate=True, isParenthesized=True, recovered=recovered,
                     branch="fallback_append_no_fuse_match", partsAfter=list(parts),
                 )
+    # Prototype 2.6G2.8D2 -- TYPE C (trailing/edge) gap: see _find_trailing_adjacent_line's
+    # own doc comment. The candidate gap's own bbox is built DIRECTLY from the two trusted
+    # lines' own geometry, in the SAME shape `_detect_suspicious_gaps` computes internally
+    # (`(leftLine.x1, min(y0s), rightLine.x0, max(y1s))`) -- never from that function's own
+    # PRE-COMPUTED, PAGE-WIDE `suspiciousGaps` list (`_gap_between_lines`'s own lookup): that
+    # list groups spans into visual ROWS by y-CENTER proximity across the WHOLE PAGE, and a
+    # live real-PDF trace proved this inter-BLOCK pair can land in two slightly different rows
+    # by that grouping even though their own line bboxes plainly overlap in Y -- silently
+    # missing a genuine candidate. Computing the gap directly from the two ALREADY-CONFIRMED-
+    # ADJACENT lines sidesteps that row-grouping fragility entirely. Reuses the SAME
+    # suspicious-width threshold constants `_detect_suspicious_gaps` uses (never a new/looser
+    # rule) and the exact same ink-check + anchor-bounded OCR recovery as every inter-line gap
+    # above (`_render_gap_ink_ratio`, `_attempt_gap_recovery` -- neither modified for this).
+    #
+    # Deliberately does NOT raise `missing_glyph_unresolved` on an unrecoverable ink-positive
+    # trailing candidate the way the inter-line loop does: the adjacent line here sits OUTSIDE
+    # the user's own selected line sequence (often the start of a different, unselected
+    # sentence), so failing to recover it should not block the user's entire selection -- it
+    # abstains instead (item 14), leaving the trailing text exactly as the client's own
+    # boundary already had it.
+    #
+    # `check_trailing_gap` is only True when `lines` represents the TRUE final segment of the
+    # whole user selection (the same_block branch; the same-page cross-block branch's
+    # `combined_lines`; the cross-page branch's `last_lines` only, never `first_lines`) --
+    # otherwise `lines[-1]` is merely where THIS page/segment's own contribution happens to
+    # stop before the selection continues elsewhere, and treating whatever native text
+    # follows it as a "trailing gap" candidate would be wrong.
+    if check_trailing_gap and lines and parts:
+        parts[-1] = _try_trailing_gap_recovery(doc, page_number, page_blocks, lines[-1], parts[-1])
+
+    # Prototype 2.6G2.8S1.2 TRACK A -- symmetric LEADING-side counterpart of the trailing
+    # block above (root cause A: REAL_LINE_HAS_NO_SPAN_CANDIDATE). Live-traced real defect:
+    # the resolved start line (") and solar") begins partway across its own visual row; the
+    # preceding content on that SAME row ("...zenith angle (39.31") lives in a sibling block
+    # this selection's own `lines[]` never includes at all -- the missing degree symbol sits
+    # in the gap between that sibling's own trailing edge and `lines[0]`'s own leading edge.
+    #
+    # Boundary safety (never expand the user's own selection leftward): the client's own
+    # boundary text for the start position (`parts[0]`) is trusted AS-IS -- this only ever
+    # SPLICES a recovered glyph INTO a position already proven to exist inside that string
+    # (`parts[0].endswith(trusted_suffix)`, mirroring the trailing block's own `startswith`
+    # check). A leading sibling whose content the user never selected (a different column, a
+    # footnote, a neighboring paragraph -- section 6's own negative controls) can never cause
+    # `parts[0]` to grow, because nothing is ever PREPENDED, only spliced inside an existing
+    # match.
+    if check_leading_gap and lines and parts:
+        leading_adjacent = _find_leading_adjacent_line(page_blocks, lines[0])
+        if leading_adjacent is not None:
+            gap_width_pt = (lines[0].bbox[0] - leading_adjacent.bbox[2]) * page_blocks.width
+            # Same absolute-floor pre-filter as the trailing block (never the em-multiplier
+            # ratio -- calibrated for ordinary word gaps, proven too coarse for a narrow
+            # scientific glyph); the mandatory ink-ratio check below is the real gate.
+            is_suspicious = gap_width_pt > SUSPICIOUS_GAP_MIN_PT
+            if is_suspicious:
+                leading_gap_bbox = (
+                    leading_adjacent.bbox[2],
+                    min(lines[0].bbox[1], leading_adjacent.bbox[1]),
+                    lines[0].bbox[0],
+                    max(lines[0].bbox[3], leading_adjacent.bbox[3]),
+                )
+                leading_ink_ratio = _render_gap_ink_ratio(doc, page_number, leading_gap_bbox, page_blocks.width, page_blocks.height)
+                if leading_ink_ratio > VISUAL_INK_CENTRAL_RATIO_THRESHOLD:
+                    _trace("GAP_INK", i="leading", gapBbox=leading_gap_bbox, visualInkRatio=leading_ink_ratio, outcome="ink_positive_candidate")
+                    leading_recovered = _attempt_gap_recovery(doc, page_number, page_blocks.width, page_blocks.height, leading_adjacent, lines[0])
+                    if leading_recovered is not None:
+                        # Boundary safety (section 4): SPLICE ONLY -- never prepend. If the
+                        # client's own boundary text does not already end with this line's
+                        # trusted suffix (i.e. it never actually reached back far enough to
+                        # include the sibling's own selected content in the first place, or
+                        # the sibling is genuinely unrelated -- a different column, a
+                        # footnote, a neighboring paragraph), abstain entirely rather than
+                        # growing `parts[0]` leftward with content the user may never have
+                        # selected. This is intentionally STRICTER than the trailing block's
+                        # own fallback-append (appending extra TRAILING content is low-risk;
+                        # prepending unselected LEADING content is exactly what section 4
+                        # forbids).
+                        trusted_suffix = lines[0].text
+                        if parts[0].endswith(trusted_suffix):
+                            insert_at = len(parts[0]) - len(trusted_suffix)
+                            prefix = parts[0][:insert_at]
+                            if prefix[-1:].isspace():
+                                prefix = prefix[:-1]
+                            parts[0] = prefix + leading_recovered.text + leading_recovered.trailing_separator + trusted_suffix
+                            _trace("ASSEMBLE_LEADING_GAP", recovered=leading_recovered, adjacentLineText=leading_adjacent.text, partsAfter=list(parts))
+                        else:
+                            _trace("ASSEMBLE_LEADING_GAP", recovered=leading_recovered, adjacentLineText=leading_adjacent.text, outcome="abstained_boundary_suffix_mismatch")
+                    else:
+                        _trace("ASSEMBLE_LEADING_GAP", recovered=None, adjacentLineText=leading_adjacent.text, outcome="abstained_unresolved")
+                else:
+                    _trace("GAP_INK", i="leading", gapBbox=leading_gap_bbox, visualInkRatio=leading_ink_ratio, outcome="no_ink_dropped")
+
     result = _join_prose_fragments(parts)
     _trace("ASSEMBLE_RESULT", result=result)
     return result
@@ -956,12 +2020,31 @@ def _find_line_in_block(block: Block, y: float) -> Optional[Line]:
 
 _LIGATURES = {"ﬀ": "ff", "ﬁ": "fi", "ﬂ": "fl", "ﬃ": "ffi", "ﬄ": "ffl"}
 
+# Prototype 2.6G2.8M1.2 -- live-traced real defect: native PyMuPDF text uses a typographic
+# apostrophe ("object's", U+2019) while Paddle OCR's own output uses a plain ASCII apostrophe
+# ("object's", U+0027) for the SAME word -- NFKC does not canonicalize these (they are not
+# compatibility-equivalent), so an otherwise-correct, high-confidence OCR recovery
+# ("cos i", 0.9975 confidence) was silently discarded by `_recover_gap_text`'s anchor search.
+# Comparison-only (see `_normalize_for_match`'s own contract): never applied to
+# reconstructedText, native trusted text, or any OCR text actually stored for diagnostics --
+# only to the throwaway comparison copies used to locate an anchor. Single/double quote
+# classes are kept SEPARATE (never collapsed together) so an apostrophe can never anchor-match
+# a double-quote character or vice versa. U+02BC (MODIFIER LETTER APOSTROPHE) is not included
+# here -- no real case has justified it yet (see module-level scope discipline: only add an
+# equivalence a real, traced case actually proves necessary).
+_SINGLE_QUOTE_VARIANTS = '‘’'''  # LEFT/RIGHT SINGLE QUOTATION MARK, APOSTROPHE
+_DOUBLE_QUOTE_VARIANTS = '“”"'  # LEFT/RIGHT DOUBLE QUOTATION MARK, QUOTATION MARK
+_QUOTE_MATCH_TRANSLATION = str.maketrans(
+    {**{c: "'" for c in _SINGLE_QUOTE_VARIANTS}, **{c: '"' for c in _DOUBLE_QUOTE_VARIANTS}}
+)
+
 
 def _normalize_for_match(text: str) -> str:
-    """Comparison-only normalization (ligatures + NFKC + whitespace collapse) -- never
-    applied to text actually returned to the caller."""
+    """Comparison-only normalization (ligatures + typographic-quote folding + NFKC +
+    whitespace collapse) -- never applied to text actually returned to the caller."""
     for lig, plain in _LIGATURES.items():
         text = text.replace(lig, plain)
+    text = text.translate(_QUOTE_MATCH_TRANSLATION)
     text = unicodedata.normalize("NFKC", text)
     return re.sub(r"\s+", " ", text).strip()
 
@@ -1290,6 +2373,82 @@ def _equation_corridor_reference(before_block: Block, after_block: Block) -> Blo
     )
 
 
+def _find_intermediate_prose_blocks(doc: "pymupdf.Document", page_number: int, page_blocks: PageBlocks, first_block: Block, last_block: Block) -> list[Block]:
+    """Prototype 2.6G2.8S1 -- root cause D (INTERIOR_BLOCK_NOT_INCLUDED_IN_SELECTION). The
+    ordinary same-page cross-block assembly path only ever collected `first_block`'s own
+    lines (from the start anchor onward) and `last_block`'s own lines (up to the end anchor)
+    -- ANY block strictly between them in page block-index order was silently dropped, with
+    no code path that ever walked it at all. This was invisible for the common two-block
+    case (the real "cos i" control: one block ends, the very next block begins, nothing sits
+    between them), and was previously ALSO the deliberately correct behavior for a genuine
+    cross-column drag (Failure A: a footnote/figure-caption block geometrically between two
+    column endpoints must never be pulled in, since it was never part of the reading flow the
+    user actually dragged through). The real, live-traced GOMS/Kananaskis regression proved a
+    THIRD shape: ordinary single-column body prose that PyMuPDF happens to fragment into 3+
+    blocks (a symbol glyph the embedded font doesn't expose as extractable text can force a
+    new block boundary exactly the way it already forces a new LINE boundary in the trailing-
+    glyph/D2 case) -- here the "middle" block genuinely IS the next sentence in the same
+    reading flow and must be recovered, not skipped.
+
+    Distinguishing the two shapes needs no new heuristic: `_blocks_share_corridor` (already
+    used for the equation-aware walk) checked against BOTH endpoints INDEPENDENTLY -- never
+    the wide union corridor `_equation_corridor_reference` builds, which stays scoped to the
+    equation-number search precisely because it tolerates a narrow number block not literally
+    overlapping either side -- naturally excludes Failure A's footnote/caption (which shares
+    corridor with, at best, ONE of two different-column endpoints, never both) while including
+    genuine same-column continuation prose (which by construction shares the same x-range as
+    both the block before and the block after it). The vertical-position bound mirrors
+    `_find_intermediate_equation_blocks`'s own -- a candidate must sit between the two
+    endpoints' own y-extents, never elsewhere on the page.
+
+    Prototype 2.6G2.8S1.3 -- a FOURTH shape, live-traced from a real selection: a single
+    visual ROW split HORIZONTALLY into 3+ sibling blocks by consecutive unextractable-glyph
+    gaps ("...between 0" / "and 46" / "at 2" -- three separate blocks, one narrow degree-
+    symbol-sized gap between each). These siblings have ZERO x-overlap with each other by
+    construction (each occupies a disjoint horizontal slice of the same row), so the
+    vertical-corridor rule above -- correctly tuned for blocks STACKED underneath each other
+    -- can never match them; they were silently dropped exactly like the original root-cause-D
+    prose was, one level more granular.
+
+    Chain-walked separately from the vertical rule (never replacing it): starting from
+    `first_block`, each subsequent candidate in block-index order is ALSO accepted when it is
+    SAME-ROW-ADJACENT to the most recently accepted block in the chain (real Y-overlap,
+    positioned to its right). Deliberately NOT gated by a geometric width threshold alone --
+    this document's own left/right column gutter (~12pt) is narrower than some real missing-
+    glyph gaps can legitimately be, so no single width cutoff safely separates "genuine same-
+    row continuation" from "the start of a different column that happens to share a Y row by
+    coincidence." Reuses the SAME evidence this whole file already trusts for that exact
+    distinction: rendered ink. A genuine missing glyph is, by definition, ink-positive (the
+    reason the OCR-recovery pipeline exists at all); a genuine column gutter is, by
+    definition, blank. `_render_gap_ink_ratio` on the geometric interval between the chain
+    tail and the candidate is the deciding gate -- never a width number. This keeps Failure
+    A's own cross-column exclusion intact through TWO independent guarantees: those endpoints
+    sit on entirely different Y rows to begin with (no chain step ever starts there), and even
+    a coincidental same-row column-start candidate would still fail the ink gate (a gutter has
+    no ink to find)."""
+    first_idx = page_blocks.blocks.index(first_block)
+    last_idx = page_blocks.blocks.index(last_block)
+    if last_idx <= first_idx + 1:
+        return []
+    lo_y = min(first_block.bbox[1], last_block.bbox[1])
+    hi_y = max(first_block.bbox[3], last_block.bbox[3])
+    result: list[Block] = []
+    chain_tail = first_block
+    for b in page_blocks.blocks[first_idx + 1 : last_idx]:
+        vertical_ok = _blocks_share_corridor(b, first_block) and _blocks_share_corridor(b, last_block) and lo_y <= b.bbox[1] <= hi_y
+        same_row_ok = False
+        if not vertical_ok and b.bbox[1] < chain_tail.bbox[3] and b.bbox[3] > chain_tail.bbox[1] and b.bbox[0] >= chain_tail.bbox[2]:
+            probe_bbox = (chain_tail.bbox[2], min(chain_tail.bbox[1], b.bbox[1]), b.bbox[0], max(chain_tail.bbox[3], b.bbox[3]))
+            if probe_bbox[2] > probe_bbox[0]:
+                ink_ratio = _render_gap_ink_ratio(doc, page_number, probe_bbox, page_blocks.width, page_blocks.height)
+                same_row_ok = ink_ratio > VISUAL_INK_CENTRAL_RATIO_THRESHOLD
+                _trace("S1_3_SAME_ROW_CHAIN_PROBE", chainTailBlockId=chain_tail.blockId, candidateBlockId=b.blockId, gapBbox=probe_bbox, visualInkRatio=ink_ratio, outcome="chained" if same_row_ok else "no_ink_excluded")
+        if vertical_ok or same_row_ok:
+            result.append(b)
+            chain_tail = b
+    return result
+
+
 def _find_intermediate_equation_blocks(page_blocks: PageBlocks, before_block: Block, after_block: Block, include_after: bool = False, corridor_reference: Optional[Block] = None) -> list[Block]:
     """Prototype 2.5J item 6/9/34/35/36: searches the blocks between `before_block` and
     `after_block` in the page's own PyMuPDF block-index order (never page-wide -- item 9/34,
@@ -1425,7 +2584,7 @@ def _resolve_equation_aware_selection(
 
     combined = "\n".join(p for p in parts if p.strip())
     return SelectionResponse(
-        startBlockId=before_block.blockId, endBlockId=after_block.blockId, sameBlock=False, reconstructedText=combined, fragments=[Fragment(pageNumber=page_number, text=combined)]
+        startBlockId=before_block.blockId, endBlockId=after_block.blockId, sameBlock=False, reconstructedText=combined, fragments=[_build_fragment(page_number, combined)]
     )
 
 
@@ -1515,7 +2674,7 @@ def _layout_selection_impl(req: SelectionRequest) -> "SelectionResponse":
             # The user selected the equation-number token itself, alone -- no prose is ever
             # collected/prepended for this case (item 18/31).
             token = _equation_display_token(start_block)
-            return SelectionResponse(startBlockId=start_block.blockId, endBlockId=end_block.blockId, sameBlock=True, reconstructedText=token, fragments=[Fragment(pageNumber=req.start.pageNumber, text=token)])
+            return SelectionResponse(startBlockId=start_block.blockId, endBlockId=end_block.blockId, sameBlock=True, reconstructedText=token, fragments=[_build_fragment(req.start.pageNumber, token)])
         # Two different equation-number blocks selected directly -- ambiguous, never guess.
         raise HTTPException(status_code=422, detail={"error": "equation_endpoint_unresolved", "message": "selection spans two different equation-number blocks"})
     if start_is_eqnum and not end_is_eqnum:
@@ -1551,10 +2710,23 @@ def _layout_selection_impl(req: SelectionRequest) -> "SelectionResponse":
         # Multi-line same-block selections therefore use the browser's exact edge-line
         # boundaries plus PyMuPDF's trusted interior lines. A genuinely single-line
         # selection keeps the unchanged native fast path above.
-        line_texts[0], line_texts[-1] = lo_boundary, hi_boundary
-        repaired = _assemble_lines_with_gap_recovery(doc_state.doc, req.start.pageNumber, start_page, selected_lines, line_texts)
+        # Prototype 2.6G2.8D1: clip each boundary against the OTHER selected_lines before
+        # substituting -- a client boundary string can overreach into an interior trusted
+        # line's own content exactly as it did in the traced cross-block bug (see
+        # `_clip_forward_boundary_overreach`'s own doc comment); same-block selections have
+        # the identical foot-gun shape and are defended the same way.
+        # Prototype 2.6G2.8M2.2: after clipping overreach into OTHER lines, also reconcile
+        # the boundary line's own remaining content against ITS OWN trusted (D3-corrected)
+        # text -- see `_prefer_trusted_line_text_for_boundary`'s own doc comment.
+        line_texts[0] = _prefer_trusted_line_text_for_boundary(
+            _clip_forward_boundary_overreach(lo_boundary, selected_lines[1:]), selected_lines[0]
+        )
+        line_texts[-1] = _prefer_trusted_line_text_for_boundary(
+            _clip_backward_boundary_overreach(hi_boundary, list(reversed(selected_lines[:-1]))), selected_lines[-1]
+        )
+        repaired = _assemble_lines_with_gap_recovery(doc_state.doc, req.start.pageNumber, start_page, selected_lines, line_texts, check_trailing_gap=True, check_leading_gap=True)
         return SelectionResponse(
-            startBlockId=start_block.blockId, endBlockId=end_block.blockId, sameBlock=True, reconstructedText=repaired, fragments=[Fragment(pageNumber=req.start.pageNumber, text=repaired)]
+            startBlockId=start_block.blockId, endBlockId=end_block.blockId, sameBlock=True, reconstructedText=repaired, fragments=[_build_fragment(req.start.pageNumber, repaired)]
         )
 
     # Prototype 2.5J -> 2.5N: the UNIFIED equation-aware sequence assembler -- one shared
@@ -1614,24 +2786,63 @@ def _layout_selection_impl(req: SelectionRequest) -> "SelectionResponse":
     last_lines = _filter_block_lines_for_selection(
         last_page_blocks, last_block, _block_boundary_lines(last_block, last_line, "backward"), last_line
     )
-    first_line_texts = _line_texts_with_boundary(first_lines, first_boundary, "forward")
-    last_line_texts = _line_texts_with_boundary(last_lines, last_boundary, "backward")
 
     if first_page == last_page:
         # Same page, different block (e.g. same-page cross-column, or the real Soenen "k"
         # case: two different blocks on the SAME visual row) -- one fragment, no
         # middle-page concept applies. A candidate gap can legitimately sit exactly at the
         # first_lines/last_lines seam (item 26), so they're checked together as one list.
-        combined_lines = first_lines + last_lines
-        combined_line_texts = first_line_texts + last_line_texts
-        combined = _assemble_lines_with_gap_recovery(doc_state.doc, first_page, first_page_blocks, combined_lines, combined_line_texts)
-        fragments = [Fragment(pageNumber=first_page, text=combined)]
+        #
+        # Prototype 2.6G2.8D1 root-cause fix: `first_boundary`/`last_boundary` must be
+        # clipped against the FULL cross-block `combined_lines` sequence, not just
+        # `first_lines`/`last_lines` individually -- the traced live bug's overreaching start
+        # boundary swallowed a trusted line that belonged to a DIFFERENT block than
+        # `first_block` (it was the first line of `last_lines`, e.g. `first_block` held only
+        # "In the case of lower" while the swallowed "values, the denominator is increased
+        # and" was `last_block`'s own first line) -- a per-block-scoped clip could never see
+        # it. Clipping against the true combined reading-order sequence catches this
+        # regardless of which block each trusted line happens to belong to.
+        # Prototype 2.6G2.8S1 root-cause fix (D. INTERIOR_BLOCK_NOT_INCLUDED_IN_SELECTION):
+        # any block strictly between `first_block` and `last_block` that shares the same
+        # reading-flow corridor as BOTH of them (see `_find_intermediate_prose_blocks`'s own
+        # doc comment) contributes its own full, trusted lines here -- previously nothing
+        # between `first_lines`/`last_lines` was ever collected at all, silently dropping
+        # every genuinely intervening sentence/paragraph whenever ordinary same-column prose
+        # happened to land in 3+ PyMuPDF blocks between the two selection endpoints.
+        intermediate_lines: list[Line] = [line for block in _find_intermediate_prose_blocks(doc_state.doc, first_page, first_page_blocks, first_block, last_block) for line in block.lines]
+        if os.environ.get("PGT_S1_1A_DEBUG") == "1":
+            row_blocks = [
+                {"blockId": b.blockId, "bbox": b.bbox, "lines": [{"bbox": l.bbox, "text": l.text} for l in b.lines]}
+                for b in first_page_blocks.blocks
+                if b.bbox[1] < first_block.bbox[3] and b.bbox[3] > first_block.bbox[1]
+            ]
+            _trace(
+                "S1_1A_FIRST_BLOCK_FULL",
+                blockId=first_block.blockId,
+                blockBbox=first_block.bbox,
+                allLines=[{"bbox": l.bbox, "text": l.text} for l in first_block.lines],
+                firstLineResolved=first_line.bbox,
+            )
+            _trace("S1_3_SAME_ROW_BLOCKS", firstBlockId=first_block.blockId, rowBlocks=row_blocks)
+        combined_lines = first_lines + intermediate_lines + last_lines
+        first_boundary = _clip_forward_boundary_overreach(first_boundary, combined_lines[1:])
+        last_boundary = _clip_backward_boundary_overreach(last_boundary, list(reversed(combined_lines[:-1])))
+        first_line_texts = _line_texts_with_boundary(first_lines, first_boundary, "forward")
+        last_line_texts = _line_texts_with_boundary(last_lines, last_boundary, "backward")
+        intermediate_line_texts = [line.text for line in intermediate_lines]
+        combined_line_texts = first_line_texts + intermediate_line_texts + last_line_texts
+        combined = _assemble_lines_with_gap_recovery(doc_state.doc, first_page, first_page_blocks, combined_lines, combined_line_texts, check_trailing_gap=True, check_leading_gap=True)
+        fragments = [_build_fragment(first_page, combined)]
     else:
-        # Cross-page: a visual row can never span two rendered pages, so first_lines and
-        # last_lines are checked independently (each may still have its own internal gap).
-        first_text = _assemble_lines_with_gap_recovery(doc_state.doc, first_page, first_page_blocks, first_lines, first_line_texts)
-        last_text = _assemble_lines_with_gap_recovery(doc_state.doc, last_page, last_page_blocks, last_lines, last_line_texts)
-        fragments = [Fragment(pageNumber=first_page, text=first_text)]
+        # Cross-page: a visual row can never span two rendered pages, so a client boundary
+        # string cannot overreach across this seam -- first_lines and last_lines are checked
+        # independently (each may still have its own internal gap), no cross-block ownership
+        # clip needed here.
+        first_line_texts = _line_texts_with_boundary(first_lines, first_boundary, "forward")
+        last_line_texts = _line_texts_with_boundary(last_lines, last_boundary, "backward")
+        first_text = _assemble_lines_with_gap_recovery(doc_state.doc, first_page, first_page_blocks, first_lines, first_line_texts, check_leading_gap=True)
+        last_text = _assemble_lines_with_gap_recovery(doc_state.doc, last_page, last_page_blocks, last_lines, last_line_texts, check_trailing_gap=True)
+        fragments = [_build_fragment(first_page, first_text)]
         # Item 5 (R1)/45 (R5B), preserved: a page fully spanned by a 3+ page selection
         # contributes its own body-height content, never re-injecting header/footer/
         # footnote-sized blocks just because the page happens to be fully spanned.
@@ -1639,8 +2850,8 @@ def _layout_selection_impl(req: SelectionRequest) -> "SelectionResponse":
         for mid_page in range(first_page + 1, last_page):
             mid_text = _middle_page_text(req.documentId, mid_page)
             if mid_text.strip():
-                fragments.append(Fragment(pageNumber=mid_page, text=mid_text))
-        fragments.append(Fragment(pageNumber=last_page, text=last_text))
+                fragments.append(_build_fragment(mid_page, mid_text))
+        fragments.append(_build_fragment(last_page, last_text))
         combined = "\n".join(f.text for f in fragments)
 
     return SelectionResponse(startBlockId=start_block.blockId, endBlockId=end_block.blockId, sameBlock=False, reconstructedText=combined, fragments=fragments)

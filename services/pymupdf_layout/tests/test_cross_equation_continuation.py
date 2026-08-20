@@ -54,11 +54,12 @@ def _cross_equation_pdf_bytes() -> bytes:
       corridor's own before/after prose, but in the WRONG corridor -- must never be picked
       as that selection's intermediate equation (item 5/6/34/36).
 
-    RIGHT corridor, ordinary (no-equation) cross-block regression target (item 33/46):
+    RIGHT corridor, ordinary (no-equation) cross-block regression target (item 33/46;
+    2.6G2.8S1 -- the middle block's own text is now correctly INCLUDED, not skipped, see
+    that test's own updated doc comment):
     - "Ordinary first line of a plain sentence" / "ordinary middle line that must be
       skipped" / "ordinary final line of the same plain sentence" (y=500/530/560) -- three
-      separate blocks, same corridor, NO equation between them; the existing start-suffix +
-      end-prefix semantics (middle block skipped) must be completely unaffected.
+      separate blocks, same corridor, NO equation between them.
 
     RIGHT corridor, TWO intermediate equations (item 11/49, synthetic-only):
     - "Multi equation prose start here" (y=600) -> "(21)" (y=630) -> "middle prose between
@@ -155,7 +156,7 @@ def test_cross_equation_continuation_basic_case(client, registered_doc, monkeypa
     assert len(calls) == 1
 
 
-def test_cross_equation_ordinary_no_equation_cross_block_unaffected(client, registered_doc, monkeypatch):
+def test_cross_equation_ordinary_no_equation_cross_block_includes_intermediate_prose(client, registered_doc, monkeypatch):
     def _fail_if_called(_png_bytes):
         raise AssertionError("no equation and no real gap here -- OCR must never be called")
 
@@ -170,10 +171,18 @@ def test_cross_equation_ordinary_no_equation_cross_block_unaffected(client, regi
     )
     assert res.status_code == 200
     body = res.json()
-    # Item 33/46: same corridor, but NO equation between them -- the existing start-suffix +
-    # end-prefix semantics (middle block skipped) must be completely unchanged.
-    assert body["reconstructedText"] == "Ordinary first line of a plain sentence\nordinary final line of the same plain sentence"
-    assert "middle line that must be skipped" not in body["reconstructedText"]
+    # Prototype 2.6G2.8S1 -- this test previously asserted the middle block was DROPPED
+    # ("existing start-suffix + end-prefix semantics (middle block skipped)"), documenting
+    # what turned out to be exactly the real GOMS/Kananaskis regression's own root cause
+    # (D. INTERIOR_BLOCK_NOT_INCLUDED_IN_SELECTION) -- three same-corridor blocks with no
+    # equation between them is precisely the shape ordinary prose fragmented by an
+    # unextractable interior glyph produces. The middle line shares corridor with both
+    # endpoints and sits between them, so it is now correctly included; only a genuine
+    # cross-column/different-corridor block (Failure A) is still excluded (see
+    # test_fixtures.py's own Failure A regressions, still green).
+    assert body["reconstructedText"] == (
+        "Ordinary first line of a plain sentence\nordinary middle line that must be skipped\nordinary final line of the same plain sentence"
+    )
 
 
 def test_cross_corridor_selection_never_enters_new_path(client, registered_doc, monkeypatch):

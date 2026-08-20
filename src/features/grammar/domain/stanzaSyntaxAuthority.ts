@@ -291,7 +291,7 @@ export function buildClauseFrames(text: string, tokens: StanzaToken[], byHead: M
     return out
   }
 
-  return clauseHeadTokens
+  const frames = clauseHeadTokens
     .sort((a, b) => a.start - b.start)
     .map((headToken) => {
       const anchor = anchorClauseHead(byId.get(headToken.head)!, byId, clauseHeadIds)
@@ -305,6 +305,57 @@ export function buildClauseFrames(text: string, tokens: StanzaToken[], byHead: M
         predicateHeadIds: collectCoordinatedPredicates(headToken),
       }
     })
+
+  // Prototype 2.6G2.8E2 -- ORPHANED PREDICATE PROMOTION. `collectCoordinatedPredicates`'s own
+  // semicolon rule (above) correctly EXCLUDES a `conj`-attached predicate from its governing
+  // clause head's own `predicateHeadIds` when a semicolon separates them ("a semicolon-
+  // separated conjunct is a colon-introduced enumeration item, not a further coordinated
+  // action of the clause's own subject") -- live-traced real defect: a numbered-procedure
+  // enumeration ("... apart; (3) establish ...; ... unit; and (4) randomly divide ...") relies
+  // on exactly this exclusion to keep "establish"/"divide" out of the PRECEDING clause, but
+  // because their own raw deprel is `conj` (never itself a `CLAUSE_STARTING_DEPRELS` member),
+  // excluding them from the coordinate-predicate walk left them with NO ClauseFrame
+  // representation at all -- structurally usable verbs (isPredicateLikeToken already confirms
+  // this), simply never captured anywhere. This promotes any such orphan to its OWN
+  // independent clause frame, using the exact same construction every ordinary clause head
+  // gets -- general and dependency/punctuation-structural (never keyed to specific verbs:
+  // "collect"/"filter"/"train"/... would be promoted identically), and additive only (nothing
+  // already reachable via an existing frame's `predicateHeadIds` is ever touched).
+  //
+  // GATE: promotion must fire ONLY for a genuine numbered-enumeration member, never for an
+  // ordinary bare semicolon-coordinated predicate (e.g. "funding was adequate; staffing was
+  // insufficient; and oversight required revision" -- a colon-introduced list with no numbered
+  // markers, where "insufficient"/"revision" are ALREADY correctly rendered as nested coordinate
+  // members of "adequate"'s own subtree by the general conj-coordination machinery elsewhere;
+  // promoting them here duplicated that node under audit). The one general, non-lexical signal
+  // that distinguishes "excluded because it starts its OWN numbered member" from "excluded
+  // because it's just the next bare semicolon conjunct" is a numbered marker token, e.g. "(3)",
+  // sitting between the excluded predicate's own coordination parent and itself -- reuse the
+  // same `(\d{1,2})` marker shape the enumeration-item splitter itself recognizes.
+  const numberedMarkerBetween = (from: number, to: number) => /\(\s*\d{1,2}\s*\)/.test(text.slice(from, to))
+  const coveredIds = new Set(frames.flatMap((f) => f.predicateHeadIds))
+  const orphanedPredicateHeads = tokens.filter((t) => {
+    if (normalizeDep(t.deprel) !== 'conj' || clauseHeadIds.has(t.id) || coveredIds.has(t.id)) return false
+    if (!isPredicateLikeToken(t, byHead)) return false
+    const parent = byId.get(t.head)
+    return parent != null && numberedMarkerBetween(parent.end, t.start)
+  })
+  const promotedFrames = orphanedPredicateHeads
+    .sort((a, b) => a.start - b.start)
+    .map((headToken) => {
+      const anchor = anchorClauseHead(byId.get(headToken.head)!, byId, clauseHeadIds)
+      const marker = (byHead.get(headToken.id) ?? []).find((c) => normalizeDep(c.deprel) === 'mark') ?? null
+      return {
+        clauseId: headToken.id,
+        relation: classifyClauseRelation(headToken),
+        headTokenId: headToken.id,
+        parentClauseId: anchor ? anchor.id : null,
+        marker,
+        predicateHeadIds: collectCoordinatedPredicates(headToken),
+      }
+    })
+
+  return [...frames, ...promotedFrames].sort((a, b) => a.headTokenId - b.headTokenId)
 }
 
 // ============================================================================

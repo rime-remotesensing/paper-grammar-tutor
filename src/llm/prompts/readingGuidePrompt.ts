@@ -26,13 +26,32 @@ readingSteps:
 
 expressions:
 - Keep this sentence-wide and independent from Tree targets.
-- List reusable, non-obvious academic usage actually present in the sentence, in source order.
-- Prioritize verb/adjective/participle + preposition, collocations, and academic phrases such
-  as be based on ~. text must be an exact sentence substring. When "is based on" is present,
-  include it with pattern "be based on ~".
-- Do not output elementary subject/predicate labels, articles, conjunctions, generic passive
-  voice, generic "can be + past participle", or "where X is Y" as Expressions.
+- List EVERY reusable, non-obvious academic usage actually present in the sentence, in source
+  order -- do not stop after the first one found.
+- Prioritize academically reusable multiword units: verb/adjective/participle + preposition
+  (e.g. be based on ~, be associated with ~, result from ~, lead to ~, depend on ~), fixed
+  prepositional academic phrases (e.g. in terms of ~, with respect to ~, in contrast to ~),
+  and common academic passive/use constructions (e.g. be widely used in ~, be commonly applied
+  to ~). text must be an exact sentence substring.
+- Normalize pattern to its base learning form regardless of the sentence's actual inflection
+  (tense/number/voice): "is/are/was/were associated with" -> pattern "be associated with ~";
+  "results from"/"resulted from" -> pattern "result from ~". text stays the literal inflected
+  substring actually in the sentence; only pattern is normalized to the reusable base form.
+- An ordinary compositional verb + preposition combination with no fixed/reusable academic
+  value is not an expression (e.g. a bare intransitive verb + directional adverb like "flows
+  downhill" is plain description, not an expression). Do not output elementary
+  subject/predicate labels, articles, conjunctions, generic passive voice with no fixed
+  collocation, generic "can be + past participle", or "where X is Y" as Expressions.
+- When pattern ends in a trailing preposition (e.g. "~ in ~", "~ from ~", "~ on ~"), text must
+  be the single contiguous span that includes that same preposition -- never split one fixed
+  phrase into a bare-verb entry plus a separate preposition-phrase entry.
 - Return [] when there is no useful expression; never invent one.
+
+Example expressions output for "The estimates are based on ground-truth measurements and are
+evaluated in terms of root-mean-square error, which stems from instrument noise.":
+[{"text":"are based on","pattern":"be based on ~","meaning":"〜に基づいている","function":"on 以下を根拠として結びつける。"},
+{"text":"in terms of","pattern":"in terms of ~","meaning":"〜の観点で","function":"評価や比較の基準となる観点を示す。"},
+{"text":"stems from","pattern":"stem from ~","meaning":"〜に由来する","function":"from 以下を発生源として結びつける。"}]
 
 Every guidance/meaning/function field must be natural Japanese, never Chinese. pattern is a
 compact reusable English form such as "be based on ~".
@@ -98,10 +117,6 @@ function buildUserPrompt(sentence: string, targets: readonly TreeReadingTarget[]
   }
   if (/\brespectively\b/i.test(sentence)) {
     requirements.push('RESPECTIVELY: explicitly write every concrete first-list → second-list pair; a generic respectively explanation is invalid.')
-  }
-  const basedOn = sentence.match(/\b(?:am|is|are|was|were|be|been|being)\s+based\s+on\b/i)?.[0]
-  if (basedOn) {
-    requirements.push(`EXPRESSION: include {"text":"${basedOn}","pattern":"be based on ~"} with Japanese meaning/function.`)
   }
 
   return `Sentence:\n${sentence}\n\nAuthoritative Tree reading targets:\n${JSON.stringify(compactTargets, null, 2)}\n\nMandatory checks for this request:\n${requirements.join('\n') || '- Follow the general rules.'}`

@@ -43,6 +43,40 @@ function hasWordGap(prevRight: number, prevSize: number, nextLeft: number, nextS
 }
 
 /**
+ * Prototype 2.6G2.8D1 -- geometric (not DOM-structural) same-visual-line test, added
+ * alongside the existing `<br>`-based line termination in PdfViewer.tsx's `extractWithinLine`
+ * (never replacing it -- both checks must pass). Diagnosed live cause (2.8C trace): when a
+ * glyph has no DOM text-node representation at all (an italic variable like "k" rendered via
+ * a font pdf.js's TextLayer can't expose as extractable text), pdf.js sometimes does not
+ * insert a `<br>` at the true end of that visual line either, since its own internal text-item
+ * merging saw no boundary there -- a forward DOM walk that stops only at `<br>` then silently
+ * continues onto the NEXT visual line's own text nodes. This never depends on which specific
+ * glyph is missing (k, α, β, x, T, R², ...); it is purely about whether two segments' own
+ * rendered vertical positions are close enough to be the same line.
+ *
+ * Two segments' vertical centers within `LINE_VERTICAL_TOLERANCE_RATIO` of the larger
+ * font-size (not a fixed pixel value, so this scales correctly across the viewer's own
+ * zoom/fit-width range) are the same line -- comfortably covers ordinary line-height jitter
+ * and an in-line superscript/subscript baseline shift (typically well under half a font-size),
+ * while a genuine adjacent line (normally close to a full line-height, ~1.0-1.5x font size,
+ * apart) is reliably rejected.
+ */
+export interface VerticalExtent {
+  top: number
+  bottom: number
+  fontSize: number
+}
+
+const LINE_VERTICAL_TOLERANCE_RATIO = 0.5
+
+export function isSameVisualLine(reference: VerticalExtent, candidate: VerticalExtent): boolean {
+  const referenceCenter = (reference.top + reference.bottom) / 2
+  const candidateCenter = (candidate.top + candidate.bottom) / 2
+  const size = Math.max(reference.fontSize, candidate.fontSize) || 1
+  return Math.abs(referenceCenter - candidateCenter) <= LINE_VERTICAL_TOLERANCE_RATIO * size
+}
+
+/**
  * Joins segments in the given (source/reading) order into one string, inserting a single
  * space between two consecutive segments only when：(a) neither segment already starts/ends
  * with whitespace at that boundary (never double a space that's already there), and (b) the

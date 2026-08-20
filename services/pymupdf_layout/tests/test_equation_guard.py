@@ -210,7 +210,10 @@ def test_equation_number_selected_alone_returns_placeholder_without_prepending_p
     assert res.status_code == 200
     body = res.json()
     assert body["reconstructedText"] == "[式 (5)]"
-    assert body["fragments"] == [{"pageNumber": 1, "text": "[式 (5)]"}]
+    # Prototype 2.6G2.8M2: the placeholder itself is now also surfaced as its own
+    # classification="display" MathRun -- see test_math_run_detection.py for dedicated
+    # coverage.
+    assert body["fragments"] == [{"pageNumber": 1, "text": "[式 (5)]", "mathRuns": [{"start": 0, "end": 7, "text": "[式 (5)]", "classification": "display"}]}]
 
 
 def test_endpoint_coordinate_on_equation_number_recovered_by_exact_prose_anchor(client, registered_doc):
@@ -405,7 +408,10 @@ def test_ink_positive_gap_ocr_replacement_forbidden_only_gap_substring_inserted(
 
 
 def test_recover_gap_text_pure_function_anchor_alignment():
-    assert main._recover_gap_text("of", "can then be used", "of k can then be used") == "k"
+    # Prototype 2.6G2.8M1.2a: _recover_gap_text now returns a RecoveredFragment (content +
+    # evidence-based separators), not a bare string -- see test_ocr_anchor_typography.py for
+    # dedicated separator-evidence coverage.
+    assert main._recover_gap_text("of", "can then be used", "of k can then be used").text == "k"
 
 
 def test_recover_gap_text_returns_none_when_anchor_missing():

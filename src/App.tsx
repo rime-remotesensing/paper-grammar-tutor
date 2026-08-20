@@ -13,8 +13,9 @@ import { SentenceInputPanel, type AnalyzePhase } from './features/grammar/compon
 import type { VerifiedSentenceAnalysisWithSyntaxAuthority } from './features/grammar/domain/analyzeSentenceWithSyntaxAuthority'
 import { analyzeSentenceWithSyntaxAuthority } from './features/grammar/domain/analyzeSentenceWithSyntaxAuthority'
 import { restoreEquationPlaceholdersInFreeText } from './features/grammar/domain/equationPlaceholder'
-import { normalizeSentenceForGrammarAnalysis } from './features/grammar/domain/grammarInputNormalization'
+import { normalizeSentenceForReadingGuide, projectSentenceForGrammarAnalysis } from './features/grammar/domain/grammarInputNormalization'
 import { getModelSizeAdvisory } from './features/grammar/domain/modelSizeAdvisory'
+import { projectionFromSource, type Projection } from './features/grammar/domain/textProjection'
 import { OcrFallbackPanel, type OcrStatus, type PaddleStatus, type HighResStatus } from './features/ocr/components/OcrFallbackPanel'
 import { matchWordsToRects, toPixelRect, joinOcrWords } from './features/ocr/domain/ocrGeometry'
 import { extractPaddleCandidate } from './features/ocr/domain/paddleAdapter'
@@ -27,6 +28,8 @@ import { applyRuleA, applyRuleB } from './features/ocr/domain/scientificNormaliz
 import { PdfViewer, type PdfViewerHandle } from './features/pdf/components/PdfViewer'
 import type { PdfSelectionResult } from './features/pdf/domain/pdfViewerState'
 import { combineFragments, type SelectionFragment } from './features/pdf/domain/crossPageSelection'
+import { LayoutModeSelector } from './features/layout/components/LayoutModeSelector'
+import { useWorkspaceLayout } from './features/layout/domain/useWorkspaceLayout.ts'
 import { OllamaProvider } from './llm/providers/ollama/OllamaProvider'
 import type { HealthStatus, ModelInfo } from './llm/types'
 import { LLMProviderError } from './llm/types'
@@ -48,6 +51,22 @@ export default function App() {
   const [selectionPageNumber, setSelectionPageNumber] = useState<number | null>(null)
   const [analyzePhase, setAnalyzePhase] = useState<AnalyzePhase>('idle')
   const [result, setResult] = useState<VerifiedSentenceAnalysisWithSyntaxAuthority | null>(null)
+  // Prototype 2.6G2.8B item 17/18: a snapshot of the true source sentence (as selected/typed,
+  // citations and equation placeholders intact) taken at the moment `result` was produced --
+  // distinct from `result.analysis.originalText`, which is the internal Stanza-facing
+  // projection (citation-stripped, equation-shielded). The "英文" panel must show THIS, never
+  // the projection (see sourceSentenceHighlight.ts's own doc comment).
+  const [analyzedSourceText, setAnalyzedSourceText] = useState<string | null>(null)
+  // Prototype 2.6G2.8E: the exact source->analysis character mapping captured at the same
+  // moment as `analyzedSourceText`, so the "英文" panel can project an active Tree span back
+  // to its true source range by index lookup, never by re-searching the text (see
+  // sourceSentenceHighlight.ts's projectAnalysisSpanToSourceHighlight).
+  const [analyzedProjection, setAnalyzedProjection] = useState<Projection | null>(null)
+  // Prototype 2.6G2.8M2.2c: source-faithful text for ReadingGuide/Ollama only -- see
+  // grammarInputNormalization.ts's normalizeSentenceForReadingGuide doc comment for why this
+  // must stay a separate string from `analyzedProjection.text` (the Stanza-facing, MATH_EXPR-
+  // shielded one).
+  const [analyzedReadingGuideText, setAnalyzedReadingGuideText] = useState<string | null>(null)
   const [analyzeError, setAnalyzeError] = useState<string | null>(null)
   // Guards the "骨格を見る" flow (GrammarAnalysis + automatic forced-core recovery +
   // focused complement verification, Prototype 2.2/2.3I) against a slow in-flight call
@@ -56,6 +75,8 @@ export default function App() {
   // analyzeSentenceWithComplementVerification() call (including its internal focused
   // verifier step) is one guarded flow, so no additional guard is needed for that step.
   const analyzeRequestGuardRef = useRef(createRequestGuard())
+
+  const workspaceLayout = useWorkspaceLayout()
 
   const pdfViewerRef = useRef<PdfViewerHandle>(null)
   // Bumped on every new PDF load; scopes the OCR page cache to "this document" (a
@@ -154,7 +175,12 @@ export default function App() {
       // normalized to "[EQUATION_N]" -- so the whole analysis pipeline (including span
       // offset resolution) operates on one consistent representation. The textarea itself
       // is never touched.
-      const analysisInput = normalizeSentenceForGrammarAnalysis(sentence)
+      const projection = projectSentenceForGrammarAnalysis(sentence)
+      const analysisInput = projection.text
+      const sourceTextAtAnalysisTime = sentence
+      // Prototype 2.6G2.8M2.2c: computed alongside, never derived FROM analysisInput -- see
+      // normalizeSentenceForReadingGuide's own doc comment.
+      const readingGuideInput = normalizeSentenceForReadingGuide(sentence)
       const outcome = await analyzeSentenceWithSyntaxAuthority({
         provider,
         model: selectedModel,
@@ -170,13 +196,22 @@ export default function App() {
         // free-text explanation fields -- never the offset-derived span text (see
         // equationPlaceholder.ts's own doc comment for why).
         setResult({ ...outcome.result, analysis: restoreEquationPlaceholdersInFreeText(outcome.result.analysis) })
+        setAnalyzedSourceText(sourceTextAtAnalysisTime)
+        setAnalyzedProjection(projection)
+        setAnalyzedReadingGuideText(readingGuideInput)
       } else {
         setResult(null)
+        setAnalyzedSourceText(null)
+        setAnalyzedProjection(null)
+        setAnalyzedReadingGuideText(null)
         setAnalyzeError(outcome.error)
       }
     } catch (err) {
       if (!analyzeRequestGuardRef.current.isCurrent(requestId)) return
       setResult(null)
+      setAnalyzedSourceText(null)
+      setAnalyzedProjection(null)
+      setAnalyzedReadingGuideText(null)
       setAnalyzeError(
         err instanceof LLMProviderError
           ? err.message
@@ -212,6 +247,7 @@ export default function App() {
     setSentence(combineFragments(fragments))
     setSelectionPageNumber(fragments[0].pageNumber)
     setResult(null)
+    setAnalyzedSourceText(null)
     setAnalyzeError(null)
     setAnalyzePhase('idle')
     setSelectionMetadata(fragments[0].selection)
@@ -235,6 +271,7 @@ export default function App() {
     setSentence('')
     setSelectionPageNumber(null)
     setResult(null)
+    setAnalyzedSourceText(null)
     setAnalyzeError(null)
     setAnalyzePhase('idle')
     setSelectionMetadata(null)
@@ -251,6 +288,7 @@ export default function App() {
     setSentence('')
     setSelectionPageNumber(null)
     setResult(null)
+    setAnalyzedSourceText(null)
     setAnalyzeError(null)
     setAnalyzePhase('idle')
     setDocumentToken((t) => t + 1)
@@ -405,6 +443,7 @@ export default function App() {
     if (paddleCandidate === null) return
     setSentence(paddleCandidate)
     setResult(null)
+    setAnalyzedSourceText(null)
     setAnalyzeError(null)
   }
 
@@ -412,6 +451,7 @@ export default function App() {
     if (highResCandidate === null) return
     setSentence(highResCandidate)
     setResult(null)
+    setAnalyzedSourceText(null)
     setAnalyzeError(null)
   }
 
@@ -419,6 +459,7 @@ export default function App() {
     if (tesseractCandidate === null) return
     setSentence(tesseractCandidate)
     setResult(null)
+    setAnalyzedSourceText(null)
     setAnalyzeError(null)
   }
 
@@ -426,6 +467,7 @@ export default function App() {
     if (ruleACandidate === null) return
     setSentence(ruleACandidate)
     setResult(null)
+    setAnalyzedSourceText(null)
     setAnalyzeError(null)
   }
 
@@ -433,6 +475,7 @@ export default function App() {
     if (ruleBCandidate === null) return
     setSentence(ruleBCandidate)
     setResult(null)
+    setAnalyzedSourceText(null)
     setAnalyzeError(null)
   }
 
@@ -441,36 +484,44 @@ export default function App() {
   return (
     <div className="app-shell">
       <header className="app-header">
-        <h1>Paper Grammar Tutor</h1>
-        <p className="subtitle">PDF論文を読みながら、選択した英文の構造をその場で確認する</p>
-        <div className="settings-row">
-          <label htmlFor="base-url">Ollama URL</label>
-          <input
-            id="base-url"
-            value={baseUrlInput}
-            onChange={(e) => setBaseUrlInput(e.target.value)}
-          />
-          <button type="button" onClick={handleApplyBaseUrl}>
-            適用
-          </button>
-          <ConnectionStatus
-            status={health}
-            checking={checkingHealth}
-            baseUrl={activeBaseUrl}
-            onRefresh={() => void refreshConnection()}
+        <div className="app-header-identity">
+          <h1>Paper Grammar Tutor</h1>
+          <p className="subtitle">PDF論文を読みながら、選択した英文の構造をその場で確認する</p>
+        </div>
+        <div className="app-header-settings">
+          <div className="settings-row">
+            <label htmlFor="base-url">Ollama URL</label>
+            <input
+              id="base-url"
+              value={baseUrlInput}
+              onChange={(e) => setBaseUrlInput(e.target.value)}
+            />
+            <button type="button" onClick={handleApplyBaseUrl}>
+              適用
+            </button>
+            <ConnectionStatus
+              status={health}
+              checking={checkingHealth}
+              baseUrl={activeBaseUrl}
+              onRefresh={() => void refreshConnection()}
+            />
+          </div>
+          <ModelSelector
+            models={models}
+            selectedModel={selectedModel}
+            loading={modelsLoading}
+            onSelect={setSelectedModel}
+            onRefresh={() => void refreshModels()}
           />
         </div>
-        <ModelSelector
-          models={models}
-          selectedModel={selectedModel}
-          loading={modelsLoading}
-          onSelect={setSelectedModel}
-          onRefresh={() => void refreshModels()}
-        />
         {modelAdvisory && <p className="model-advisory">{modelAdvisory}</p>}
       </header>
 
-      <main className="app-main-pdf">
+      <div className="workspace-controls">
+        <LayoutModeSelector mode={workspaceLayout.mode} onChange={workspaceLayout.setMode} />
+      </div>
+
+      <main className={`app-main-pdf layout-${workspaceLayout.effective}`}>
         <section className="pdf-pane">
           <PdfViewer
             ref={pdfViewerRef}
@@ -536,6 +587,9 @@ export default function App() {
               <AnalysisResultPanel
                 key={result.analysis.originalText}
                 result={result}
+                sourceText={analyzedSourceText ?? result.analysis.originalText}
+                projection={analyzedProjection ?? projectionFromSource(result.analysis.originalText)}
+                readingGuideText={analyzedReadingGuideText ?? result.analysis.originalText}
                 provider={provider}
                 model={selectedModel}
               />

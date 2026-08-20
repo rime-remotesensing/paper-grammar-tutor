@@ -1,5 +1,7 @@
 import type { VocabularyItem, VocabularyPartOfSpeech } from '../schemas/grammarAnalysis.schema.ts'
 import { resolveSpanAfter } from '../../../utils/spanMatch.ts'
+import { isFullySyntheticRange } from './mathRunPresentation.ts'
+import type { Projection } from './textProjection.ts'
 import type { SourceSpan } from './treeReadingMatching.ts'
 
 export interface GroundedVocabularyItem extends VocabularyItem {
@@ -60,11 +62,21 @@ function looksLikeNonVocabularyChunk(item: VocabularyItem): boolean {
   return /^[a-z]\s+(?:and|or)\s+[a-z]$/.test(normalized)
 }
 
-/** Grounds source-ordered vocabulary against the same normalized sentence used by Tree
- * and ReadingGuide. Ungroundable items are omitted rather than attached semantically. */
+/**
+ * Grounds source-ordered vocabulary against the same normalized sentence used by Tree
+ * and ReadingGuide. Ungroundable items are omitted rather than attached semantically.
+ *
+ * Prototype 2.6G2.8M2.2a Track B item 9: `projection` (optional, for backward compatibility
+ * with any caller that predates this) excludes any item whose ENTIRE grounded span falls
+ * inside an internal "MATH_EXPR" synthetic run -- a shielded math expression is never a real
+ * vocabulary word/phrase candidate, so it is DROPPED here, never translated/restored. This is
+ * provenance-based (`Projection.syntheticRunSourceRanges`), never a literal
+ * `item.word === 'MATH_EXPR'` string check.
+ */
 export function groundVocabularyForDisplay(
   items: readonly VocabularyItem[],
   sentence: string,
+  projection?: Projection,
 ): GroundedVocabularyItem[] {
   const grounded: GroundedVocabularyItem[] = []
   let nextStart = 0
@@ -72,6 +84,10 @@ export function groundVocabularyForDisplay(
   for (const item of prepareVocabularyForDisplay(items)) {
     const resolved = resolveSpanAfter(sentence, item.word, nextStart)
     if (!resolved.resolved) continue
+    if (projection && isFullySyntheticRange(resolved.start, resolved.end, projection)) {
+      nextStart = resolved.end
+      continue
+    }
     grounded.push({
       ...item,
       word: resolved.text,

@@ -63,3 +63,35 @@ describe('deriveTreeReadingTargets', () => {
       .not.toBe(treeReadingTargetSignature([targets[0]]))
   })
 })
+
+describe('Prototype 2.6G2.8M2.2c -- interactionText MATH_EXPR restoration', () => {
+  it('restores a MATH_EXPR token inside interactionText when projection/sourceText are supplied', async () => {
+    const { shieldRelationalMathRuns } = await import('../../src/features/grammar/domain/mathRunProjection')
+    const { projectionFromSource } = await import('../../src/features/grammar/domain/textProjection')
+    const source = 'the result was k = 0.5 in this case.'
+    const projection = shieldRelationalMathRuns(projectionFromSource(source), source)
+    const node: StructureTreeNode = {
+      text: 'was MATH_EXPR in this case', role: 'complement',
+      start: projection.text.indexOf('was'), end: projection.text.length - 1, children: [],
+    }
+    const targets = deriveTreeReadingTargets([node], projection.text, projection, source)
+    expect(targets[0].interactionText).not.toContain('MATH_EXPR')
+    expect(targets[0].interactionText).toContain('k = 0.5')
+  })
+
+  it('leaves interactionText unchanged when projection/sourceText are omitted (backward compatible)', () => {
+    const targets = deriveTreeReadingTargets([subject], sentence)
+    expect(targets[0].interactionText).toBe('Grid units and slope units')
+  })
+
+  it('leaves interactionText unchanged when there is nothing synthetic to restore', async () => {
+    const { shieldRelationalMathRuns } = await import('../../src/features/grammar/domain/mathRunProjection')
+    const { projectionFromSource } = await import('../../src/features/grammar/domain/textProjection')
+    const source = 'Grid units and slope units are the two types.'
+    const projection = shieldRelationalMathRuns(projectionFromSource(source), source) // no relational math -- no-op
+    const nodeEnd = source.indexOf(' are')
+    const node: StructureTreeNode = { text: 'Grid units and slope units', role: 'subject', start: 0, end: nodeEnd, children: [] }
+    const targets = deriveTreeReadingTargets([node], projection.text, projection, source)
+    expect(targets[0].interactionText).toBe('Grid units and slope units')
+  })
+})

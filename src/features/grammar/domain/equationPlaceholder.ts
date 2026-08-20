@@ -11,6 +11,8 @@
  * Japanese text containing "式" elsewhere is never touched.
  */
 
+import { replaceMatchesWithComputed, type Projection } from './textProjection.ts'
+
 const DISPLAY_PLACEHOLDER = /\[式\s*(?:\((\d{1,3})\))?\]/g
 const ANALYSIS_PLACEHOLDER = /\[EQUATION(?:_(\d{1,3}))?\]/g
 
@@ -18,6 +20,16 @@ const ANALYSIS_PLACEHOLDER = /\[EQUATION(?:_(\d{1,3}))?\]/g
  * boundary, before a sentence is ever sent to the LLM (item 9/10). */
 export function normalizeEquationPlaceholdersForAnalysis(text: string): string {
   return text.replace(DISPLAY_PLACEHOLDER, (_match, number: string | undefined) => (number ? `[EQUATION_${number}]` : '[EQUATION]'))
+}
+
+/** Prototype 2.6G2.8E — `Projection`-carrying twin of `normalizeEquationPlaceholdersForAnalysis`.
+ * The whole "[EQUATION_N]" replacement is synthetic (it never appears verbatim in the
+ * source, which spells it "[式 (N)]") -- this is intentional and correct: nothing downstream
+ * should ever highlight this placeholder as if it were literal source text; the display
+ * equation itself is handled purely as a segmentation/shielding signal, never shown to the
+ * user as this internal spelling. */
+export function normalizeEquationPlaceholdersInProjection(input: Projection): Projection {
+  return replaceMatchesWithComputed(input, DISPLAY_PLACEHOLDER, (match) => (match[1] ? `[EQUATION_${match[1]}]` : '[EQUATION]'))
 }
 
 /** "[EQUATION_5]" -> "[式 (5)]", "[EQUATION]" -> "[式]". Applied ONLY to free-text fields

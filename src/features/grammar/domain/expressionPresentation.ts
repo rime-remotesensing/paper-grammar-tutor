@@ -1,4 +1,6 @@
 import type { Expression } from '../schemas/readingGuide.schema.ts'
+import { isFullySyntheticRange } from './mathRunPresentation.ts'
+import type { Projection } from './textProjection.ts'
 
 export interface GroupedExpression {
   pattern: string
@@ -22,11 +24,21 @@ const DEFAULT_MAX_EXPRESSIONS = 4
  * - caps the result at `maxCount`, keeping the first-seen (source-order) distinct
  *   patterns — deliberately no importance/relevance scoring, per item 15.
  */
+/**
+ * Prototype 2.6G2.8M2.2a Track B item 9: `projection` (optional, for backward compatibility)
+ * excludes any expression whose ENTIRE grounded span falls inside an internal "MATH_EXPR"
+ * synthetic run -- a shielded math expression is never a real reusable grammatical pattern,
+ * so it is dropped here, never surfaced as a "文法・言い回し" card. Provenance-based
+ * (`Projection.syntheticRunSourceRanges`), never a literal text check.
+ */
 export function prepareExpressionsForDisplay(
   expressions: readonly Expression[],
   maxCount: number = DEFAULT_MAX_EXPRESSIONS,
+  projection?: Projection,
 ): GroupedExpression[] {
-  const multiword = expressions.filter((e) => isMultiWord(e.text))
+  const multiword = expressions.filter(
+    (e) => isMultiWord(e.text) && !(projection && isFullySyntheticRange(e.start, e.end, projection)),
+  )
 
   const order: string[] = []
   const groups = new Map<string, GroupedExpression>()

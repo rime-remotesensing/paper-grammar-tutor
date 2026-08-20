@@ -1,5 +1,7 @@
 import type { StructureTreeNode } from './structureTree.ts'
+import { restoreTextForRange } from './mathRunPresentation.ts'
 import { deriveStructureNodePresentation } from './structureNodePresentation.ts'
+import type { Projection } from './textProjection.ts'
 import { structureTreeNodeKey, structureTreeNodeSpan } from './treeReadingMatching.ts'
 
 export interface TreeReadingTarget {
@@ -17,12 +19,23 @@ export interface TreeReadingTarget {
   parentDisplayText: string | null
 }
 
-/** Derives compact, stable reading targets from final visible Tree paths. Paths include
+/**
+ * Derives compact, stable reading targets from final visible Tree paths. Paths include
  * skipped nodes, so adding/removing a note-eligible sibling never renumbers unrelated
- * descendants. Source labels and every span remain application-owned. */
+ * descendants. Source labels and every span remain application-owned.
+ *
+ * Prototype 2.6G2.8M2.2c: `projection`/`sourceText` (optional, for backward compatibility)
+ * restore any internal "MATH_EXPR" token inside `interactionText` -- the ONE field here whose
+ * text is a raw offset-based slice of `sentence` rather than a tree node's own (separately
+ * restorable, see mathRunPresentation.ts) `.text`/`presentationSpan.text`. `displayText`/
+ * `authorityText` are already clean as long as the CALLER passed an already-restored `nodes`
+ * tree (see AnalysisResultPanel.tsx's own restoration-before-use discipline).
+ */
 export function deriveTreeReadingTargets(
   nodes: readonly StructureTreeNode[],
   sentence: string,
+  projection?: Projection,
+  sourceText?: string,
 ): TreeReadingTarget[] {
   const targets: TreeReadingTarget[] = []
 
@@ -37,6 +50,7 @@ export function deriveTreeReadingTargets(
     let currentTarget: TreeReadingTarget | null = null
 
     if (isPedagogicalReadingTarget(node, presentation.text)) {
+      const rawInteractionText = sentence.slice(interaction.start, interaction.end)
       const target: TreeReadingTarget = {
         targetId,
         nodeKey: structureTreeNodeKey(node),
@@ -46,7 +60,10 @@ export function deriveTreeReadingTargets(
         interactionEnd: interaction.end,
         displayText: presentation.text,
         authorityText: node.text,
-        interactionText: sentence.slice(interaction.start, interaction.end),
+        interactionText:
+          projection && sourceText
+            ? restoreTextForRange(rawInteractionText, interaction.start, interaction.end, projection, sourceText)
+            : rawInteractionText,
         role: node.role,
         parentTargetId: parentTarget?.targetId ?? null,
         parentDisplayText: parentTarget?.displayText ?? null,
