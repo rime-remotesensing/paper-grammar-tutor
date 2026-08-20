@@ -6,6 +6,7 @@ import {
 } from './analyzeSentenceWithComplementVerification.ts'
 import { analyzeSyntaxAuthority } from './analyzeSyntaxAuthority.ts'
 import { projectPrimaryCore } from './sentenceCoreSet.ts'
+import type { StanzaToken } from './stanzaSyntaxAuthority.ts'
 
 /**
  * Prototype 2.6G1 -- the ONLY new call site App.tsx/AnalysisResultPanel.tsx should use going
@@ -23,6 +24,12 @@ import { projectPrimaryCore } from './sentenceCoreSet.ts'
  * existing Qwen-derived effectiveCore/effectiveCoreSet is what the (unredesigned) UI ends up
  * displaying -- the application stays stable and usable rather than showing nothing, but the
  * degraded-authority fact is never hidden from anything that inspects the result.
+ *
+ * Prototype 2.6G2 additionally carries the raw `stanzaTokens` through on the 'stanza' path so
+ * AnalysisResultPanel.tsx can build the full hierarchical Structure Tree
+ * (stanzaStructureTree.ts) from the exact same authority the canonical SentenceCoreSet came
+ * from, instead of re-deriving anything. `stanzaTokens` is null on the legacy-fallback path --
+ * the legacy Tree builder (structureTree.ts) does not need them.
  */
 
 export type SyntaxAuthoritySource = 'stanza' | 'legacy-qwen-fallback'
@@ -35,6 +42,8 @@ export interface SyntaxAuthorityMeta {
 
 export interface VerifiedSentenceAnalysisWithSyntaxAuthority extends VerifiedSentenceAnalysis {
   syntaxAuthority: SyntaxAuthorityMeta
+  /** Non-null exactly when syntaxAuthority.source === 'stanza'. */
+  stanzaTokens: StanzaToken[] | null
 }
 
 export type AnalyzeWithSyntaxAuthorityOutcome =
@@ -58,6 +67,7 @@ export async function analyzeSentenceWithSyntaxAuthority(
         effectiveCoreSet: syntax.coreSet,
         effectiveCore: projectPrimaryCore(syntax.coreSet),
         syntaxAuthority: { source: 'stanza', unavailableReason: null },
+        stanzaTokens: syntax.tokens,
       },
     }
   }
@@ -71,6 +81,7 @@ export async function analyzeSentenceWithSyntaxAuthority(
     result: {
       ...outcome.result,
       syntaxAuthority: { source: 'legacy-qwen-fallback', unavailableReason: syntax.reason },
+      stanzaTokens: null,
     },
   }
 }

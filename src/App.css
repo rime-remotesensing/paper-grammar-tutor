@@ -294,6 +294,15 @@
   font-weight: 600;
 }
 
+/* Prototype 2.6G2.5B: a clause-introducing marker (if/because/.../infinitival "to"),
+   rendered inline before the clause's own text -- see StructureTreeView's TreeNodeButton. */
+.structure-tree-marker {
+  margin-right: 0.35rem;
+  font-weight: 600;
+  font-style: italic;
+  color: var(--text-muted);
+}
+
 .structure-tree-role {
   margin-left: 0.5rem;
   font-size: 0.75rem;
@@ -321,6 +330,26 @@
   text-decoration-color: var(--accent);
   text-decoration-thickness: 2px;
   text-underline-offset: 2px;
+}
+
+/* Prototype 2.6G2.6C item 9-12: the relative-marker's own bold/underline/accent styling on
+   the pronoun is PERMANENT (an antecedent-link affordance, unrelated to interaction state --
+   see the doc comment on NodeText above) and was, on its own, visually read as "only the
+   pronoun is interactive" even though the whole button (TreeNodeButton) already receives
+   hover/focus/pin state across its full row. This makes that existing full-row interactivity
+   visible on the REST of a relative clause's own text too, not just its background box, so
+   hovering/focusing/pinning any part of the clause reads as one consistent interactive unit
+   rather than "one highlighted word plus a separately-lit box". Deliberately a lighter/neutral
+   underline (not the accent color used by the permanent antecedent link), and only present
+   during interaction, so it can never be mistaken for the always-on antecedent marker. */
+.structure-tree-node:not(:disabled):hover .structure-tree-text,
+.structure-tree-node:not(:disabled):focus-visible .structure-tree-text,
+.structure-tree-node.is-active .structure-tree-text,
+.structure-tree-node.is-pinned .structure-tree-text {
+  text-decoration: underline;
+  text-decoration-color: var(--border);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 4px;
 }
 
 /* Prototype 2.3O item 20-22: multi-relation sentences distinguish each antecedent<->

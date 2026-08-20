@@ -1,7 +1,7 @@
 import { useEffect, useReducer, useRef, useState } from 'react'
 import { DEFAULT_TEMPERATURE } from '../../../config/settings'
 import type { LLMProvider } from '../../../llm/types'
-import type { VerifiedSentenceAnalysis } from '../domain/analyzeSentenceWithComplementVerification'
+import type { VerifiedSentenceAnalysisWithSyntaxAuthority } from '../domain/analyzeSentenceWithSyntaxAuthority'
 import { createRequestGuard } from '../../ocr/domain/requestGuard'
 import { getReadingGuide } from '../domain/readingGuideService'
 import { getPredicateStructure } from '../domain/predicateStructureService'
@@ -10,6 +10,7 @@ import { mergeHybridPredicateStructure } from '../domain/hybridPredicateMerger'
 import { getBasicSkeletonDisplayText } from '../domain/basicSkeletonPresentation'
 import { applyFocusedWhereClauseRepair } from '../domain/whereClauseRelocation'
 import { buildCoreOnlyTree, buildHybridStructureTree } from '../domain/structureTree'
+import { buildStanzaHierarchicalTree } from '../domain/stanzaStructureTree'
 import { resolveSupplementSpan } from '../domain/supplementSpanResolution'
 import { StructureTreeView } from './StructureTreeView'
 import { TreeContextualReadingPanel } from './TreeContextualReadingPanel'
@@ -32,7 +33,7 @@ import type {
 } from '../schemas/grammarAnalysis.schema'
 
 interface AnalysisResultPanelProps {
-  result: VerifiedSentenceAnalysis
+  result: VerifiedSentenceAnalysisWithSyntaxAuthority
   provider: LLMProvider
   model: string | null
 }
@@ -81,6 +82,7 @@ function findTreeNode(nodes: readonly StructureTreeNode[], key: string): Structu
 
 export function AnalysisResultPanel({ result, provider, model }: AnalysisResultPanelProps) {
   const { meta, analysis, rawCore, effectiveCore, effectiveCoreSet, verification, coreRepair } = result
+  const { syntaxAuthority, stanzaTokens } = result
   const [userNote, setUserNote] = useState('')
   const [treeInteraction, dispatchTreeInteraction] = useReducer(
     reduceTreeReadingInteraction,
@@ -139,12 +141,25 @@ export function AnalysisResultPanel({ result, provider, model }: AnalysisResultP
     dispatchTreeInteraction({ type: 'clearPin' })
   }, [result, model])
 
+  // Prototype 2.6G2: when canonical authority is genuinely Stanza (never on the
+  // legacy-qwen-fallback path -- item 20's explicit "do not pretend legacy Tree has
+  // Stanza-level authority"), the Tree is built directly from the same ClauseFrame/
+  // PredicateFrame/token authority the canonical SentenceCoreSet came from, deterministically
+  // and with zero extra Stanza/Qwen calls (stanzaTokens was already fetched once during
+  // analysis). PredicateStructure/legacy relative-link results are irrelevant on this path --
+  // Stanza hierarchy is the sole Tree authority (item 3/21), so `resolvedStructure`/
+  // `resolvedRelations` are intentionally unused here. Only when Stanza was unavailable for
+  // this sentence does the tree fall back to the original PredicateStructure-driven builders,
+  // completely unchanged.
   const buildFinalTree = (
     resolvedStructure: PredicateStructure | null,
     resolvedRelations: GroundedRelativeLinkRelation[],
   ): StructureTreeNode[] => {
+    if (syntaxAuthority.source === 'stanza' && stanzaTokens) {
+      return buildStanzaHierarchicalTree(analysis.normalizedText, stanzaTokens)
+    }
     if (!resolvedStructure) return buildCoreOnlyTree(core)
-    const hybrid = mergeHybridPredicateStructure(analysis.normalizedText, core, resolvedStructure)
+    const hybrid = mergeHybridPredicateStructure(analysis.normalizedText, core, resolvedStructure, effectiveCoreSet)
     const supplementSpan = resolveSupplementSpan(analysis.normalizedText, core, rawCore, verification, hybrid)
     return buildHybridStructureTree(core, hybrid, supplementSpan, resolvedRelations)
   }
@@ -444,6 +459,7 @@ export function AnalysisResultPanel({ result, provider, model }: AnalysisResultP
             nodes={tree}
             sentence={analysis.normalizedText}
             multipleRelations={relations.length > 1}
+            structuredSyntax={syntaxAuthority.source === 'stanza'}
             activeNodeKey={activeKey}
             pinnedNodeKey={treeInteraction.pinnedKey}
             onPreview={(node) => dispatchTreeInteraction({ type: 'preview', key: structureTreeNodeKey(node) })}

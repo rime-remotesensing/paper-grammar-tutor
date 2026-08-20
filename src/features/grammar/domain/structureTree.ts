@@ -17,6 +17,48 @@ export type StructureDisplayRole =
   | 'openingModifier'
   | 'supplement'
   | 'relativeClause'
+  /** Prototype 2.6G2.1 -- a reduced/non-finite postmodifier clause (plain `acl`/`advcl`,
+   * e.g. "called KNN-GCN", "collected by volunteers") that structurally postmodifies its
+   * head but carries no relative pronoun -- distinct from a true `acl:relcl` relative
+   * clause, which keeps the 'relativeClause' role above. */
+  | 'postmodifier'
+  /** Prototype 2.6G2 -- an explicit colon/semicolon-introduced list container (item 11 of
+   * the Stanza Structure Tree migration). Never used for a canonical S/V/IO/O/C slot. */
+  | 'enumeration'
+  /** Prototype 2.6G2.5B2 -- a structural expletive/dummy pronoun (Stanza deprel `expl`,
+   * e.g. "there" in "there is strong covariance...", "it" in "it seems that..."). A purely
+   * functional placeholder that fills the syntactic subject position without being the
+   * semantic subject -- never the canonical grammatical subject, never O/C, never an
+   * `openingModifier` (it is not a genuine preposed adverbial). Distinguished from an
+   * ordinary locative "there" (a genuine `advmod`/`obl` adverbial, e.g. "The book is
+   * there.") purely by Stanza's own dependency role, never by matching the word itself. */
+  | 'expletive'
+  /** Prototype 2.6G2.6C (Generalized Tree Presentation Completion) item B/6/7 -- a member of
+   * a coordination chain rooted directly at a CANONICAL slot's own head (subject/object/
+   * indirectObject/complement), decomposed for presentation only. The canonical grammatical
+   * role belongs to the slot's own container node (which keeps 'subject'/'object'/etc.
+   * unchanged); a member is not independently "the subject" merely because it is one half of
+   * a coordinated NP -- it never has its own separate clause-level grammatical role. Genuinely
+   * distinct from a real embedded/subordinate/coordinated-predicate clause's own subject
+   * (built via a plain `buildDecomposedConstituentNode('subject', ...)` call elsewhere in
+   * stanzaStructureTree.ts, never through this coordination-member path), which correctly
+   * keeps 'subject'. Never used for Problem A's internal/absorbed premodifier coordination
+   * either (that path already uses the neutral 'modifier' role, unchanged). */
+  | 'coordinationMember'
+  /** Prototype 2.6G2.6C4.2B -- a member of an explicit colon/semicolon-introduced
+   * `'enumeration'` list (see `buildEnumerationChildren` in stanzaStructureTree.ts).
+   * Deliberately distinct from the generic `'other'` catch-all role: `'other'` marks content
+   * the model/parser couldn't classify and carries no real evidence that two such leftovers
+   * are actually coordinated with each other (coordinationGroupPresentation.ts's
+   * `groupingKey` therefore gives every `'other'` node its own unique grouping key, so two
+   * unrelated "other" leftovers never spuriously group). An enumeration member, by contrast,
+   * DOES carry genuine dependency-parsed coordination evidence (a real `appos`/`conj` chain
+   * under the list's own head) -- giving it its own role lets consecutive members share one
+   * ordinary `groupingKey` and form a real coordination run, which is what lets the sibling-
+   * level connector badge (`layoutSiblingsWithCoordinationGroups`) render the list's actual
+   * `cc` connector (see each member's own `connector` field below) instead of silently
+   * dropping it. */
+  | 'enumerationMember'
   | HybridDependentRole
 
 export interface StructureTreeNode {
@@ -35,6 +77,37 @@ export interface StructureTreeNode {
    * antecedent<->relativeWord pair with a distinguishable marker. Undefined for every node
    * not produced by a Focused relation (including all of the 2.3M fallback's own nodes). */
   relationIndex?: number
+  /** Prototype 2.6G2.2/2.6G2.3 -- the coordinating conjunction (and/but/or/...) that
+   * introduces this node relative to its preceding sibling, as structured source-grounded
+   * metadata rather than text baked into `text`/`presentationSpan`. This is the SOLE
+   * authority for a coordinated node's connector; StructureTreeView's sibling-level
+   * coordination-group renderer is the single place it is ever displayed (as its own
+   * connector-badge row between members), so it is never shown twice and a coordinated
+   * node's own text never repeats it. Undefined for a node with no connector (the ordinary
+   * case, including every non-coordinated node and the legacy Hybrid-tree builder's own
+   * predicate nodes, which never set this field). */
+  connector?: Span
+  /** Prototype 2.6G2.5B (restructured 2.6G2.5B3) -- a clause-introducing subordinating
+   * conjunction/complementizer (if/because/although/when/while/whereas, or an infinitival
+   * "to") captured as `ClauseFrame.marker`. Since 2.6G2.5B3 this is carried on a DEDICATED
+   * wrapper node (role 'clause', `.text` equal to the marker word itself, single child =
+   * the clause's real subject/predicate content -- see stanzaStructureTree.ts's
+   * `wrapWithMarker`) rather than being stamped onto the subject/predicate node's own
+   * text/role -- this keeps the marker structurally and visually separate from the
+   * subject it introduces (never labelled as the subject, never fused into its text).
+   * Undefined when the clause has no overt marker (a bare relative clause, a main clause,
+   * or an asyndetic subordinate clause). */
+  marker?: Span
+  /** Prototype 2.6G2.6C2 (Structural Relative Antecedent Resolution) item 8/9 -- for a
+   * `relativeClause` node only: the grounded source span of the NP/constituent this relative
+   * clause postmodifies (its own raw `acl:relcl` dependency attachment target, per UD's own
+   * definition of that deprel), independent of whether any OTHER node in the tree happens to
+   * already represent that exact span. Presentation metadata only -- never touches
+   * SentenceCoreSet, Stanza token heads, ClauseFrame parentage, or canonical Tree ownership.
+   * Undefined when no antecedent could be reliably grounded (see
+   * `groundRelativeClauseAntecedent` in stanzaStructureTree.ts) -- absence must never be
+   * treated as "antecedent is the whole parent node" by any consumer. */
+  antecedentSpan?: Span
 }
 
 /**

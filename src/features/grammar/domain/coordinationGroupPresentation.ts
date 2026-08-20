@@ -116,6 +116,21 @@ export function detectCoordinationGroup(sentence: string, candidates: StructureT
  * (object/clause/etc) upstream. This does not touch grouping for any other role. */
 function groupingKey(node: StructureTreeNode): string {
   if (node.role === 'predicate' || node.role === 'coordinatedPredicate') return 'predicateFamily'
+  // Prototype 2.6G2.6C5 (generalized from the earlier 2.6G2.6C4.2C rule, which only fired
+  // for a 'subject'-role node that ITSELF carried `.connector` metadata): any 'subject'-role
+  // node sharing a parent with another 'subject'-role node is, by construction, one branch of
+  // a coordinated-CLAUSE presentation (stanzaStructureTree.ts's buildClauseNode is the only
+  // place that ever produces 2+ 'subject'-role SIBLINGS -- an ordinary single clause has
+  // exactly one subject, never a sibling to group against). Grouping every 'subject' node
+  // into the same 'predicateFamily' key, unconditionally, lets `buildGroupFromConnectors`
+  // find and render whichever branch actually carries `.connector` (the first/main branch
+  // never does; a later coordinated-clause branch always does) without depending on an
+  // implementation-detail guard that coupled this module's grouping decision to exactly how
+  // many hops a connector had traveled. Never fires falsely elsewhere: 'subject' is not used
+  // for canonical-constituent coordination members (those use 'coordinationMember') or
+  // enumeration members (those use 'enumerationMember'), so this rule's scope stays narrow by
+  // construction, not by an extra condition here.
+  if (node.role === 'subject') return 'predicateFamily'
   if (node.role === 'other') return `other:${node.start}`
   return node.role
 }
@@ -123,12 +138,36 @@ function groupingKey(node: StructureTreeNode): string {
 export type SiblingRenderItem = { kind: 'group'; group: CoordinationGroup } | { kind: 'node'; node: StructureTreeNode }
 
 /**
+ * Prototype 2.6G2.3 item 2/4 -- when EVERY non-first member of a same-grouping-key run
+ * already carries its own structured `connector` metadata (set by the Stanza Tree builder
+ * for predicate coordination, and now NP/object-internal coordination alike -- see
+ * stanzaStructureTree.ts's buildCoordinationMemberNodes), that metadata is used DIRECTLY as
+ * the group's own boundary connectors instead of re-deriving them from a second, independent
+ * text-regex pass (`detectCoordinationGroup`'s own CONNECTOR_MARKER, which recognizes a
+ * narrower word set than the structured `connectorSpan` the Tree builder itself already
+ * used, and can disagree with it). This is what makes grouping RELIABLE for structured nodes
+ * regardless of gap-text ambiguity, and is the single unified mechanism behind "member /
+ * connector / member" for every coordination kind (predicate, object, NP, clause alike) --
+ * never text-heuristic guessing when the authority already says these ARE coordinated.
+ * Falls through to the legacy text-based detector when structured metadata isn't present
+ * (every pre-2.6G2 Hybrid-tree node, and any structured run missing metadata somewhere).
+ */
+function buildGroupFromConnectors(run: StructureTreeNode[]): CoordinationGroup | null {
+  if (run.length < 2) return null
+  if (!run.slice(1).every((member) => member.connector)) return null
+  const boundaryConnectors = run.map((member, i) => (i === 0 ? null : member.connector!.text))
+  return { members: run, connectorText: run.at(-1)!.connector!.text, boundaryConnectors }
+}
+
+/**
  * Walks one level of siblings (e.g. a subject node's children, or one predicate's
  * dependents) and partitions them into plain nodes and coordination groups. A "run" of 2+
  * adjacent (by source position) same-grouping-key siblings becomes a candidate group;
- * detectCoordinationGroup then re-validates it against the actual source text before it's
- * accepted. If evidence is missing anywhere in the run, every member of that run is
- * rendered as a plain (ungrouped) node instead — never a partial/guessed grouping.
+ * structured `connector` metadata is used when every non-first member carries it (see
+ * `buildGroupFromConnectors`), otherwise `detectCoordinationGroup` re-validates the run
+ * against the actual source text before it's accepted. If evidence is missing anywhere in
+ * the run, every member of that run is rendered as a plain (ungrouped) node instead — never
+ * a partial/guessed grouping.
  */
 export function layoutSiblingsWithCoordinationGroups(sentence: string, siblings: StructureTreeNode[]): SiblingRenderItem[] {
   const sorted = [...siblings].sort((a, b) => a.start - b.start)
@@ -138,7 +177,7 @@ export function layoutSiblingsWithCoordinationGroups(sentence: string, siblings:
     let j = i + 1
     while (j < sorted.length && groupingKey(sorted[j]) === groupingKey(sorted[i])) j++
     const run = sorted.slice(i, j)
-    const group = run.length >= 2 ? detectCoordinationGroup(sentence, run) : null
+    const group = run.length >= 2 ? (buildGroupFromConnectors(run) ?? detectCoordinationGroup(sentence, run)) : null
     if (group) {
       items.push({ kind: 'group', group })
     } else {
