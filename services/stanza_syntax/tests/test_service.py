@@ -42,12 +42,28 @@ def test_analyze_schema_shape(client: TestClient) -> None:
     assert "tokens" in body
     assert len(body["tokens"]) > 0
     for token in body["tokens"]:
-        for key in ("id", "text", "lemma", "upos", "head", "deprel", "start", "end"):
+        for key in ("id", "text", "lemma", "upos", "head", "deprel", "start", "end", "feats"):
             assert key in token
         assert isinstance(token["id"], int)
         assert isinstance(token["start"], int)
         assert isinstance(token["end"], int)
         assert token["start"] < token["end"]
+
+
+def test_feats_exposes_verb_form(client: TestClient) -> None:
+    # Prototype 2.6G2.6C6A -- the Tree layer's shared-auxiliary compatibility gate reads
+    # VerbForm out of this field; confirm it is actually forwarded (not silently null) for an
+    # ordinary finite/participle pair, and that a function word with no morphology (a
+    # coordinating conjunction) legitimately serializes `feats` as null rather than omitting
+    # the key entirely.
+    text = "The data were collected and analyzed."
+    tokens = client.post("/analyze", json={"text": text}).json()["tokens"]
+    collected = next(t for t in tokens if t["text"] == "collected")
+    analyzed = next(t for t in tokens if t["text"] == "analyzed")
+    and_token = next(t for t in tokens if t["text"] == "and")
+    assert collected["feats"] is not None and "VerbForm=Part" in collected["feats"]
+    assert analyzed["feats"] is not None and "VerbForm=Part" in analyzed["feats"]
+    assert and_token["feats"] is None
 
 
 def test_source_offsets_are_exact(client: TestClient) -> None:

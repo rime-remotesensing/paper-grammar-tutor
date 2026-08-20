@@ -98,6 +98,12 @@ class Token(BaseModel):
     deprel: str
     start: int
     end: int
+    # Prototype 2.6G2.6C6A -- raw UD morphological features string (e.g.
+    # "Tense=Past|VerbForm=Part|Voice=Pass"), forwarded verbatim from Stanza's own `pos`
+    # processor output (already computed as part of STANZA_PROCESSORS -- no new processor
+    # needed). Consumed by the TypeScript Tree layer's shared-auxiliary compatibility gate;
+    # this service still does no grammar interpretation of its own.
+    feats: str | None = None
 
 
 class AnalyzeResponse(BaseModel):
@@ -137,6 +143,7 @@ def _ground_tokens(text: str, sentence) -> list[Token]:
                 deprel=word.deprel,
                 start=start,
                 end=end,
+                feats=word.feats,
             )
         )
         cursor = end

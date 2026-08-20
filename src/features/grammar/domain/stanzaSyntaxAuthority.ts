@@ -30,6 +30,16 @@ export interface StanzaToken {
   deprel: string
   start: number
   end: number
+  /** Prototype 2.6G2.6C6A -- raw UD morphological features string (e.g.
+   * "Tense=Past|VerbForm=Part|Voice=Pass"), exactly as Stanza's own `pos` processor already
+   * computes it (services/stanza_syntax/main.py now forwards `word.feats` verbatim, never
+   * re-derived). Purely additive: every existing consumer of `StanzaToken` is unaffected,
+   * since this field is optional and nothing in this file's own ClauseFrame/PredicateFrame/
+   * SentenceCoreSet computation reads it. Its only consumer is stanzaStructureTree.ts's
+   * shared-auxiliary morphosyntactic compatibility gate (Tree presentation only). Undefined
+   * on any fixture/path that never set it (e.g. pre-2.6G2.6C6A synthetic test tokens) --
+   * treated as "no evidence available", never as a positive match. */
+  feats?: string | null
 }
 
 export function normalizeDep(dep: string): string {
