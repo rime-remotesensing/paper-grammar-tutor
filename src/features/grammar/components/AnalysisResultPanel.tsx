@@ -25,6 +25,7 @@ import { findVocabularyForTreeNode, groundVocabularyForDisplay, vocabularyPartOf
 import { prepareExpressionsForDisplay } from '../domain/expressionPresentation'
 import { buildSourceHighlightSegments } from '../domain/sourceSentenceHighlight'
 import { deriveTreeReadingTargets, findTreeReadingTargetForNode } from '../domain/treeReadingTargets'
+import { isStructureTreeSuppliedByStanza, shouldShowPredicateStructureFailureWarning } from '../domain/structureFailurePresentation'
 import type {
   ClauseKind,
   GrammaticalRole,
@@ -368,6 +369,15 @@ export function AnalysisResultPanel({ result, provider, model }: AnalysisResultP
   // surface signal, applied to the hybrid predicate directly — see supplementSpanResolution.ts.
   const tree = buildFinalTree(structureStatus === 'success' ? structure : null, relations)
 
+  // Prototype 2.6G2-D2: on the Stanza authority path, `tree` above is built directly from
+  // Stanza (buildFinalTree's own early-return, unconditional on `structure`/`structureStatus`)
+  // and every other visible consumer of the legacy PredicateStructure call (ReadingGuide
+  // targets, relative-link relations) is likewise derived from THIS already-Stanza-built
+  // `tree`, never from `structure` itself -- a PredicateStructure failure here has no visible
+  // effect on anything the user is looking at, so it must not be shown as a Tree-level error.
+  const structureTreeSuppliedByStanza = isStructureTreeSuppliedByStanza(syntaxAuthority.source, Boolean(stanzaTokens))
+  const showPredicateStructureFailureWarning = shouldShowPredicateStructureFailureWarning(structureStatus, structureTreeSuppliedByStanza)
+
   const started = readingGuideStatus !== 'idle' || structureStatus !== 'idle'
   const activeKey = activeTreeNodeKey(treeInteraction)
   const activeNode = activeKey ? findTreeNode(tree, activeKey) : null
@@ -468,7 +478,7 @@ export function AnalysisResultPanel({ result, provider, model }: AnalysisResultP
             onClearPin={() => dispatchTreeInteraction({ type: 'clearPin' })}
           />
           {structureStatus === 'loading' && <p className="empty-note">構造を解析中…</p>}
-          {structureStatus === 'error' && (
+          {showPredicateStructureFailureWarning && (
             <>
               <p className="analysis-warning" role="alert">
                 詳細な文構造を作成できませんでした
