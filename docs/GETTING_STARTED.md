@@ -18,7 +18,7 @@ Docker Desktopを起動し、repository rootのPowerShellで実行します。
 .\scripts\start.ps1
 ```
 
-scriptはDocker/Compose、使用port、4 serviceのhealth、Paddle GPUを検査します。使用中のportがあればPIDを表示して停止し、processを自動終了しません。PaddleOCR modelsと`qwen2.5:7b-instruct`が未取得の場合だけdownloadし、最後に`http://localhost:5173`を開きます。
+scriptはDocker/Compose、使用port、5 serviceのhealth、Paddle GPUを検査します。使用中のportがあればPIDを表示して停止し、processを自動終了しません。PaddleOCR modelsと`qwen2.5:7b-instruct`が未取得の場合だけdownloadし、最後に`http://localhost:5173`を開きます。
 
 初回は大きなDocker imageとmodel dataを取得するため、ネットワーク環境により数分以上かかります。modelはnamed volumeへ保存され、通常の再起動では再downloadされません。
 
@@ -43,6 +43,7 @@ scriptはDocker/Compose、使用port、4 serviceのhealth、Paddle GPUを検査�
 | Web | `http://localhost:5173` |
 | PaddleOCR | `http://127.0.0.1:8008` |
 | PyMuPDF layout | `http://127.0.0.1:8009` |
+| Stanza syntax | `http://127.0.0.1:8010` |
 | Ollama | `http://localhost:11434` |
 
 Docker runtime authority:
@@ -53,6 +54,7 @@ Docker runtime authority:
 | Frontend runtime | `nginx:1.29.1-alpine` |
 | PyMuPDF | `python:3.12.3-slim-bookworm` + `pymupdf==1.28.2` |
 | PaddleOCR | `paddlepaddle/paddle:3.3.1-gpu-cuda12.9-cudnn9.9` + `paddleocr==3.7.0` + `paddlex==3.7.2` |
+| Stanza syntax | `python:3.12.3-slim-bookworm` + `stanza==1.14.0` |
 | Ollama | `ollama/ollama:0.32.9` |
 
 公式Paddle image内のPythonは3.10.12です。Paddle 3.3.1のcommit、CUDA 12.9、cuDNN 9.9は検証済みWindows runtimeと一致し、RTX 4070 Ti SUPER上でGPU inferenceを確認しています。Paddle modelは`paddle-models` volumeの`/root/.paddlex`、Ollama modelは`ollama-models` volumeの`/root/.ollama`に保持されます。
@@ -94,6 +96,7 @@ Node/Python packageの正確なversionは`package-lock.json`と各serviceの`req
 機能別:
 
 - PyMuPDF layout service: PDFのcross-block、multi-column、cross-page選択に必要です。GPUは不要です。
+- Stanza syntax service: 英文の依存構造解析（Structure Tree、基本骨格の元になる解析）に必要です。GPUは不要です。
 - PaddleOCR service: 高精度OCRと一部の欠落glyph回復に使用します。現在のservice実装はGPU専用です。
 - Paddle非対応環境でも、serviceが利用できないときにUIから「ブラウザOCRを使う」を明示選択できます。ただしpure scan PDF全体を読み込めるようにする機能ではありません。
 
@@ -155,7 +158,34 @@ Invoke-RestMethod http://127.0.0.1:8009/health
 
 > PyMuPDFはAGPLまたは商用licenseで提供されます。Paper Grammar Tutorのプロジェクト独自コードは`AGPL-3.0-only`で公開されています。公開・再配布時は、[LICENSE](../LICENSE)、[第三者通知](../THIRD_PARTY_NOTICES.md)、[PyMuPDF公式のlicense説明](https://pymupdf.readthedocs.io/en/latest/about.html#license-and-copyright)を確認してください。
 
-## 6. PaddleOCR service（対応GPUがある場合）
+## 6. Stanza syntax service（推奨）
+
+repository rootから実行します。
+
+```powershell
+cd services\stanza_syntax
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -c "import stanza; stanza.download('en', package='default', processors='tokenize,pos,lemma,depparse')"
+cd ..\..
+```
+
+起動:
+
+```powershell
+.\services\stanza_syntax\.venv\Scripts\python.exe .\services\stanza_syntax\main.py
+```
+
+serviceは`127.0.0.1:8010`だけでlistenします。別terminalで確認します。
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8010/health
+```
+
+`status`が`ok`、`modelReady`が`true`なら起動しています。初回起動時は英語modelのdownloadが発生するため時間がかかります（Docker配布ではimage build時に取得済みです）。詳細は[services/stanza_syntax/README.md](../services/stanza_syntax/README.md)を参照してください。
+
+## 7. PaddleOCR service（対応GPUがある場合）
 
 このserviceはCPUへ自動fallbackしません。検証済み構成は`paddlepaddle-gpu==3.3.1`のCUDA 12.9 buildです。RTX 4070 Ti SUPERで検証されていますが、特定のRTX製品名を必須条件とはしていません。
 
@@ -182,7 +212,7 @@ Invoke-RestMethod http://127.0.0.1:8008/health
 
 利用可能な状態では、`status: ok`、`gpuAvailable: true`、`modelLoaded: true`、`device: gpu`になります。
 
-## 7. Frontendを起動
+## 8. Frontendを起動
 
 Python serviceとは別のterminalでrepository rootから実行します。
 
@@ -198,17 +228,18 @@ http://127.0.0.1:5173
 
 port 5173はローカルPython serviceのCORS設定と一致させる必要があります。
 
-## 8. Startup checklist
+## 9. Startup checklist
 
 - [ ] Ollamaが起動している
 - [ ] `qwen2.5:7b-instruct`がinstallされている
 - [ ] PyMuPDF layout serviceがport 8009で起動している
+- [ ] Stanza syntax serviceがport 8010で起動している
 - [ ] 高精度OCRを使う場合、PaddleOCR serviceがport 8008で起動している
 - [ ] `npm ci`が完了している
 - [ ] frontendがport 5173で起動している
 - [ ] 画面上部のOllama接続とmodel選択を確認した
 
-## 9. PowerShellの注意
+## 10. PowerShellの注意
 
 PowerShell policyによって`npm.ps1`が拒否される場合は、policyをglobal変更せず次を使用できます。
 
@@ -223,7 +254,7 @@ npm.cmd run dev -- --host 127.0.0.1 --port 5173 --strictPort
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 ```
 
-## 10. Troubleshooting
+## 11. Troubleshooting
 
 ### `npm`または`node`が見つからない
 
@@ -245,15 +276,19 @@ Ollamaが起動していること、画面のOllama URLが`http://localhost:1143
 
 `http://127.0.0.1:8009/health`を確認してください。service停止中は、cross-block/cross-page selectionを正しく再構成できず、画面に確認メッセージが表示されます。
 
+### Stanza serviceが利用できない
+
+`http://127.0.0.1:8010/health`を確認してください。`modelReady`が`false`の場合、englishモデルの読み込みに失敗しています。service停止中はStructure Treeと基本骨格の解析が行えません。
+
 ### PDF textを選択できない
 
 現在のPDF flowはextractableなtext layerを必要とします。画像だけのpure scan PDFは未対応です。password保護、破損、特殊なlayoutも原因になり得ます。
 
 ### 最初の解析が遅い
 
-Ollama modelの初回load、PaddleOCR modelの初回download/load、初回PDF解析には時間がかかることがあります。同じmodelやpageの後続処理ではcacheが使われる箇所があります。
+Ollama modelの初回load、Stanza modelの初回load、PaddleOCR modelの初回download/load、初回PDF解析には時間がかかることがあります。同じmodelやpageの後続処理ではcacheが使われる箇所があります。
 
-## 11. 開発時の検証
+## 12. 開発時の検証
 
 Frontend:
 
@@ -268,6 +303,14 @@ PyMuPDF service:
 
 ```powershell
 Push-Location .\services\pymupdf_layout
+.\.venv\Scripts\python.exe -m pytest .\tests
+Pop-Location
+```
+
+Stanza syntax service:
+
+```powershell
+Push-Location .\services\stanza_syntax
 .\.venv\Scripts\python.exe -m pytest .\tests
 Pop-Location
 ```

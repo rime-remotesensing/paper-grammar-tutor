@@ -28,6 +28,11 @@ htmlcov/
 .env.*
 !.env.example
 
+# Local docker-compose overrides (e.g. enabling PGT_LAYOUT_TRACE for development diagnostics)
+# are machine/session-specific and must never ship as part of the default configuration.
+compose.override.yaml
+compose.override.yml
+
 # Personal/copyrighted papers must not be committed. The two small synthetic PDF fixtures
 # under tests/fixtures/pdf are intentional repository test data.
 *.pdf
