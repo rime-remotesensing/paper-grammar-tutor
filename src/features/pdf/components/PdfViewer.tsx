@@ -1,4 +1,4 @@
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type PointerEvent } from 'react'
 import * as pdfjsLib from 'pdfjs-dist'
 import type { PDFDocumentProxy } from 'pdfjs-dist'
 import {
@@ -34,6 +34,12 @@ import {
 import { createRequestGuard } from '../../ocr/domain/requestGuard'
 import { selectCurrentPageByScroll, type PageGeometry } from '../domain/currentPageTracking.ts'
 import { computeFitWidthScale, type ZoomMode } from '../domain/fitWidthScale.ts'
+import {
+  clampPdfViewportHeight,
+  computeDefaultPdfViewportHeight,
+  readStoredPdfViewportHeight,
+  writeStoredPdfViewportHeight,
+} from '../domain/pdfViewportHeight.ts'
 import { PdfPageView } from './PdfPageView'
 
 /**
@@ -367,13 +373,65 @@ export const PdfViewer = forwardRef<PdfViewerHandle, PdfViewerProps>(function Pd
   // it exists purely as the page-content wrapper the mouse-selection code queries
   // (pageContainerOf/.closest('[data-page-number]')/etc.), which only need DOM-tree lookups,
   // never scroll-position math, so this ref is fine for that purpose. The element that
-  // ACTUALLY scrolls is its parent, `.pdf-canvas-area` (`overflow: auto; max-height: 75vh` in
-  // App.css) -- see `scrollViewportRef` below, which every current-page/fit-width geometry
+  // ACTUALLY scrolls is its parent, `.pdf-canvas-area` (`overflow: auto`, own `height` now
+  // user-adjustable -- see the `viewportHeight` state below, Prototype 2.6G2.10) -- see
+  // `scrollViewportRef` below, which every current-page/fit-width geometry
   // read must use instead (Prototype 2.6G2.7D root-cause fix; see the doc comment on
   // `recomputeCurrentPage`).
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const scrollViewportRef = useRef<HTMLDivElement>(null)
   const dragStartPointRef = useRef<PointerPoint | null>(null)
+
+  // Prototype 2.6G2.10 -- user-adjustable PDF viewport height. `.pdf-canvas-area`'s own
+  // `height` (never `max-height`, and never the PDF's own zoom/render scale -- unrelated to
+  // `scale`/`applyFitWidthScale` above, which are WIDTH-driven only) now comes from this
+  // state instead of a fixed CSS vh value, dragged via `.pdf-viewport-resize-handle` below.
+  // Persisted so the user's chosen height survives reload; re-clamped (never re-persisted)
+  // on every read so a value saved on a larger monitor stays usable after moving to a
+  // smaller one. The existing ResizeObserver on `scrollViewportRef` (further below) already
+  // re-measures current-page/fit-width on ANY box-size change, including height alone, so
+  // dragging this handle needs no separate wiring into that logic at all.
+  const [viewportHeight, setViewportHeight] = useState<number>(() =>
+    readStoredPdfViewportHeight(typeof window !== 'undefined' ? window.innerHeight : 800),
+  )
+  const viewportHeightRef = useRef(viewportHeight)
+  useEffect(() => {
+    viewportHeightRef.current = viewportHeight
+  }, [viewportHeight])
+  // Re-clamp (only, never re-persist) the live height if the window itself shrinks enough
+  // that the current value would exceed the new max -- e.g. un-maximizing the browser
+  // window. A user who never explicitly resizes keeps their exact stored/default height on
+  // an unchanged or growing window.
+  useEffect(() => {
+    const handleWindowResize = () => {
+      setViewportHeight((current) => clampPdfViewportHeight(current, window.innerHeight))
+    }
+    window.addEventListener('resize', handleWindowResize)
+    return () => window.removeEventListener('resize', handleWindowResize)
+  }, [])
+  const viewportResizeDragRef = useRef<{ startY: number; startHeight: number } | null>(null)
+  const handleViewportResizePointerDown = useCallback((e: PointerEvent<HTMLDivElement>) => {
+    viewportResizeDragRef.current = { startY: e.clientY, startHeight: viewportHeightRef.current }
+    e.currentTarget.setPointerCapture(e.pointerId)
+  }, [])
+  const handleViewportResizePointerMove = useCallback((e: PointerEvent<HTMLDivElement>) => {
+    const dragState = viewportResizeDragRef.current
+    if (!dragState) return
+    const delta = e.clientY - dragState.startY
+    setViewportHeight(clampPdfViewportHeight(dragState.startHeight + delta, window.innerHeight))
+  }, [])
+  const handleViewportResizePointerUp = useCallback((e: PointerEvent<HTMLDivElement>) => {
+    if (!viewportResizeDragRef.current) return
+    viewportResizeDragRef.current = null
+    e.currentTarget.releasePointerCapture(e.pointerId)
+    writeStoredPdfViewportHeight(viewportHeightRef.current)
+  }, [])
+  const handleViewportResizeDoubleClick = useCallback(() => {
+    const next = computeDefaultPdfViewportHeight(window.innerHeight)
+    setViewportHeight(next)
+    writeStoredPdfViewportHeight(next)
+  }, [])
+
   const docRef = useRef<PDFDocumentProxy | null>(null)
   useEffect(() => {
     docRef.current = doc
@@ -950,7 +1008,7 @@ export const PdfViewer = forwardRef<PdfViewerHandle, PdfViewerProps>(function Pd
         )}
       </div>
 
-      <div className="pdf-canvas-area" ref={scrollViewportRef}>
+      <div className="pdf-canvas-area" ref={scrollViewportRef} style={{ height: `${viewportHeight}px` }}>
         {status === 'idle' && <p className="empty-note">PDFファイルを選択してください。</p>}
         {status === 'loading' && <p className="empty-note">読み込み中…</p>}
         {status === 'error' && (
@@ -974,6 +1032,23 @@ export const PdfViewer = forwardRef<PdfViewerHandle, PdfViewerProps>(function Pd
           </div>
         )}
       </div>
+      {/* Prototype 2.6G2.10 -- drag to resize `.pdf-canvas-area`'s own height only; never the
+          PDF's own zoom/render scale (`scale`/`applyFitWidthScale`, entirely unrelated,
+          WIDTH-driven state above). Pointer capture on the handle itself (rather than a
+          window-level listener pair set up/torn down in an effect) keeps drag tracking
+          working even when the pointer leaves the thin handle strip mid-drag, with no extra
+          cleanup needed beyond the pointerup/releasePointerCapture pair below. */}
+      <div
+        className="pdf-viewport-resize-handle"
+        role="separator"
+        aria-orientation="horizontal"
+        aria-label="PDF表示エリアの高さ"
+        tabIndex={0}
+        onPointerDown={handleViewportResizePointerDown}
+        onPointerMove={handleViewportResizePointerMove}
+        onPointerUp={handleViewportResizePointerUp}
+        onDoubleClick={handleViewportResizeDoubleClick}
+      />
     </div>
   )
 })
