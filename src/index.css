@@ -8,7 +8,19 @@
   --warning-bg: #fff4e5;
   --warning-border: #f0b429;
 
-  font: 16px/1.55 system-ui, 'Segoe UI', 'Hiragino Sans', 'Yu Gothic', Roboto, sans-serif;
+  /* Prototype 2.6G2.9 -- UI typography scale (base 16px = 1rem, unchanged). A small, shared
+     set of font-size tiers, reused across App.css instead of the many one-off 0.7-0.95rem
+     values that made most non-heading UI text (labels, controls, helper notes) read as too
+     small on an ordinary desktop display. Ordinary body/prose text and the Structure Tree's
+     own main node text intentionally stay at the unset, inherited 16px (the root size
+     itself already sits in the target 15-16px range) rather than gaining a redundant
+     variable of their own. */
+  --fs-label: 1rem;   /* 16px -- role/POS/helper labels (12-13px floor) */
+  --fs-control: 1.0625rem; /* 17px -- buttons/select/input, header controls, Basic Skeleton labels */
+  --fs-body: 1.125em;   /* 18px -- normal UI/body text */
+  --fs-heading: 1.375rem; /* 22px -- section headings (h2/h3) */
+
+  font: 20px/1.55 system-ui, 'Segoe UI', 'Hiragino Sans', 'Yu Gothic', Roboto, sans-serif;
   color-scheme: light dark;
   color: var(--text);
   background: var(--bg);
@@ -46,7 +58,7 @@ h1 {
 }
 
 h2 {
-  font-size: 1rem;
+  font-size: var(--fs-heading);
   margin: 0 0 0.5rem;
   color: var(--accent);
 }

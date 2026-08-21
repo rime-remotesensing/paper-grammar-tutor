@@ -1,19 +1,25 @@
-import fs from 'node:fs'
-import { mkdir, writeFile } from 'node:fs/promises'
-import path from 'node:path'
 import { derivePattern } from '../../../src/features/grammar/domain/derivePattern.ts'
 import type { PredicateCoreRelation, SentencePattern, Span } from '../../../src/features/grammar/schemas/grammarAnalysis.schema.ts'
-import { DEVELOPMENT_CASES, LOCKED_HOLDOUT_CASES, type GeneralizationCase } from './dataset.ts'
-import { evaluateCoreSet } from './metrics.ts'
+import type { GeneralizationCase } from './dataset.ts'
 
 // ============================================================================
-// Prototype 2.6F -- benchmark-only hierarchical Stanza adapter spike.
+// Prototype 2.6F/2.6G2.9 -- hierarchical Stanza adapter (product fixture copy).
 //
 // Pipeline: Stanza dependency tokens -> ClauseFrame tree -> PredicateFrame
 // per clause -> Paper Grammar Tutor SentenceCoreSet (S/V/O/C).
 //
-// This file is intentionally independent of stanzaAdapterEval.ts (the frozen
-// flat adapter). Nothing here is wired into production.
+// This is the pure `buildHierarchical` logic ONLY -- a trimmed copy of the file
+// of the same name under develop's benchmark/generalization/, kept in sync by
+// hand. The original also carries CLI/report-generation code (`runSplit`,
+// `main()`, filesystem reads of benchmark/results/generalization/*.json) that
+// exists solely to run and report the full corpus from the command line --
+// never needed by `buildHierarchical` itself, and never safe to import as a
+// side effect of a product test (a bare top-level `main()` call executed on
+// import, reading a benchmark-generated file that does not exist on this
+// branch, producing an unhandled ENOENT the moment this module loads).
+// Product regression tests only ever need `buildHierarchical`'s own pure
+// conversion logic, so this copy keeps exactly that and nothing else: no
+// top-level execution, no filesystem access, no benchmark/results/ dependency.
 // ============================================================================
 
 interface ParsedCase {
@@ -476,152 +482,3 @@ export function buildHierarchical(item: GeneralizationCase, parsed: ParsedCase):
 
   return { subject, predicateCores, clauses }
 }
-
-// ============================================================================
-// Architecture-specific diagnostics (section 15 A-G)
-// ============================================================================
-
-interface ArchDiag {
-  subordinatePredicateLeakage: number
-  predicateScopeErrors: number
-  subjectOvercapture: number
-  subjectUndercapture: number
-  objectOvercapture: number
-  objectUndercapture: number
-  delimiterCorruption: number
-}
-
-function isSuperset(outer: Span, inner: Span): boolean {
-  return outer.start <= inner.start && outer.end >= inner.end && (outer.start !== inner.start || outer.end !== inner.end)
-}
-function isSubset(inner: Span, outer: Span): boolean {
-  return isSuperset(outer, inner)
-}
-
-function hasUnbalancedDelimiter(text: string): boolean {
-  const stack: string[] = []
-  for (const ch of text) {
-    if (OPENERS[ch]) stack.push(OPENERS[ch])
-    else if (CLOSERS[ch]) {
-      if (stack.length > 0 && stack[stack.length - 1] === ch) stack.pop()
-      else return true
-    }
-  }
-  return stack.length > 0
-}
-
-function diagForCase(item: GeneralizationCase, coreSet: { subject: Span | null; predicateCores: CoreOut[] }): ArchDiag {
-  const diag: ArchDiag = {
-    subordinatePredicateLeakage: 0,
-    predicateScopeErrors: 0,
-    subjectOvercapture: 0,
-    subjectUndercapture: 0,
-    objectOvercapture: 0,
-    objectUndercapture: 0,
-    delimiterCorruption: 0,
-  }
-  const gold = item.gold
-  if (gold.subject && coreSet.subject && !(gold.subject.start === coreSet.subject.start && gold.subject.end === coreSet.subject.end)) {
-    if (isSuperset(coreSet.subject, gold.subject)) diag.subjectOvercapture += 1
-    else if (isSubset(coreSet.subject, gold.subject)) diag.subjectUndercapture += 1
-  }
-  gold.predicateCores.forEach((core, i) => {
-    const actual = coreSet.predicateCores[i]
-    if (!actual) return
-    if (core.relation !== actual.relation) diag.predicateScopeErrors += 1
-    if (core.object && actual.object && !(core.object.start === actual.object.start && core.object.end === actual.object.end)) {
-      if (isSuperset(actual.object, core.object)) diag.objectOvercapture += 1
-      else if (isSubset(actual.object, core.object)) diag.objectUndercapture += 1
-    }
-  })
-  for (const span of [coreSet.subject, ...coreSet.predicateCores.flatMap((c) => [c.verb, c.object, c.indirectObject, c.complement])]) {
-    if (span && hasUnbalancedDelimiter(span.text)) diag.delimiterCorruption += 1
-  }
-  return diag
-}
-
-// ============================================================================
-// Driver
-// ============================================================================
-
-function pct(hit: number, total: number): string {
-  return `${((100 * hit) / Math.max(total, 1)).toFixed(1)}% (${hit}/${total})`
-}
-
-function runSplit(cases: readonly GeneralizationCase[], rawFile: string) {
-  const parsed = JSON.parse(fs.readFileSync(rawFile, 'utf8')) as { results: ParsedCase[] }
-  const rows = cases.map((item) => {
-    const current = parsed.results.find((entry) => entry.id === item.id)
-    if (!current) return null
-    const hier = buildHierarchical(item, current)
-    const metrics = evaluateCoreSet(item, hier as any)
-    const diag = diagForCase(item, hier)
-    return { id: item.id, metrics, diag, hier }
-  }).filter((r): r is NonNullable<typeof r> => r !== null)
-
-  const totalPredicateCores = cases.reduce((sum, item) => sum + item.gold.predicateCores.length, 0)
-  const totalGoldNullComplementCores = cases.flatMap((item) => item.gold.predicateCores).filter((core) => core.complement === null).length
-  const totalTrueFalseComplement = rows.reduce((sum, row) => sum + row.metrics.falseComplement.filter(Boolean).length, 0)
-  const exactComplement = rows.reduce((sum, row) => sum + row.metrics.predicateComplementExact.filter(Boolean).length, 0)
-  const exactPattern = rows.reduce((sum, row) => sum + row.metrics.predicatePatternExact.filter(Boolean).length, 0)
-  const exactCoreSet = rows.filter((row) => row.metrics.coreSetExact).length
-  const exactSubject = rows.filter((row) => row.metrics.sharedSubjectExact).length
-  const exactCount = rows.filter((row) => row.metrics.predicateCoreCountExact).length
-  const exactVerb = rows.reduce((sum, row) => sum + row.metrics.predicateVerbExact.filter(Boolean).length, 0)
-  const exactObject = rows.reduce((sum, row) => sum + row.metrics.predicateObjectExact.filter(Boolean).length, 0)
-
-  const summary = {
-    sentenceCount: cases.length,
-    subject: pct(exactSubject, cases.length),
-    predicateCount: pct(exactCount, cases.length),
-    predicateVerb: pct(exactVerb, totalPredicateCores),
-    objectRelation: pct(exactObject, totalPredicateCores),
-    copularStructure: pct(exactComplement, totalPredicateCores),
-    perCorePattern: pct(exactPattern, totalPredicateCores),
-    falseC: pct(totalTrueFalseComplement, totalGoldNullComplementCores),
-    wholeCoreSetExact: pct(exactCoreSet, cases.length),
-  }
-
-  const archSummary = {
-    subordinatePredicateLeakage: rows.reduce((s, r) => s + r.diag.subordinatePredicateLeakage, 0),
-    predicateScopeErrors: rows.reduce((s, r) => s + r.diag.predicateScopeErrors, 0),
-    subjectOvercapture: rows.reduce((s, r) => s + r.diag.subjectOvercapture, 0),
-    subjectUndercapture: rows.reduce((s, r) => s + r.diag.subjectUndercapture, 0),
-    objectOvercapture: rows.reduce((s, r) => s + r.diag.objectOvercapture, 0),
-    objectUndercapture: rows.reduce((s, r) => s + r.diag.objectUndercapture, 0),
-    delimiterCorruption: rows.reduce((s, r) => s + r.diag.delimiterCorruption, 0),
-  }
-
-  const passingIds = new Set(rows.filter((r) => r.metrics.coreSetExact).map((r) => r.id))
-  const failingIds = rows.filter((r) => !r.metrics.coreSetExact).map((r) => r.id)
-
-  return { summary, archSummary, passingIds, failingIds, rows }
-}
-
-async function main() {
-  const outDir = path.join(process.cwd(), 'benchmark', 'results', 'generalization')
-  await mkdir(outDir, { recursive: true })
-
-  const devResult = runSplit(DEVELOPMENT_CASES, path.join(outDir, 'stanza-development.json'))
-  const holdoutResult = runSplit(LOCKED_HOLDOUT_CASES, path.join(outDir, 'stanza-holdout.json'))
-
-  const out = {
-    development: { summary: devResult.summary, arch: devResult.archSummary, failingIds: devResult.failingIds },
-    formerHoldout: { summary: holdoutResult.summary, arch: holdoutResult.archSummary, failingIds: holdoutResult.failingIds },
-  }
-
-  await writeFile(path.join(outDir, 'stanza-hierarchical-spike.json'), JSON.stringify(out, null, 2))
-  console.log(JSON.stringify(out, null, 2))
-
-  // expose passing-id sets for external before/after diffing without re-deriving them
-  await writeFile(
-    path.join(outDir, 'stanza-hierarchical-spike-passing-ids.json'),
-    JSON.stringify(
-      { development: [...devResult.passingIds], formerHoldout: [...holdoutResult.passingIds] },
-      null,
-      2,
-    ),
-  )
-}
-
-void main()

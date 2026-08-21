@@ -6,7 +6,6 @@ RUN npm ci
 
 COPY index.html tsconfig.json tsconfig.app.json tsconfig.node.json vite.config.ts ./
 COPY public ./public
-COPY benchmark/sentences/development.json ./benchmark/sentences/development.json
 COPY src ./src
 RUN npm run build
 
