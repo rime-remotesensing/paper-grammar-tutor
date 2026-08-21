@@ -1,6 +1,6 @@
-import type { SentenceCore, SentenceCoreSet, Span } from '../../src/features/grammar/schemas/grammarAnalysis.schema.ts'
-import { deriveStructureNodePresentation, hasLosslessPresentationCoverage } from '../../src/features/grammar/domain/structureNodePresentation.ts'
-import type { StructureTreeNode } from '../../src/features/grammar/domain/structureTree.ts'
+import type { SentenceCore, SentenceCoreSet, Span } from '../../../src/features/grammar/schemas/grammarAnalysis.schema.ts'
+import { deriveStructureNodePresentation, hasLosslessPresentationCoverage } from '../../../src/features/grammar/domain/structureNodePresentation.ts'
+import type { StructureTreeNode } from '../../../src/features/grammar/domain/structureTree.ts'
 import type { GeneralizationCase, GoldSpan } from './dataset.ts'
 
 export interface CoreMetrics {

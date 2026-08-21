@@ -1,4 +1,4 @@
-import sampleDataset from '../../../../benchmark/sentences/development.json'
+import sampleDataset from '../data/sampleSentences.json'
 
 export type AnalyzePhase = 'idle' | 'analyzing' | 'confirmingCore' | 'repairingSubjectVerb' | 'verifyingComplement'
 

@@ -1,8 +1,8 @@
 import fs from 'node:fs'
 import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import { derivePattern } from '../../src/features/grammar/domain/derivePattern.ts'
-import type { PredicateCoreRelation, SentencePattern, Span } from '../../src/features/grammar/schemas/grammarAnalysis.schema.ts'
+import { derivePattern } from '../../../src/features/grammar/domain/derivePattern.ts'
+import type { PredicateCoreRelation, SentencePattern, Span } from '../../../src/features/grammar/schemas/grammarAnalysis.schema.ts'
 import { DEVELOPMENT_CASES, LOCKED_HOLDOUT_CASES, type GeneralizationCase } from './dataset.ts'
 import { evaluateCoreSet } from './metrics.ts'
 
@@ -26,11 +26,6 @@ type ParsedToken = ParsedCase['tokens'][number] & { id: number }
 
 function normalizeDep(dep: string): string {
   return dep.split(':')[0] ?? dep
-}
-
-function sanitizeSpan(span: { text: string; start: number; end: number } | null): Span | null {
-  if (!span) return null
-  return { text: span.text, start: span.start, end: span.end }
 }
 
 function childrenByHead(tokens: ParsedToken[]): Map<number, ParsedToken[]> {
@@ -264,7 +259,7 @@ function buildClauseFrames(text: string, tokens: ParsedToken[], byHead: Map<numb
 
   const clauses: ClauseFrame[] = clauseHeadTokens
     .sort((a, b) => a.start - b.start)
-    .map((headToken, idx) => {
+    .map((headToken, _idx) => {
       const anchor = anchorClauseHead(byId.get(headToken.head)!, byId, clauseHeadIds)
       const marker = (byHead.get(headToken.id) ?? []).find((c) => normalizeDep(c.deprel) === 'mark') ?? null
       return {
@@ -337,7 +332,7 @@ function isCitationLike(span: Span | null): boolean {
   return /\b[A-Z][a-z]+\s+et\s+al\.|\(\s*[A-Z][a-z]+\s+et\s+al\.\s*\d{4}\s*\)/i.test(span.text) || /\(.*\d{4}.*\)/.test(span.text)
 }
 
-function verbSpanFor(frame: PredicateFrame, text: string, byHead: Map<number, ParsedToken[]>): Span {
+function verbSpanFor(frame: PredicateFrame, text: string, _byHead: Map<number, ParsedToken[]>): Span {
   const parts = new Map<number, ParsedToken>()
   // For a copular predicate the lexical head (e.g. "nonlinear") is the complement, not the verb;
   // the verb is the copula (+ aux) alone. For every other predicate the lexical head is the verb.
@@ -351,7 +346,7 @@ function convertPredicateFrame(
   text: string,
   tokens: ParsedToken[],
   byHead: Map<number, ParsedToken[]>,
-  clauseById: Map<number, ClauseFrame>,
+  _clauseById: Map<number, ClauseFrame>,
   boundaryIds: ReadonlySet<number>,
 ): CoreOut {
   const verb = verbSpanFor(frame, text, byHead)

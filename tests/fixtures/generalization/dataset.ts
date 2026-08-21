@@ -1,4 +1,4 @@
-import type { PredicateCoreRelation, SentencePattern } from '../../src/features/grammar/schemas/grammarAnalysis.schema.ts'
+import type { PredicateCoreRelation, SentencePattern } from '../../../src/features/grammar/schemas/grammarAnalysis.schema.ts'
 
 export type GeneralizationSplit = 'development' | 'holdout' | 'blind-v2'
 export interface GoldSpan { text: string; start: number; end: number }

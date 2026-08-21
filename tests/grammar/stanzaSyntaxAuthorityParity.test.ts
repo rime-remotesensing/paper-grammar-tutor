@@ -1,9 +1,9 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { DEVELOPMENT_CASES, LOCKED_HOLDOUT_CASES } from '../../benchmark/generalization/dataset.ts'
-import { BLIND_HOLDOUT_V2 } from '../../benchmark/generalization/blindHoldoutV2.ts'
-import { buildHierarchical } from '../../benchmark/generalization/stanzaHierarchicalAdapterEval.ts'
+import { DEVELOPMENT_CASES, LOCKED_HOLDOUT_CASES } from '../fixtures/generalization/dataset.ts'
+import { BLIND_HOLDOUT_V2 } from '../fixtures/generalization/blindHoldoutV2.ts'
+import { buildHierarchical } from '../fixtures/generalization/stanzaHierarchicalAdapterEval.ts'
 import { buildSentenceCoreSetFromStanzaTokens, type StanzaToken } from '../../src/features/grammar/domain/stanzaSyntaxAuthority.ts'
 
 /**

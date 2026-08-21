@@ -111,7 +111,7 @@ Structure Tree
 | PaddleOCR service | ネイティブPDF text layerが不完全な箇所を補う高精度OCR（GPU） |
 | Ollama（`qwen2.5:7b-instruct`） | 読解説明・語彙・表現/語法の生成 |
 
-frontendは各local serviceへHTTPで接続します。詳細な内部設計は[docs/design-notes.md](docs/design-notes.md)を参照してください。
+frontendは各local serviceへHTTPで接続します。
 
 ## はじめる
 
@@ -146,5 +146,3 @@ npm run build
 Paper Grammar Tutorのプロジェクト独自コードは、[GNU Affero General Public License v3.0 only](LICENSE)（`AGPL-3.0-only`）の下で公開されています。
 
 第三者コンポーネントおよび同梱アセットには、それぞれの上流ライセンスが適用されます。詳細は[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)を参照してください。
-
-内部の設計経緯は[docs/design-notes.md](docs/design-notes.md)に保存しています。

@@ -11,8 +11,7 @@
     "preview": "vite preview",
     "typecheck": "tsc -b",
     "test": "vitest run",
-    "test:watch": "vitest",
-    "benchmark": "node benchmark/run.ts"
+    "test:watch": "vitest"
   },
   "dependencies": {
     "pdfjs-dist": "^6.2.108",
