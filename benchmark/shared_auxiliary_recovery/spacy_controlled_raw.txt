@@ -1,0 +1,90 @@
+===== POS_passive1 | The data were collected and analyzed.
+  2 were | pos= AUX | tag= VBD | morph= Mood=Ind|Tense=Past|VerbForm=Fin | dep= auxpass | head= collected
+  3 collected | pos= VERB | tag= VBN | morph= Aspect=Perf|Tense=Past|VerbForm=Part | dep= ROOT | head= collected
+  5 analyzed | pos= VERB | tag= VBN | morph= Aspect=Perf|Tense=Past|VerbForm=Part | dep= conj | head= collected
+===== POS_passive2 | The concentrations were measured and recorded.
+  2 were | pos= AUX | tag= VBD | morph= Mood=Ind|Tense=Past|VerbForm=Fin | dep= auxpass | head= measured
+  3 measured | pos= VERB | tag= VBN | morph= Aspect=Perf|Tense=Past|VerbForm=Part | dep= ROOT | head= measured
+  5 recorded | pos= VERB | tag= VBN | morph= Aspect=Perf|Tense=Past|VerbForm=Part | dep= conj | head= measured
+===== POS_passive3 | The voltage was calculated and normalized.
+  2 was | pos= AUX | tag= VBD | morph= Mood=Ind|Number=Sing|Person=3|Tense=Past|VerbForm=Fin | dep= auxpass | head= calculated
+  3 calculated | pos= VERB | tag= VBN | morph= Aspect=Perf|Tense=Past|VerbForm=Part | dep= ROOT | head= calculated
+  5 normalized | pos= VERB | tag= VBN | morph= Aspect=Perf|Tense=Past|VerbForm=Part | dep= conj | head= calculated
+===== POS_passive_multi | The data were collected, converted, and cropped.
+  2 were | pos= AUX | tag= VBD | morph= Mood=Ind|Tense=Past|VerbForm=Fin | dep= auxpass | head= collected
+  3 collected | pos= VERB | tag= VBN | morph= Aspect=Perf|Tense=Past|VerbForm=Part | dep= ROOT | head= collected
+  5 converted | pos= VERB | tag= VBD | morph= Tense=Past|VerbForm=Fin | dep= conj | head= collected
+  8 cropped | pos= VERB | tag= VBD | morph= Tense=Past|VerbForm=Fin | dep= conj | head= converted
+===== POS_passive_multi4 | The data were collected, filtered, normalized, and analyzed.
+  2 were | pos= AUX | tag= VBD | morph= Mood=Ind|Tense=Past|VerbForm=Fin | dep= auxpass | head= collected
+  3 collected | pos= VERB | tag= VBN | morph= Aspect=Perf|Tense=Past|VerbForm=Part | dep= ROOT | head= collected
+  5 filtered | pos= VERB | tag= VBN | morph= Aspect=Perf|Tense=Past|VerbForm=Part | dep= conj | head= collected
+  7 normalized | pos= VERB | tag= VBN | morph= Aspect=Perf|Tense=Past|VerbForm=Part | dep= conj | head= filtered
+  10 analyzed | pos= VERB | tag= VBN | morph= Aspect=Perf|Tense=Past|VerbForm=Part | dep= conj | head= normalized
+===== POS_perfect1 | The researchers have collected and analyzed the samples.
+  2 have | pos= AUX | tag= VBP | morph= Mood=Ind|Tense=Pres|VerbForm=Fin | dep= aux | head= collected
+  3 collected | pos= VERB | tag= VBN | morph= Aspect=Perf|Tense=Past|VerbForm=Part | dep= ROOT | head= collected
+  5 analyzed | pos= VERB | tag= VBD | morph= Tense=Past|VerbForm=Fin | dep= conj | head= collected
+===== POS_perfect2 | The method has been tested and validated.
+  2 has | pos= AUX | tag= VBZ | morph= Mood=Ind|Number=Sing|Person=3|Tense=Pres|VerbForm=Fin | dep= aux | head= tested
+  3 been | pos= AUX | tag= VBN | morph= Tense=Past|VerbForm=Part | dep= auxpass | head= tested
+  4 tested | pos= VERB | tag= VBN | morph= Aspect=Perf|Tense=Past|VerbForm=Part | dep= ROOT | head= tested
+  6 validated | pos= VERB | tag= VBN | morph= Aspect=Perf|Tense=Past|VerbForm=Part | dep= conj | head= tested
+===== POS_modal1 | The method can collect and analyze the data.
+  2 can | pos= AUX | tag= MD | morph= VerbForm=Fin | dep= aux | head= collect
+  3 collect | pos= VERB | tag= VB | morph= VerbForm=Inf | dep= ROOT | head= collect
+  5 analyze | pos= VERB | tag= VB | morph= VerbForm=Inf | dep= conj | head= collect
+===== POS_modal2 | The method can be applied and extended.
+  2 can | pos= AUX | tag= MD | morph= VerbForm=Fin | dep= aux | head= applied
+  3 be | pos= AUX | tag= VB | morph= VerbForm=Inf | dep= auxpass | head= applied
+  4 applied | pos= VERB | tag= VBN | morph= Aspect=Perf|Tense=Past|VerbForm=Part | dep= ROOT | head= applied
+  6 extended | pos= VERB | tag= VBN | morph= Aspect=Perf|Tense=Past|VerbForm=Part | dep= conj | head= applied
+===== POS_modal3 | The results should be measured and reported.
+  2 should | pos= AUX | tag= MD | morph= VerbForm=Fin | dep= aux | head= measured
+  3 be | pos= AUX | tag= VB | morph= VerbForm=Inf | dep= auxpass | head= measured
+  4 measured | pos= VERB | tag= VBN | morph= Aspect=Perf|Tense=Past|VerbForm=Part | dep= ROOT | head= measured
+  6 reported | pos= VERB | tag= VBN | morph= Aspect=Perf|Tense=Past|VerbForm=Part | dep= conj | head= measured
+===== POS_longdist1 | The data were collected and then converted to the same coordinate system and cropped to the boundary.
+  2 were | pos= AUX | tag= VBD | morph= Mood=Ind|Tense=Past|VerbForm=Fin | dep= auxpass | head= collected
+  3 collected | pos= VERB | tag= VBN | morph= Aspect=Perf|Tense=Past|VerbForm=Part | dep= ROOT | head= collected
+  6 converted | pos= VERB | tag= VBD | morph= Tense=Past|VerbForm=Fin | dep= conj | head= collected
+  13 cropped | pos= VERB | tag= VBD | morph= Tense=Past|VerbForm=Fin | dep= conj | head= converted
+===== POS_longdist_full | Relevant data were collected and then converted to the same coordinate system and cropped to the boundary of the study area using QGIS.
+  2 were | pos= AUX | tag= VBD | morph= Mood=Ind|Tense=Past|VerbForm=Fin | dep= auxpass | head= collected
+  3 collected | pos= VERB | tag= VBN | morph= Aspect=Perf|Tense=Past|VerbForm=Part | dep= ROOT | head= collected
+  6 converted | pos= VERB | tag= VBD | morph= Tense=Past|VerbForm=Fin | dep= conj | head= collected
+  13 cropped | pos= VERB | tag= VBD | morph= Tense=Past|VerbForm=Fin | dep= conj | head= converted
+  21 using | pos= VERB | tag= VBG | morph= Aspect=Prog|Tense=Pres|VerbForm=Part | dep= advcl | head= cropped
+===== NEG_finite1 | She has visited Paris and lives in London.
+  1 has | pos= AUX | tag= VBZ | morph= Mood=Ind|Number=Sing|Person=3|Tense=Pres|VerbForm=Fin | dep= aux | head= visited
+  2 visited | pos= VERB | tag= VBN | morph= Aspect=Perf|Tense=Past|VerbForm=Part | dep= ROOT | head= visited
+  5 lives | pos= VERB | tag= VBZ | morph= Number=Sing|Person=3|Tense=Pres|VerbForm=Fin | dep= conj | head= visited
+===== NEG_finite2 | The system was tested and works well.
+  2 was | pos= AUX | tag= VBD | morph= Mood=Ind|Number=Sing|Person=3|Tense=Past|VerbForm=Fin | dep= auxpass | head= tested
+  3 tested | pos= VERB | tag= VBN | morph= Aspect=Perf|Tense=Past|VerbForm=Part | dep= ROOT | head= tested
+  5 works | pos= VERB | tag= VBZ | morph= Number=Sing|Person=3|Tense=Pres|VerbForm=Fin | dep= conj | head= tested
+===== NEG_finite3 | He is running and sings loudly.
+  1 is | pos= AUX | tag= VBZ | morph= Mood=Ind|Number=Sing|Person=3|Tense=Pres|VerbForm=Fin | dep= aux | head= running
+  2 running | pos= VERB | tag= VBG | morph= Aspect=Prog|Tense=Pres|VerbForm=Part | dep= ROOT | head= running
+  4 sings | pos= VERB | tag= VBZ | morph= Number=Sing|Person=3|Tense=Pres|VerbForm=Fin | dep= conj | head= running
+===== NEG_finite4 | He has finished the experiment and will write the paper.
+  1 has | pos= AUX | tag= VBZ | morph= Mood=Ind|Number=Sing|Person=3|Tense=Pres|VerbForm=Fin | dep= aux | head= finished
+  2 finished | pos= VERB | tag= VBN | morph= Aspect=Perf|Tense=Past|VerbForm=Part | dep= ROOT | head= finished
+  6 will | pos= AUX | tag= MD | morph= VerbForm=Fin | dep= aux | head= write
+  7 write | pos= VERB | tag= VB | morph= VerbForm=Inf | dep= conj | head= finished
+===== AMBIG1 | The system was tested and failed.
+  2 was | pos= AUX | tag= VBD | morph= Mood=Ind|Number=Sing|Person=3|Tense=Past|VerbForm=Fin | dep= auxpass | head= tested
+  3 tested | pos= VERB | tag= VBN | morph= Aspect=Perf|Tense=Past|VerbForm=Part | dep= ROOT | head= tested
+  5 failed | pos= VERB | tag= VBD | morph= Tense=Past|VerbForm=Fin | dep= conj | head= tested
+===== AMBIG2 | The sample was heated and expanded.
+  2 was | pos= AUX | tag= VBD | morph= Mood=Ind|Number=Sing|Person=3|Tense=Past|VerbForm=Fin | dep= auxpass | head= heated
+  3 heated | pos= VERB | tag= VBN | morph= Aspect=Perf|Tense=Past|VerbForm=Part | dep= ROOT | head= heated
+  5 expanded | pos= VERB | tag= VBN | morph= Aspect=Perf|Tense=Past|VerbForm=Part | dep= conj | head= heated
+===== AMBIG3 | The pressure was measured and increased.
+  2 was | pos= AUX | tag= VBD | morph= Mood=Ind|Number=Sing|Person=3|Tense=Past|VerbForm=Fin | dep= auxpass | head= measured
+  3 measured | pos= VERB | tag= VBN | morph= Aspect=Perf|Tense=Past|VerbForm=Part | dep= ROOT | head= measured
+  5 increased | pos= VERB | tag= VBN | morph= Aspect=Perf|Tense=Past|VerbForm=Part | dep= conj | head= measured
+===== AMBIG4 | The condition has changed and remains unstable.
+  2 has | pos= AUX | tag= VBZ | morph= Mood=Ind|Number=Sing|Person=3|Tense=Pres|VerbForm=Fin | dep= aux | head= changed
+  3 changed | pos= VERB | tag= VBN | morph= Aspect=Perf|Tense=Past|VerbForm=Part | dep= ROOT | head= changed
+  5 remains | pos= VERB | tag= VBZ | morph= Number=Sing|Person=3|Tense=Pres|VerbForm=Fin | dep= conj | head= changed
