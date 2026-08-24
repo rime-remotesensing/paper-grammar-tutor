@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { ConnectionStatus } from './components/ConnectionStatus'
 import { ModelSelector } from './components/ModelSelector'
 import {
@@ -10,6 +11,7 @@ import {
 } from './config/settings'
 import { AnalysisResultPanel } from './features/grammar/components/AnalysisResultPanel'
 import { SentenceInputPanel, type AnalyzePhase } from './features/grammar/components/SentenceInputPanel'
+import { useFloatingAnalysis } from './features/grammar/hooks/useFloatingAnalysis'
 import type { VerifiedSentenceAnalysisWithSyntaxAuthority } from './features/grammar/domain/analyzeSentenceWithSyntaxAuthority'
 import { analyzeSentenceWithSyntaxAuthority } from './features/grammar/domain/analyzeSentenceWithSyntaxAuthority'
 import { restoreEquationPlaceholdersInFreeText } from './features/grammar/domain/equationPlaceholder'
@@ -39,6 +41,7 @@ export default function App() {
   const [baseUrlInput, setBaseUrlInput] = useState(DEFAULT_OLLAMA_BASE_URL)
   const [activeBaseUrl, setActiveBaseUrl] = useState(DEFAULT_OLLAMA_BASE_URL)
   const provider = useMemo(() => new OllamaProvider(activeBaseUrl), [activeBaseUrl])
+  const floatingAnalysis = useFloatingAnalysis()
 
   const [health, setHealth] = useState<HealthStatus | null>(null)
   const [checkingHealth, setCheckingHealth] = useState(false)
@@ -481,6 +484,85 @@ export default function App() {
 
   const modelAdvisory = selectedModel ? getModelSizeAdvisory(selectedModel) : null
 
+  const analysisWorkspace = (
+    <section className="side-pane">
+      <div className="input-pane">
+        {selectionPageNumber !== null && (
+          <p className="pdf-source-note">
+            PDFの p.{selectionPageNumber} から取得
+            {crossPageFragments.length > 1 &&
+              `（${crossPageFragments.length}ページから選択）`}
+          </p>
+        )}
+
+        <SentenceInputPanel
+          sentence={sentence}
+          onChange={setSentence}
+          onAnalyze={() => void handleAnalyze()}
+          onClear={handleClear}
+          phase={analyzePhase}
+          canAnalyze={Boolean(selectedModel) && sentence.trim().length > 0}
+        />
+
+        {crossPageFragments.length > 1 && (
+          <p className="empty-note">
+            複数ページの読み直しは次の対応で追加予定です。
+          </p>
+        )}
+
+        <OcrFallbackPanel
+          visible={selectionMetadata !== null && crossPageFragments.length <= 1}
+          paddleStatus={paddleStatus}
+          paddleCandidateText={paddleCandidate}
+          paddleUnavailableReason={paddleUnavailableReason}
+          onRequestPaddleOcr={() => void handleRequestPaddleOcr()}
+          onRecheckPaddle={handleRecheckPaddle}
+          onAcceptPaddleCandidate={handleAcceptPaddleCandidate}
+          onUseBrowserOcr={() => void handleUseBrowserOcr()}
+          highResStatus={highResStatus}
+          highResCandidateText={highResCandidate}
+          onAcceptHighResCandidate={handleAcceptHighResCandidate}
+          tesseractStatus={tesseractStatus}
+          tesseractCandidateText={tesseractCandidate}
+          ruleACandidateText={ruleACandidate}
+          ruleBCandidateText={ruleBCandidate}
+          onAcceptTesseractCandidate={handleAcceptTesseractCandidate}
+          onAcceptRuleACandidate={handleAcceptRuleACandidate}
+          onAcceptRuleBCandidate={handleAcceptRuleBCandidate}
+        />
+
+        {analyzeError && (
+          <p className="analysis-warning" role="alert">
+            {analyzeError}
+          </p>
+        )}
+      </div>
+
+      <div className="result-pane">
+        {result ? (
+          <AnalysisResultPanel
+            key={result.analysis.originalText}
+            result={result}
+            sourceText={analyzedSourceText ?? result.analysis.originalText}
+            projection={
+              analyzedProjection ??
+              projectionFromSource(result.analysis.originalText)
+            }
+            readingGuideText={
+              analyzedReadingGuideText ?? result.analysis.originalText
+            }
+            provider={provider}
+            model={selectedModel}
+          />
+        ) : (
+          <p className="empty-note">
+            PDFで英文を選択するか、上のテキスト欄に直接入力して「解析」を押すと、ここに文の骨格や修飾関係などが表示されます。
+          </p>
+        )}
+      </div>
+    </section>
+  )
+
   return (
     <div className="app-shell">
       <header className="app-header">
@@ -519,9 +601,21 @@ export default function App() {
 
       <div className="workspace-controls">
         <LayoutModeSelector mode={workspaceLayout.mode} onChange={workspaceLayout.setMode} />
+
+        <button
+          type="button"
+          onClick={() => void floatingAnalysis.open()}
+          disabled={!floatingAnalysis.supported}
+        >
+          フローティング表示
+        </button>
       </div>
 
-      <main className={`app-main-pdf layout-${workspaceLayout.effective}`}>
+      <main
+        className={`app-main-pdf layout-${workspaceLayout.effective}${
+          floatingAnalysis.isFloating ? ' floating-mode' : ''
+        }`}
+      >
         <section className="pdf-pane">
           <PdfViewer
             ref={pdfViewerRef}
@@ -536,71 +630,14 @@ export default function App() {
           )}
         </section>
 
-        <section className="side-pane">
-          <div className="input-pane">
-            {selectionPageNumber !== null && (
-              <p className="pdf-source-note">
-                PDFの p.{selectionPageNumber} から取得
-                {crossPageFragments.length > 1 && `（${crossPageFragments.length}ページから選択）`}
-              </p>
-            )}
-            <SentenceInputPanel
-              sentence={sentence}
-              onChange={setSentence}
-              onAnalyze={() => void handleAnalyze()}
-              onClear={handleClear}
-              phase={analyzePhase}
-              canAnalyze={Boolean(selectedModel) && sentence.trim().length > 0}
-            />
-            {crossPageFragments.length > 1 && (
-              <p className="empty-note">複数ページの読み直しは次の対応で追加予定です。</p>
-            )}
-            <OcrFallbackPanel
-              visible={selectionMetadata !== null && crossPageFragments.length <= 1}
-              paddleStatus={paddleStatus}
-              paddleCandidateText={paddleCandidate}
-              paddleUnavailableReason={paddleUnavailableReason}
-              onRequestPaddleOcr={() => void handleRequestPaddleOcr()}
-              onRecheckPaddle={handleRecheckPaddle}
-              onAcceptPaddleCandidate={handleAcceptPaddleCandidate}
-              onUseBrowserOcr={() => void handleUseBrowserOcr()}
-              highResStatus={highResStatus}
-              highResCandidateText={highResCandidate}
-              onAcceptHighResCandidate={handleAcceptHighResCandidate}
-              tesseractStatus={tesseractStatus}
-              tesseractCandidateText={tesseractCandidate}
-              ruleACandidateText={ruleACandidate}
-              ruleBCandidateText={ruleBCandidate}
-              onAcceptTesseractCandidate={handleAcceptTesseractCandidate}
-              onAcceptRuleACandidate={handleAcceptRuleACandidate}
-              onAcceptRuleBCandidate={handleAcceptRuleBCandidate}
-            />
-            {analyzeError && (
-              <p className="analysis-warning" role="alert">
-                {analyzeError}
-              </p>
-            )}
-          </div>
+        {!floatingAnalysis.isFloating && analysisWorkspace}
 
-          <div className="result-pane">
-            {result ? (
-              <AnalysisResultPanel
-                key={result.analysis.originalText}
-                result={result}
-                sourceText={analyzedSourceText ?? result.analysis.originalText}
-                projection={analyzedProjection ?? projectionFromSource(result.analysis.originalText)}
-                readingGuideText={analyzedReadingGuideText ?? result.analysis.originalText}
-                provider={provider}
-                model={selectedModel}
-              />
-            ) : (
-              <p className="empty-note">
-                PDFで英文を選択するか、上のテキスト欄に直接入力して「解析」を押すと、ここに文の骨格や修飾関係などが表示されます。
-              </p>
-            )}
-          </div>
-        </section>
       </main>
+      {floatingAnalysis.pipWindow &&
+        createPortal(
+          analysisWorkspace,
+          floatingAnalysis.pipWindow.document.body,
+        )}
 
       <footer className="app-footer">
         <p>
