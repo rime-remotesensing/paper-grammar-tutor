@@ -21,9 +21,9 @@ function fakeStorage(initial: Record<string, string> = {}) {
 }
 
 describe('Prototype 2.6G2.10 -- computePdfViewportMaxHeight', () => {
-  it('is min(windowInnerHeight * 0.9, 1100px)', () => {
+  it('is 90% of windowInnerHeight when above the minimum', () => {
     expect(computePdfViewportMaxHeight(1000)).toBeCloseTo(900)
-    expect(computePdfViewportMaxHeight(2000)).toBe(1100)
+    expect(computePdfViewportMaxHeight(2000)).toBe(1800)
   })
 
   it('never drops below the minimum height, even for a very short window', () => {
@@ -56,7 +56,7 @@ describe('Prototype 2.6G2.10 -- computeDefaultPdfViewportHeight', () => {
   })
 
   it('never exceeds the max bound for a very tall window', () => {
-    expect(computeDefaultPdfViewportHeight(3000)).toBe(1100)
+    expect(computeDefaultPdfViewportHeight(3000)).toBe(2250)
   })
 
   it('never drops below the min bound for a short window', () => {
