@@ -747,6 +747,10 @@
   grid-template-columns: 1fr;
 }
 
+.app-main-pdf.floating-mode {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .side-pane {
   display: flex;
   flex-direction: column;
