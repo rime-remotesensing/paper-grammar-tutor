@@ -14,21 +14,19 @@ const STORAGE_KEY = 'paperGrammarTutor.pdfViewportHeight'
 /** Suggested bounds (section spec): never smaller than a genuinely usable reading window. */
 export const PDF_VIEWPORT_MIN_HEIGHT = 350
 
-/** The absolute ceiling regardless of window size -- keeps the viewport from growing
- * comically tall on an ultra-wide/ultra-tall monitor. */
-const PDF_VIEWPORT_MAX_HEIGHT_CAP = 1100
-
 /** The default height, as a fraction of the current window height, matches the previous
  * fixed `75vh` side-by-side default (Prototype 2.6G2.7A) so a first-time user's viewport
  * starts at approximately the same size as before this feature existed. */
 const DEFAULT_HEIGHT_VIEWPORT_RATIO = 0.75
 
-/** `min(window.innerHeight * 0.9, 1100px)` -- never smaller than `PDF_VIEWPORT_MIN_HEIGHT`
- * itself, so a very short window (e.g. a small laptop screen) still yields a usable range
- * rather than an inverted min > max. */
+/** Up to 90% of the current window height -- never smaller than
+ * `PDF_VIEWPORT_MIN_HEIGHT`, so a very short window still yields
+ * a usable range rather than an inverted min > max. */
 export function computePdfViewportMaxHeight(windowInnerHeight: number): number {
-  const capped = Math.min(windowInnerHeight * 0.9, PDF_VIEWPORT_MAX_HEIGHT_CAP)
-  return Math.max(capped, PDF_VIEWPORT_MIN_HEIGHT)
+  return Math.max(
+    windowInnerHeight * 0.9,
+    PDF_VIEWPORT_MIN_HEIGHT,
+  )
 }
 
 /** Clamps an arbitrary height (a drag delta, a stored value, anything) into the valid
@@ -44,8 +42,12 @@ export function clampPdfViewportHeight(height: number, windowInnerHeight: number
  * target. */
 export function computeDefaultPdfViewportHeight(windowInnerHeight: number): number {
   const raw = windowInnerHeight * DEFAULT_HEIGHT_VIEWPORT_RATIO
-  const max = Math.min(windowInnerHeight * 0.9, PDF_VIEWPORT_MAX_HEIGHT_CAP)
-  return Math.min(Math.max(raw, PDF_VIEWPORT_MIN_HEIGHT), Math.max(max, PDF_VIEWPORT_MIN_HEIGHT))
+  const max = computePdfViewportMaxHeight(windowInnerHeight)
+
+  return Math.min(
+    Math.max(raw, PDF_VIEWPORT_MIN_HEIGHT),
+    max,
+  )
 }
 
 function safeLocalStorage(): Storage | null {
