@@ -1,3 +1,5 @@
+import { findGlossaryHints } from '../glossary/technicalTermGlossary.ts'
+
 const SYSTEM_PROMPT = `You are an English reading tutor for Japanese-speaking readers of academic papers.
 Your job is grammatical structure analysis, NOT translation — never silently produce a full
 Japanese translation as your main output.
@@ -65,10 +67,18 @@ Other rules:
 - When naming a specific point in time rather than a span/duration (an acquisition time, a
   measurement time, an equator-crossing time, a timestamp), use 時刻, not 時間 (時間 means a
   duration/period). Example: "equatorial crossing times" -> 赤道通過時刻, not 赤道通過時間.
-- For an established technical or scientific term (a field-specific concept with a
-  conventional Japanese name), use that standard term rather than a literal word-by-word
-  translation. Example: "sun synchronous orbit" -> 太陽同期軌道 (the standard term used in
-  satellite/remote-sensing literature), not a literal rendering like 太陽同步軌道.
+- Interpret a multi-word technical/scientific compound (an instrument, method, or mechanism
+  name) as ONE whole noun phrase first, not word-by-word. When its everyday-English sense and
+  its field-specific sense differ, let the surrounding academic context and the noun phrase's
+  own structure decide the field-specific sense, never the more common everyday meaning of one
+  word inside it (e.g. "whiskbroom scanning radiometer" is a satellite-instrument type, not
+  related to sweeping/cleaning). For an established technical or scientific term (a
+  field-specific concept with a conventional Japanese name), use that standard term rather
+  than a literal word-by-word translation. Example: "sun synchronous orbit" -> 太陽同期軌道
+  (the standard term used in satellite/remote-sensing literature), not a literal rendering
+  like 太陽同步軌道. If no standard Japanese term is confidently known, prefer a plain
+  katakana transliteration plus a short explanatory gloss over inventing a meaningless or
+  misleading literal translation.
 - "referenceTranslation" is a secondary, optional natural Japanese translation of the whole
   sentence; the reader only sees it if they expand it.
 - Output valid JSON matching the schema only, no prose outside the JSON.
@@ -108,6 +118,11 @@ adjectivePhrase, adverbialPhrase, or other; use a Phrase value only for a meanin
 Also include academically important adverbs or relational words when they materially affect
 interpretation (correspondence, degree, sequence, or logical relation), as their own lexical item
 rather than burying them inside a surrounding phrase.
+A domain-specific technical compound noun (e.g. a named instrument/method/mechanism type made of
+several words) is ONE lexical item, not several: keep it together as a single nounPhrase entry
+with one contextualMeaning for the whole compound, rather than splitting it into separate
+single-word entries each translated independently and losing the compound's real, field-specific
+sense.
 Example: in "Lavg is the average of the measured radiance data", return average/noun,
 measured/adjective, radiance/noun — never the whole clause.`
 
@@ -115,15 +130,33 @@ const RESPECTIVELY_VOCABULARY_REQUIREMENT = `If the exact word "respectively" oc
 include it separately as respectively/adverb with the concise contextual meaning
 「それぞれ」「各々その順に」.`
 
+/** Bump whenever SYSTEM_PROMPT/VOCABULARY_RULE/the JSON schema changes in a way that should
+ * invalidate any cached analysis result keyed on this version (see analyzeSentenceWithSyntaxAuthority.ts). */
+export const GRAMMAR_ANALYSIS_PROMPT_VERSION = 1
+
 export interface PromptPair {
   system: string
   user: string
 }
 
+/** Sentence-specific background hints only -- the model still decides the final wording and
+ * may ignore a hint that doesn't fit; see technicalTermGlossary.ts's own doc comment. */
+function buildTechnicalTermHintBlock(sentence: string): string {
+  const hints = findGlossaryHints(sentence)
+  if (hints.length === 0) return ''
+  const lines = hints.map(
+    (hint) => `- "${sentence.slice(hint.start, hint.end)}" -- reference reading: ${hint.suggestedJapanese}`,
+  )
+  return `\n\nReference technical-term hints for this sentence (background knowledge only --
+adapt wording/inflection as needed, and ignore any hint that does not actually fit this
+context; never invent a hint that is not listed here):
+${lines.join('\n')}`
+}
+
 export function buildGrammarAnalysisPrompt(sentence: string): PromptPair {
   return {
     system: `${SYSTEM_PROMPT}\n\n${VOCABULARY_RULE}`,
-    user: `Analyze the grammatical structure of this sentence:\n\n${sentence}\n\n${RESPECTIVELY_VOCABULARY_REQUIREMENT}`,
+    user: `Analyze the grammatical structure of this sentence:\n\n${sentence}\n\n${RESPECTIVELY_VOCABULARY_REQUIREMENT}${buildTechnicalTermHintBlock(sentence)}`,
   }
 }
 
@@ -145,7 +178,7 @@ ${previousRawText}
 Validation error:
 ${validationError}
 
-${RESPECTIVELY_VOCABULARY_REQUIREMENT}
+${RESPECTIVELY_VOCABULARY_REQUIREMENT}${buildTechnicalTermHintBlock(sentence)}
 
 Return a corrected JSON object only, matching the schema exactly. Do not include any explanation outside the JSON.`,
   }
