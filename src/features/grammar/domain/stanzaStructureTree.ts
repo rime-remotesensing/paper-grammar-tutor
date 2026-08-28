@@ -141,6 +141,49 @@ function collectConjChain(first: StanzaToken, byHead: Map<number, StanzaToken[]>
 }
 
 /**
+ * Prototype (PP coordination member ownership fix) -- every coordination member is built
+ * with `COORDINATION_MEMBER_STOP_DEPS` (which always excludes a member's own direct `case`
+ * child, so a preposition SHARED by the whole coordination -- "at [X and Y]" -- is never
+ * duplicated into each member; it stays in the container's own trunk text instead, see
+ * `contiguousCoreIsland`). That blanket exclusion is wrong for a LATER (non-first) member
+ * that carries its OWN, DISTINCT preposition -- "at X and WITH Y" -- since that marker is
+ * never the shared/trunk one (the trunk preposition, if any, always precedes the FIRST
+ * member; see the same reasoning in `contiguousCoreIsland`'s own doc comment) and would
+ * otherwise be silently dropped: it is excluded from the member's own span (stopDeps), and
+ * `connectorSpan` only ever matches a bare and/or/but/nor/yet/while/whereas word, never a
+ * trailing preposition.
+ *
+ * The marker belongs to the MEMBER it introduces, not to the connector: the connector is
+ * "the word joining the two members" (and/or/but/...) and stays exactly that regardless of
+ * whether either member happens to carry its own preposition (an earlier version of this
+ * fix folded the marker into the connector instead -- reverted: "and with" as a single
+ * connector badge misrepresents "with" as part of the JOIN rather than part of what follows
+ * it). Widens the member's own text/start (and presentationSpan, if the member has one) to
+ * include its own leading `case` child, purely by dependency shape -- never keyed to
+ * "with"/"at" or any other specific preposition.
+ */
+function absorbOwnLeadingCaseMarker(
+  sourceText: string,
+  memberNode: StructureTreeNode,
+  memberHead: StanzaToken,
+  previousEnd: number,
+  byHead: Map<number, StanzaToken[]>,
+): StructureTreeNode {
+  const marker = (byHead.get(memberHead.id) ?? []).find(
+    (c) => normalizeDep(c.deprel) === 'case' && c.start >= previousEnd && c.end <= memberNode.start,
+  )
+  if (!marker) return memberNode
+  return {
+    ...memberNode,
+    text: sourceText.slice(marker.start, memberNode.end),
+    start: marker.start,
+    presentationSpan: memberNode.presentationSpan
+      ? { ...memberNode.presentationSpan, start: marker.start, text: sourceText.slice(marker.start, memberNode.presentationSpan.end) }
+      : undefined,
+  }
+}
+
+/**
  * Builds sibling coordination-member nodes for an already-collected `chain` (Prototype
  * 2.6G2.3 item 3/4). Each member is itself fully decomposed via `buildDecomposedConstituentNode`
  * (so a member's OWN nested postmodifier/enumeration/further coordination structure is not
@@ -164,10 +207,97 @@ function buildCoordinationMemberNodes(
       previousEnd = memberNode.end
       return memberNode
     }
-    const connector = connectorSpan(sourceText, previousEnd, memberNode.start)
-    previousEnd = memberNode.end
-    return connector ? { ...memberNode, connector } : memberNode
+    const widenedMember = absorbOwnLeadingCaseMarker(sourceText, memberNode, token, previousEnd, byHead)
+    const connector = connectorSpan(sourceText, previousEnd, widenedMember.start)
+    previousEnd = widenedMember.end
+    return connector ? { ...widenedMember, connector } : widenedMember
   })
+}
+
+/**
+ * Prototype (PP coordination member ownership fix) -- Stanza does not always attach every
+ * token that semantically belongs to a coordination's LAST member to that member's own head.
+ * Live-diagnosed real gap: in "...at an altitude of 829 km and with 1:30pm/1:30am equatorial
+ * crossing times", the coordination chain is "altitude" conj "1:30" (the time figures) -- but
+ * "times" (with its own "equatorial crossing" premodifiers) is a SEPARATE, sibling `obl:unmarked`
+ * child of the SAME enclosing head ("placed"), never attached to "1:30" at all. Left alone,
+ * this constituent's own coreSpan computation would either re-swallow that gap (the bug
+ * `contiguousCoreIsland` fixes) or -- once that is fixed -- surface "times" as an unrelated
+ * sibling 'modifier' node, splitting one semantic unit ("with 1:30pm/1:30am equatorial
+ * crossing times") across two disconnected tree rows.
+ *
+ * Recovered generally, never by recognizing "times"/"crossing"/"equatorial" specifically: a
+ * direct child of `head` merges into the coordination's LAST member when (a) it was not
+ * itself part of the conj chain, (b) its own dependency relation is the SAME category
+ * (`normalizeDep`) as the chain's own root relation -- e.g. both are `obl`, the same broad
+ * kind of adjunct as the coordination itself, not an arbitrary unrelated dependent -- and (c)
+ * it starts immediately where the (marker-widened) last member currently ends, with nothing
+ * but whitespace between them in the source text. Conservative on purpose: only a candidate
+ * with no further internal decomposition of its own is merged (a candidate carrying its own
+ * postmodifier/coordination would need this member's own presentationSpan renarrowed too,
+ * a case with no live example yet -- left as a plain sibling in that case, same as before).
+ */
+function mergeAdjacentSiblingIntoLastMember(
+  members: StructureTreeNode[],
+  chainRootDep: string,
+  chainIds: ReadonlySet<number>,
+  chainLastToken: StanzaToken,
+  head: StanzaToken,
+  byHead: Map<number, StanzaToken[]>,
+  allTokens: StanzaToken[],
+  boundaryIds: ReadonlySet<number>,
+  sourceText: string,
+  fullIds: ReadonlySet<number>,
+  excludedIds: Set<number>,
+): StructureTreeNode[] {
+  if (members.length === 0) return members
+  // Same dependency category + source adjacency + "candidate has no internal structure of
+  // its own" are, BY THEMSELVES, not enough to tell "times" (VIIRS: genuinely missing head
+  // noun for a bare numeral conjunct) apart from an ordinary, unrelated same-category
+  // adjunct that simply happens to sit next to the coordination with no punctuation between
+  // (live-diagnosed false-positive risk: "...near the old bridge and by the river Tuesday"
+  // would otherwise swallow the separate time adjunct "Tuesday" into "by the river"). The
+  // distinguishing structural fact: the coordination's own LAST member is only a candidate
+  // for gaining a following head noun when its own head token is a bare NUM with no nominal
+  // head of its own (as "1:30" is) -- an ordinary member already headed by a real NOUN/PROPN
+  // (as "river" is) is already a complete NP and never needs -- or gets -- anything merged
+  // onto it. Checked on the raw chain token (`upos`), never on any text/lexical property.
+  if (chainLastToken.upos !== 'NUM') return members
+  const lastMember = members.at(-1)!
+  // Every direct sibling of `head` sharing the coordination's own dependency category is a
+  // CANDIDATE (e.g. "orbit" and "times" both categorize as `obl` alongside "altitude") --
+  // only one of them (if any) is actually adjacent to the coordination's own last member, so
+  // every candidate is checked for adjacency; the search must not stop at the first
+  // same-category sibling regardless of position.
+  const candidates = (byHead.get(head.id) ?? []).filter(
+    (sibling) => !chainIds.has(sibling.id) && !excludedIds.has(sibling.id) && fullIds.has(sibling.id) && normalizeDep(sibling.deprel) === chainRootDep,
+  )
+  let candidateNode: StructureTreeNode | undefined
+  let candidate: StanzaToken | undefined
+  for (const c of candidates) {
+    // The candidate's own HEAD token (e.g. "times" in "equatorial crossing times") is not
+    // necessarily where its own full span starts -- premodifiers (amod/compound/...) sit
+    // BEFORE it. Adjacency to `lastMember` must be checked against the candidate's own
+    // fully-grounded span start, never the bare head token's position.
+    const built = buildDecomposedConstituentNode('modifier', c, byHead, allTokens, boundaryIds, sourceText)
+    if (built.start < lastMember.end) continue
+    if (sourceText.slice(lastMember.end, built.start).trim().length > 0) continue
+    if (built.children.length > 0) continue // conservative: only merge a simple, flat sibling
+    candidate = c
+    candidateNode = built
+    break
+  }
+  if (!candidate || !candidateNode) return members
+  for (const t of collectConstituentTokens(candidate, byHead, allTokens, boundaryIds)) excludedIds.add(t.id)
+  const merged: StructureTreeNode = {
+    ...lastMember,
+    text: sourceText.slice(lastMember.start, candidateNode.end),
+    end: candidateNode.end,
+    presentationSpan: lastMember.presentationSpan
+      ? { ...lastMember.presentationSpan, end: candidateNode.end, text: sourceText.slice(lastMember.presentationSpan.start, candidateNode.end) }
+      : undefined,
+  }
+  return [...members.slice(0, -1), merged]
 }
 
 /** True relative clause (`acl:relcl`, carries a relative pronoun/wh-word in the
@@ -674,6 +804,45 @@ function contiguousIslandContaining(head: StanzaToken, allTokens: StanzaToken[],
 }
 
 /**
+ * Prototype (PP coordination ownership fix) -- `coreSpan`/`presentationSpan` (this node's
+ * own PRESENTATION text, computed AFTER children have claimed their own sub-spans via
+ * `excludedIds`) must never silently re-absorb a token that a gap in `coreTokens` skips
+ * over. `contiguousIslandContaining` is the WRONG tool for this specific gap, even though it
+ * looks similar: it deliberately BRIDGES a non-selected, non-predicate-like token (its own
+ * job is tolerating a bare nominal aside like an excluded appositive within canonical-slot
+ * AUTHORITY grounding). Every gap in `coreTokens` here is different in kind: `coreTokens` is
+ * `fullSubtree` minus `excludedIds`, so any token missing from it was excluded FOR A REASON
+ * already decided earlier in this same function -- either it was just handed to a visible
+ * sibling child (a coordination member, its connector, a postmodifier, ...), or it was never
+ * part of `fullSubtree` at all. There is no "nominal aside" case left to bridge; bridging
+ * here is exactly the live-diagnosed bug (a PP/nominal coordination's own excluded range
+ * silently reappearing in the parent's own presentation text, duplicating a connector word
+ * that a coordination-member child already renders).
+ *
+ * Returns the maximal contiguous run of `coreTokens` (in source order, punctuation bridged)
+ * that contains `head`. Only called when `head` itself is still present in `coreTokens`
+ * (checked by the caller) -- when a canonical slot's own head was itself consumed as
+ * coordination member 0, `coreTokens` legitimately has no head-anchored island at all, and
+ * the caller keeps its prior (unchanged, separately covered) behavior for that case instead
+ * of calling this function.
+ */
+function contiguousCoreIsland(head: StanzaToken, allTokens: StanzaToken[], coreTokens: StanzaToken[]): StanzaToken[] {
+  const coreIds = new Set(coreTokens.map((t) => t.id))
+  const sorted = [...allTokens].sort((a, b) => a.start - b.start)
+  let current: StanzaToken[] = []
+  for (const token of sorted) {
+    if (coreIds.has(token.id)) {
+      current.push(token)
+      continue
+    }
+    if (normalizeDep(token.deprel) === 'punct') continue // punctuation never breaks the island
+    if (current.some((t) => t.id === head.id)) return current // head's own island just closed
+    current = []
+  }
+  return current
+}
+
+/**
  * Prototype 2.6G2.6C2 (Structural Relative Antecedent Resolution) item 8/9 -- grounds a
  * `relativeClause` node's own ANTECEDENT span independently of Tree node ownership. `head` is
  * the relative clause's own head token (the `acl:relcl` token itself, e.g. "used"/"process"/
@@ -1112,6 +1281,24 @@ function buildDecomposedConstituentNode(
             const connector = spanFromTokens(sourceText, [headCc]) ?? undefined
             allMembers = [...members, node('coordinationMember', finalSpan, [], connector)]
           }
+        } else {
+          // Prototype (PP coordination member ownership fix) -- only attempted for the
+          // ordinary (non-elliptical-shared-head) case above; combining this with the
+          // `headCc` "shared trailing head" mechanism has no live example yet and is left
+          // alone rather than guessed at.
+          allMembers = mergeAdjacentSiblingIntoLastMember(
+            allMembers,
+            normalizeDep(child.deprel),
+            new Set(chain.map((t) => t.id)),
+            chain.at(-1)!,
+            head,
+            byHead,
+            allTokens,
+            boundaryIds,
+            sourceText,
+            fullIds,
+            excludedIds,
+          )
         }
         // Range-based exclusion (not per-member positional-only): the whole coordination's
         // own consumed range -- from the first member's start to the last member's end --
@@ -1173,7 +1360,47 @@ function buildDecomposedConstituentNode(
   // computed AFTER it) purely so numbered-marker enumeration recovery -- which needs
   // `coreSpan.end` -- can also run BEFORE that scan; `excludedIds` is fully populated by loop
   // 1 above by this point either way, so the VALUE of coreTokens/coreSpan is unchanged.
-  const coreTokens = fullSubtree.filter((t) => !excludedIds.has(t.id))
+  let coreTokens = fullSubtree.filter((t) => !excludedIds.has(t.id))
+
+  // Prototype (PP coordination ownership fix) -- when `head` is still present in
+  // `coreTokens` (the ordinary case: `head` was never itself consumed as a coordination
+  // member), narrow `coreSpan` to the single contiguous island of `coreTokens` that actually
+  // contains `head`, via `contiguousCoreIsland` (see its own doc comment for why
+  // `contiguousIslandContaining` -- designed to BRIDGE excluded nominal asides -- is the
+  // wrong tool here). Live-diagnosed real defect: a relative clause's own head ("placed")
+  // has two `obl` dependents, "altitude" (which starts a `conj` chain decomposed into
+  // coordination-member children below) and "times" (an unrelated, later `obl:unmarked`
+  // sibling) -- naive `spanFromTokens(sourceText, coreTokens)` silently re-absorbed the
+  // ENTIRE excluded coordination text (including its own connector "and") into this node's
+  // own presentationSpan merely because "times" sits textually after it, duplicating "and"
+  // (once here, once in the coordination-member connector) and everything else in the gap.
+  //
+  // Any `coreTokens` left OUTSIDE that island (here: "equatorial crossing times") are, by
+  // construction, never a "nominal aside" the way `contiguousIslandContaining` tolerates --
+  // they are genuine, still-unowned content of this same constituent that the head-anchored
+  // island simply does not cover. Recovered as additional sibling 'modifier' children (the
+  // same "recovered as Tree-only additional content, never dropped" pattern this file
+  // already uses for non-restrictive postmodifiers/nmod supplements elsewhere), anchored at
+  // whichever of `head`'s own direct children the orphaned tokens descend from -- dependency-
+  // structural, never keyed to "times"/"crossing" or any other specific word.
+  if (coreTokens.some((t) => t.id === head.id)) {
+    const island = contiguousCoreIsland(head, allTokens, coreTokens)
+    const islandIds = new Set(island.map((t) => t.id))
+    const orphanIds = new Set(coreTokens.filter((t) => !islandIds.has(t.id) && normalizeDep(t.deprel) !== 'punct').map((t) => t.id))
+    if (orphanIds.size > 0) {
+      for (const child of byHead.get(head.id) ?? []) {
+        if (excludedIds.has(child.id) || !fullIds.has(child.id)) continue
+        const dep = normalizeDep(child.deprel)
+        if (dep === 'conj' || dep === 'cc' || dep === 'punct') continue
+        const childSubtree = collectConstituentTokens(child, byHead, allTokens, boundaryIds)
+        if (!childSubtree.some((t) => orphanIds.has(t.id))) continue
+        childNodes.push(buildDecomposedConstituentNode('modifier', child, byHead, allTokens, boundaryIds, sourceText))
+        for (const t of childSubtree) excludedIds.add(t.id)
+      }
+      coreTokens = coreTokens.filter((t) => !excludedIds.has(t.id))
+    }
+  }
+
   const coreSpan = coreTokens.length > 0 ? (spanFromTokens(sourceText, coreTokens) ?? fullSpan) : { text: '', start: fullSpan.start, end: fullSpan.start }
 
   // Prototype 2.6G2.8E2.1 -- SEGMENT FIRST, moved ahead of the postmodifier scan below. An
