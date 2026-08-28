@@ -57,7 +57,18 @@ Other rules:
   "needsMoreContext" true, and explain in "uncertainties" (Japanese) — but this is about
   interpretation ambiguity, not an excuse to leave sentenceCore null.
 - All explanations (explanation, roleExplanation, meaning, contextualMeaning, readingHint,
-  uncertainties) must be in Japanese, never English.
+  uncertainties) and "referenceTranslation" must be in natural, standard modern Japanese --
+  never English, and never Chinese hanzi forms even when a kanji looks similar (e.g. write
+  同期, never 同步; write 軌道, 高度 as normal Japanese, not simplified/traditional Chinese
+  variants). If unsure whether a character is the correct Japanese form, prefer the more
+  common, ordinary Japanese word over a rarer look-alike.
+- When naming a specific point in time rather than a span/duration (an acquisition time, a
+  measurement time, an equator-crossing time, a timestamp), use 時刻, not 時間 (時間 means a
+  duration/period). Example: "equatorial crossing times" -> 赤道通過時刻, not 赤道通過時間.
+- For an established technical or scientific term (a field-specific concept with a
+  conventional Japanese name), use that standard term rather than a literal word-by-word
+  translation. Example: "sun synchronous orbit" -> 太陽同期軌道 (the standard term used in
+  satellite/remote-sensing literature), not a literal rendering like 太陽同步軌道.
 - "referenceTranslation" is a secondary, optional natural Japanese translation of the whole
   sentence; the reader only sees it if they expand it.
 - Output valid JSON matching the schema only, no prose outside the JSON.
