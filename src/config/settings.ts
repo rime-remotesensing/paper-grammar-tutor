@@ -8,6 +8,12 @@ export const HEALTH_CHECK_TIMEOUT_MS = 5_000
 export const LIST_MODELS_TIMEOUT_MS = 5_000
 export const GENERATE_TIMEOUT_MS = 120_000
 
+/** Passed as Ollama's `keep_alive` on every /api/chat call so the model stays resident in
+ * memory between analyses instead of unloading on Ollama's 5-minute default and paying a
+ * cold-load cost again on the next sentence. '30m' keeps it warm for a normal working
+ * session without holding VRAM forever after the app is closed. */
+export const OLLAMA_KEEP_ALIVE = '30m'
+
 export const MAX_REPAIR_ATTEMPTS = 1
 
 export const PDF_DEFAULT_SCALE = 1.25

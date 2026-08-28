@@ -2,6 +2,7 @@ import {
   GENERATE_TIMEOUT_MS,
   HEALTH_CHECK_TIMEOUT_MS,
   LIST_MODELS_TIMEOUT_MS,
+  OLLAMA_KEEP_ALIVE,
 } from '../../../config/settings.ts'
 import type {
   GenerateStructuredRequest,
@@ -80,6 +81,7 @@ export class OllamaProvider implements LLMProvider {
             ],
             format: request.jsonSchema,
             options: { temperature: request.temperature },
+            keep_alive: OLLAMA_KEEP_ALIVE,
           }),
         },
         GENERATE_TIMEOUT_MS,
