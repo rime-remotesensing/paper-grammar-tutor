@@ -33,4 +33,26 @@ describe('academic relational vocabulary prompts', () => {
 
     expect(prompt.system).toContain('sentence-wide and independent from Tree targets')
   })
+
+  it('states the general technical-compound interpretation principle without hardcoding any single word', () => {
+    const prompt = buildGrammarAnalysisPrompt('The values are 10 and 20, respectively.')
+
+    expect(prompt.system).toContain('technical/scientific compound')
+    expect(prompt.system).toContain('ONE whole noun phrase first')
+  })
+
+  it('injects a background technical-term hint for a sentence containing a glossary phrase', () => {
+    const sentence = 'VIIRS is a whiskbroom scanning radiometer with a swath width of 3060 km.'
+    const prompt = buildGrammarAnalysisPrompt(sentence)
+
+    expect(prompt.user).toContain('whiskbroom scanning radiometer')
+    expect(prompt.user).toContain('ウィスクブルーム走査式放射計')
+    expect(prompt.user).toContain('background knowledge only')
+  })
+
+  it('omits the technical-term hint block for a sentence with no glossary match', () => {
+    const prompt = buildGrammarAnalysisPrompt('The results indicate a strong correlation between variables.')
+
+    expect(prompt.user).not.toContain('background knowledge only')
+  })
 })
