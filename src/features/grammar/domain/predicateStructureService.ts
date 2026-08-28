@@ -1,3 +1,4 @@
+import { recordStageTiming } from '../../../llm/timing.ts'
 import type { LLMProvider } from '../../../llm/types.ts'
 import type { SentenceCore, Span } from '../schemas/grammarAnalysis.schema.ts'
 import type { PredicateStructure } from '../schemas/predicateStructure.schema.ts'
@@ -67,12 +68,14 @@ export async function getPredicateStructure(params: GetPredicateStructureParams)
   const cached = cache.get(key)
   if (cached) return cached
 
+  const startedAt = performance.now()
   const promise = analyzePredicateStructure({
     provider: params.provider,
     model: params.model,
     sentence: params.originalText,
     temperature: params.temperature,
   })
+  promise.then(() => recordStageTiming('predicate structure LLM', performance.now() - startedAt))
 
   cache.set(key, promise)
   // A failed generation shouldn't be remembered as "the" result for this key — the next

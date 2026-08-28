@@ -1,3 +1,4 @@
+import { recordStageTiming } from '../../../llm/timing.ts'
 import type { LLMProvider } from '../../../llm/types.ts'
 import type { SentenceCore, Span } from '../schemas/grammarAnalysis.schema.ts'
 import type { ReadingGuide } from '../schemas/readingGuide.schema.ts'
@@ -67,6 +68,7 @@ export async function getReadingGuide(params: GetReadingGuideParams): Promise<Re
   const cached = cache.get(key)
   if (cached) return cached
 
+  const startedAt = performance.now()
   const promise = analyzeReadingGuide({
     provider: params.provider,
     model: params.model,
@@ -74,6 +76,7 @@ export async function getReadingGuide(params: GetReadingGuideParams): Promise<Re
     targets: params.targets,
     temperature: params.temperature,
   })
+  promise.then(() => recordStageTiming('reading guide + expressions LLM', performance.now() - startedAt))
 
   cache.set(key, promise)
   // A failed generation shouldn't be remembered as "the" result for this key — the next

@@ -10,6 +10,7 @@ import {
   buildGrammarAnalysisPrompt,
   buildRepairPrompt,
 } from '../../../llm/prompts/grammarAnalysisPrompt.ts'
+import { recordStageTiming } from '../../../llm/timing.ts'
 import { normalizeSentence } from '../../../utils/textNormalize.ts'
 import { tryParseJson } from '../../../utils/jsonExtract.ts'
 import { buildFallbackAnalysis } from './fallbackAnalysis.ts'
@@ -78,6 +79,8 @@ export async function analyzeSentence(
     totalElapsedMs += generation.elapsedMs
     attempt = validate(generation.rawText, normalizedText)
   }
+
+  recordStageTiming('grammar analysis LLM (+ repairs)', totalElapsedMs)
 
   if (!attempt.success) {
     return {
