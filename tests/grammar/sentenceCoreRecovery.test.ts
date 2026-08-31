@@ -278,12 +278,10 @@ describe('mergeRecoveredSentenceCore', () => {
 
   it('preserves every non-sentenceCore field on the analysis untouched', () => {
     const merged = mergeRecoveredSentenceCore(FULL_ANALYSIS, recoveredBase)
-    expect(merged.chunks).toBe(FULL_ANALYSIS.chunks)
     expect(merged.modifiers).toBe(FULL_ANALYSIS.modifiers)
     expect(merged.clauses).toBe(FULL_ANALYSIS.clauses)
     expect(merged.phrases).toBe(FULL_ANALYSIS.phrases)
     expect(merged.vocabulary).toBe(FULL_ANALYSIS.vocabulary)
-    expect(merged.readingHint).toBe(FULL_ANALYSIS.readingHint)
     expect(merged.confidence).toBe(FULL_ANALYSIS.confidence)
     expect(merged.uncertainties).toBe(FULL_ANALYSIS.uncertainties)
     expect(merged.needsMoreContext).toBe(FULL_ANALYSIS.needsMoreContext)

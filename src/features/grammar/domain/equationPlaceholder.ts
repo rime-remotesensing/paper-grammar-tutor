@@ -33,10 +33,10 @@ export function normalizeEquationPlaceholdersInProjection(input: Projection): Pr
 }
 
 /** "[EQUATION_5]" -> "[式 (5)]", "[EQUATION]" -> "[式]". Applied ONLY to free-text fields
- * the LLM generated on its own (readingHint, referenceTranslation, vocabulary/phrase/
- * modifier/clause explanation text) — never to span-derived `.text` excerpts or
- * originalText/normalizedText, whose character positions remain authoritative against the
- * analysis-facing (normalized) text (item 13: no fuzzy bridging between representations). */
+ * the LLM generated on its own (referenceTranslation, vocabulary/phrase/modifier/clause
+ * explanation text) — never to span-derived `.text` excerpts or originalText/normalizedText,
+ * whose character positions remain authoritative against the analysis-facing (normalized)
+ * text (item 13: no fuzzy bridging between representations). */
 export function restoreEquationPlaceholdersForDisplay(text: string): string {
   return text.replace(ANALYSIS_PLACEHOLDER, (_match, number: string | undefined) => (number ? `[式 (${number})]` : '[式]'))
 }
@@ -45,7 +45,6 @@ export function restoreEquationPlaceholdersForDisplay(text: string): string {
  * local (not importing the full schema type) so this stays a small, dependency-light
  * utility; callers pass their own already-typed object and get the same shape back. */
 interface FreeTextAnalysisFields {
-  readingHint: string[]
   referenceTranslation: string | null
   vocabulary: { word: string; contextualMeaning: string; partOfSpeech: string }[]
   phrases: { meaning: string }[]
@@ -57,13 +56,12 @@ interface FreeTextAnalysisFields {
  * Restores "[式 (N)]" display form within the LLM-GENERATED free-text explanation fields
  * only (item 12/13 option B: presentation-layer-only conversion). Deliberately does NOT
  * touch `originalText`/`normalizedText` or any span-derived `.text` excerpt (sentenceCore,
- * chunks, modifiers[].phrase, clauses[].span, phrases[].span) — those remain in the
+ * modifiers[].phrase, clauses[].span, phrases[].span) — those remain in the
  * analysis-facing ("[EQUATION_5]") form their character offsets were resolved against.
  */
 export function restoreEquationPlaceholdersInFreeText<T extends FreeTextAnalysisFields>(analysis: T): T {
   return {
     ...analysis,
-    readingHint: analysis.readingHint.map(restoreEquationPlaceholdersForDisplay),
     referenceTranslation: analysis.referenceTranslation === null ? null : restoreEquationPlaceholdersForDisplay(analysis.referenceTranslation),
     vocabulary: analysis.vocabulary.map((v) => ({ ...v, contextualMeaning: restoreEquationPlaceholdersForDisplay(v.contextualMeaning) })),
     phrases: analysis.phrases.map((p) => ({ ...p, meaning: restoreEquationPlaceholdersForDisplay(p.meaning) })),
