@@ -24,7 +24,7 @@ function singleCoreAnalysis(core: LlmSentenceCore): LlmGrammarAnalysis {
       subjectHead: core.subjectHead,
       predicateCores: [{ connector: null, verb: core.verb, indirectObject: core.indirectObject, object: core.object, complement: core.complement }],
     },
-    chunks: [], modifiers: [], clauses: [], phrases: [], vocabulary: [], readingHint: [],
+    modifiers: [], clauses: [], phrases: [], vocabulary: [],
     confidence: 0.9, uncertainties: [], needsMoreContext: false, referenceTranslation: null,
   }
 }

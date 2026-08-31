@@ -611,20 +611,6 @@ export function AnalysisResultPanel({ result, sourceText, projection, readingGui
       <details className="meta-details">
         <summary>従来の解析情報（デバッグ用）</summary>
         <section>
-          <h2>意味のまとまり</h2>
-          {analysis.chunks.length === 0 ? (
-            <p className="empty-note">まとまりは検出されませんでした。</p>
-          ) : (
-            <p className="chunk-line">
-              {[...analysis.chunks]
-                .sort((a, b) => a.order - b.order)
-                .map((c) => c.span.text)
-                .join(' / ')}
-            </p>
-          )}
-        </section>
-
-        <section>
           <h2>修飾関係</h2>
           {analysis.modifiers.length === 0 ? (
             <p className="empty-note">特筆すべき修飾関係はありません。</p>
@@ -676,16 +662,6 @@ export function AnalysisResultPanel({ result, sourceText, projection, readingGui
           </section>
         )}
 
-        {analysis.readingHint.length > 0 && (
-          <section>
-            <h2>読み方のヒント</h2>
-            <ul>
-              {analysis.readingHint.map((hint, i) => (
-                <li key={i}>{hint}</li>
-              ))}
-            </ul>
-          </section>
-        )}
       </details>
 
       <details className="meta-details">

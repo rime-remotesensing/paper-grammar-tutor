@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { llmGrammarAnalysisSchema } from '../../src/features/grammar/schemas/grammarAnalysis.schema'
+import { GRAMMAR_ANALYSIS_JSON_SCHEMA } from '../../src/features/grammar/schemas/grammarAnalysis.jsonSchema'
 import { validAnalysisFixture } from '../fixtures/validAnalysisFixture'
 
 describe('llmGrammarAnalysisSchema', () => {
@@ -61,5 +62,42 @@ describe('llmGrammarAnalysisSchema', () => {
     }
     const result = llmGrammarAnalysisSchema.safeParse(withNulls)
     expect(result.success).toBe(true)
+  })
+
+  it('no longer defines chunks or readingHint anywhere in the LLM-facing schemas', () => {
+    // Zod's z.object() silently strips unknown keys by default, so even if an old/stale
+    // model response still included these keys, they must never survive into the parsed
+    // result -- proving the app-facing type genuinely has no such property, not just an
+    // optional one.
+    const legacyShapedPayload = {
+      ...validAnalysisFixture,
+      chunks: [{ span: { text: 'x', start: 0, end: 1 }, order: 0 }],
+      readingHint: ['some hint'],
+    }
+    const result = llmGrammarAnalysisSchema.safeParse(legacyShapedPayload)
+    expect(result.success).toBe(true)
+    if (result.success) {
+      expect(result.data).not.toHaveProperty('chunks')
+      expect(result.data).not.toHaveProperty('readingHint')
+    }
+
+    // The JSON Schema handed to Ollama's structured-output `format` must not ask the model
+    // to generate these fields at all -- this is the actual output-token reduction lever,
+    // not just app-side stripping after the fact.
+    expect(GRAMMAR_ANALYSIS_JSON_SCHEMA.properties).not.toHaveProperty('chunks')
+    expect(GRAMMAR_ANALYSIS_JSON_SCHEMA.properties).not.toHaveProperty('readingHint')
+    expect(GRAMMAR_ANALYSIS_JSON_SCHEMA.required).not.toContain('chunks')
+    expect(GRAMMAR_ANALYSIS_JSON_SCHEMA.required).not.toContain('readingHint')
+  })
+
+  it('still requires modifiers, clauses, phrases, vocabulary, and referenceTranslation', () => {
+    expect(GRAMMAR_ANALYSIS_JSON_SCHEMA.required).toEqual(
+      expect.arrayContaining(['sentenceCoreSet', 'modifiers', 'clauses', 'phrases', 'vocabulary', 'referenceTranslation']),
+    )
+    expect(GRAMMAR_ANALYSIS_JSON_SCHEMA.properties).toHaveProperty('modifiers')
+    expect(GRAMMAR_ANALYSIS_JSON_SCHEMA.properties).toHaveProperty('clauses')
+    expect(GRAMMAR_ANALYSIS_JSON_SCHEMA.properties).toHaveProperty('phrases')
+    expect(GRAMMAR_ANALYSIS_JSON_SCHEMA.properties).toHaveProperty('vocabulary')
+    expect(GRAMMAR_ANALYSIS_JSON_SCHEMA.properties).toHaveProperty('referenceTranslation')
   })
 })

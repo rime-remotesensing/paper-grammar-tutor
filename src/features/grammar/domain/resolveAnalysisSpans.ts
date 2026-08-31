@@ -73,10 +73,6 @@ export function resolveAnalysisSpans(
         subjectHead,
         predicateCores,
       },
-      chunks: analysis.chunks.map((chunk) => ({
-        ...chunk,
-        span: resolveRequired(chunk.span, '意味のまとまり'),
-      })),
       modifiers: analysis.modifiers.map((modifier) => ({
         ...modifier,
         phrase: resolveRequired(modifier.phrase, '修飾句'),

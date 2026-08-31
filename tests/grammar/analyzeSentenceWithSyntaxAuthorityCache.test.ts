@@ -13,6 +13,7 @@ import {
   analyzeSentenceWithSyntaxAuthority,
   resetSentenceAnalysisCache,
 } from '../../src/features/grammar/domain/analyzeSentenceWithSyntaxAuthority.ts'
+import { GRAMMAR_ANALYSIS_PROMPT_VERSION } from '../../src/llm/prompts/grammarAnalysisPrompt.ts'
 import type {
   GenerateStructuredRequest,
   GenerateStructuredResult,
@@ -36,7 +37,7 @@ function grammarAnalysisJson() {
       subjectHead: { text: 'It', start: 0, end: 2 },
       predicateCores: [{ connector: null, verb: { text: 'works', start: 3, end: 8 }, indirectObject: null, object: null, complement: null }],
     },
-    chunks: [], modifiers: [], clauses: [], phrases: [], vocabulary: [], readingHint: [],
+    modifiers: [], clauses: [], phrases: [], vocabulary: [],
     confidence: 0.9, uncertainties: [], needsMoreContext: false, referenceTranslation: null,
   })
 }
@@ -98,5 +99,13 @@ describe('analyzeSentenceWithSyntaxAuthority caching', () => {
     await analyzeSentenceWithSyntaxAuthority({ provider, model: 'model-b', sentence: 'It works.', temperature: 0.1 })
 
     expect(provider.calls).toBe(2)
+  })
+
+  it('bumps GRAMMAR_ANALYSIS_PROMPT_VERSION past its pre-chunks/readingHint-removal value', () => {
+    // The cache key (analyzeSentenceWithSyntaxAuthority.ts's cacheKey()) embeds this version
+    // string precisely so a schema/prompt contract change like removing chunks/readingHint
+    // can never have a stale, differently-shaped cached result served under a colliding key.
+    // Version 1 was the contract that still required chunks/readingHint; this must be >1 now.
+    expect(GRAMMAR_ANALYSIS_PROMPT_VERSION).toBeGreaterThan(1)
   })
 })

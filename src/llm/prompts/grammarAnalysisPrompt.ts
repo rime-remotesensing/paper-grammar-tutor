@@ -58,7 +58,7 @@ Other rules:
 - If something is ambiguous or needs surrounding context, lower "confidence", set
   "needsMoreContext" true, and explain in "uncertainties" (Japanese) — but this is about
   interpretation ambiguity, not an excuse to leave sentenceCore null.
-- All explanations (explanation, roleExplanation, meaning, contextualMeaning, readingHint,
+- All explanations (explanation, roleExplanation, meaning, contextualMeaning,
   uncertainties) and "referenceTranslation" must be in natural, standard modern Japanese --
   never English, and never Chinese hanzi forms even when a kanji looks similar (e.g. write
   同期, never 同步; write 軌道, 高度 as normal Japanese, not simplified/traditional Chinese
@@ -132,7 +132,7 @@ include it separately as respectively/adverb with the concise contextual meaning
 
 /** Bump whenever SYSTEM_PROMPT/VOCABULARY_RULE/the JSON schema changes in a way that should
  * invalidate any cached analysis result keyed on this version (see analyzeSentenceWithSyntaxAuthority.ts). */
-export const GRAMMAR_ANALYSIS_PROMPT_VERSION = 1
+export const GRAMMAR_ANALYSIS_PROMPT_VERSION = 2
 
 export interface PromptPair {
   system: string

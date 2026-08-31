@@ -57,18 +57,6 @@ export const GRAMMAR_ANALYSIS_JSON_SCHEMA = {
       required: ['subject', 'subjectHead', 'predicateCores'],
       additionalProperties: false,
     },
-    chunks: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          span: SPAN_SCHEMA,
-          order: { type: 'integer' },
-        },
-        required: ['span', 'order'],
-        additionalProperties: false,
-      },
-    },
     modifiers: {
       type: 'array',
       items: {
@@ -146,7 +134,6 @@ export const GRAMMAR_ANALYSIS_JSON_SCHEMA = {
         additionalProperties: false,
       },
     },
-    readingHint: { type: 'array', items: { type: 'string' } },
     confidence: { type: 'number', minimum: 0, maximum: 1 },
     uncertainties: { type: 'array', items: { type: 'string' } },
     needsMoreContext: { type: 'boolean' },
@@ -154,12 +141,10 @@ export const GRAMMAR_ANALYSIS_JSON_SCHEMA = {
   },
   required: [
     'sentenceCoreSet',
-    'chunks',
     'modifiers',
     'clauses',
     'phrases',
     'vocabulary',
-    'readingHint',
     'confidence',
     'uncertainties',
     'needsMoreContext',

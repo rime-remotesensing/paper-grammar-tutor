@@ -24,12 +24,6 @@ export const validAnalysisFixture: LlmGrammarAnalysis & { sentenceCore: LlmSente
     object: { text: 'that the proposed method is effective', start: 59, end: 97 },
     complement: null,
   },
-  chunks: [
-    { span: { text: 'The results', start: 0, end: 11 }, order: 0 },
-    { span: { text: 'obtained in the previous experiment', start: 12, end: 48 }, order: 1 },
-    { span: { text: 'indicate', start: 50, end: 58 }, order: 2 },
-    { span: { text: 'that the proposed method is effective', start: 59, end: 97 }, order: 3 },
-  ],
   modifiers: [
     {
       phrase: { text: 'obtained in the previous experiment', start: 12, end: 48 },
@@ -48,7 +42,6 @@ export const validAnalysisFixture: LlmGrammarAnalysis & { sentenceCore: LlmSente
   ],
   phrases: [],
   vocabulary: [{ word: 'indicate', contextualMeaning: '（データなどが）〜を示す', partOfSpeech: 'verb' }],
-  readingHint: ['まず主語のかたまりを読み、その後 indicate という動詞を見つけましょう。'],
   confidence: 0.9,
   uncertainties: [],
   needsMoreContext: false,

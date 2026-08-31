@@ -85,12 +85,6 @@ export const sentenceCoreSetSchema = z.object({
 })
 export type SentenceCoreSet = z.infer<typeof sentenceCoreSetSchema>
 
-export const chunkSchema = z.object({
-  span: spanSchema,
-  order: z.number().int().nonnegative(),
-})
-export type Chunk = z.infer<typeof chunkSchema>
-
 export const modifierKindSchema = z.enum([
   'prepositionalPhrase',
   'participlePhrase',
@@ -167,12 +161,10 @@ export const vocabularyItemSchema = z.object({
 export type VocabularyItem = z.infer<typeof vocabularyItemSchema>
 
 const sharedAnalysisFieldsSchema = z.object({
-  chunks: z.array(chunkSchema),
   modifiers: z.array(modifierSchema),
   clauses: z.array(clauseSchema),
   phrases: z.array(phraseSchema),
   vocabulary: z.array(vocabularyItemSchema),
-  readingHint: z.array(z.string()),
   confidence: z.number().min(0).max(1),
   uncertainties: z.array(z.string()),
   needsMoreContext: z.boolean(),
