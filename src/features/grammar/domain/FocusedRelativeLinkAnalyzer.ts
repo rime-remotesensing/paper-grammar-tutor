@@ -42,6 +42,7 @@ export async function analyzeFocusedRelativeLink(
     userPrompt: prompt.user,
     jsonSchema: FOCUSED_RELATIVE_LINK_JSON_SCHEMA,
     temperature,
+    callLabel: 'focused-relative-link.initial',
   })
 
   let attempt = validate(generation.rawText)
@@ -54,6 +55,7 @@ export async function analyzeFocusedRelativeLink(
       userPrompt: repairPrompt.user,
       jsonSchema: FOCUSED_RELATIVE_LINK_JSON_SCHEMA,
       temperature,
+      callLabel: `focused-relative-link.repair.${repairCount + 1}`,
     })
     attempt = validate(generation.rawText)
   }

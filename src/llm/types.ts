@@ -15,11 +15,26 @@ export interface GenerateStructuredRequest {
   /** JSON Schema describing the required output shape, passed to the provider's structured-output mode. */
   jsonSchema: Record<string, unknown>
   temperature: number
+  /** Investigation-only instrumentation label identifying which analyzer/repair-attempt this
+   * request is (e.g. "grammar-analysis.initial", "grammar-analysis.repair.1"). Purely
+   * diagnostic -- providers may ignore it; it never affects the request sent to the LLM. */
+  callLabel?: string
 }
 
 export interface GenerateStructuredResult {
   rawText: string
   elapsedMs: number
+  /**
+   * Ollama /api/chat-reported metrics, only when the provider actually returned them.
+   * Explicitly null (never fabricated/estimated) when unavailable -- see OllamaProvider.ts.
+   * Durations are converted from Ollama's nanoseconds to milliseconds.
+   */
+  promptTokens?: number | null
+  outputTokens?: number | null
+  totalDurationMs?: number | null
+  loadDurationMs?: number | null
+  promptEvalDurationMs?: number | null
+  evalDurationMs?: number | null
 }
 
 /**

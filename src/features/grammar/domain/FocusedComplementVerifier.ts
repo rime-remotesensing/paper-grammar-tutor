@@ -53,6 +53,7 @@ export async function verifyFocusedComplement(
     userPrompt: prompt.user,
     jsonSchema: FOCUSED_COMPLEMENT_VERIFICATION_JSON_SCHEMA,
     temperature,
+    callLabel: 'focused-complement-verifier.initial',
   })
 
   let attempt = validate(generation.rawText)
@@ -73,6 +74,7 @@ export async function verifyFocusedComplement(
       userPrompt: repairPrompt.user,
       jsonSchema: FOCUSED_COMPLEMENT_VERIFICATION_JSON_SCHEMA,
       temperature,
+      callLabel: `focused-complement-verifier.repair.${repairCount + 1}`,
     })
     attempt = validate(generation.rawText)
   }

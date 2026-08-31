@@ -56,6 +56,7 @@ export async function repairFocusedWhereClause(options: RepairFocusedWhereClause
     userPrompt: prompt.user,
     jsonSchema: FOCUSED_WHERE_CLAUSE_REPAIR_JSON_SCHEMA,
     temperature,
+    callLabel: 'focused-where-clause-repair.initial',
   })
 
   let attempt = validate(generation.rawText, sentence, clauseSpan, acceptedPredicateCandidates)
@@ -74,6 +75,7 @@ export async function repairFocusedWhereClause(options: RepairFocusedWhereClause
       userPrompt: repairPrompt.user,
       jsonSchema: FOCUSED_WHERE_CLAUSE_REPAIR_JSON_SCHEMA,
       temperature,
+      callLabel: `focused-where-clause-repair.repair.${repairCount + 1}`,
     })
     attempt = validate(generation.rawText, sentence, clauseSpan, acceptedPredicateCandidates)
   }

@@ -4,6 +4,7 @@ import {
   LIST_MODELS_TIMEOUT_MS,
   OLLAMA_KEEP_ALIVE,
 } from '../../../config/settings.ts'
+import { recordOllamaCall } from '../../timing.ts'
 import type {
   GenerateStructuredRequest,
   GenerateStructuredResult,
@@ -17,8 +18,22 @@ interface OllamaTagsResponse {
   models?: Array<{ name?: string; size?: number }>
 }
 
+/**
+ * Only `message.content` was read here before; the rest of these fields (confirmed present
+ * in this Ollama version's actual /api/chat, non-streaming response -- see
+ * docs/design-notes.md investigation notes) are Ollama-reported call metrics, added purely
+ * for investigation-phase instrumentation (recordOllamaCall). Durations are nanoseconds as
+ * Ollama returns them; all fields are optional since a future Ollama response shape or a
+ * different provider might not include them -- never assumed present.
+ */
 interface OllamaChatResponse {
   message?: { content?: string }
+  prompt_eval_count?: number
+  eval_count?: number
+  total_duration?: number
+  load_duration?: number
+  prompt_eval_duration?: number
+  eval_duration?: number
 }
 
 /**
@@ -100,7 +115,37 @@ export class OllamaProvider implements LLMProvider {
     if (typeof rawText !== 'string') {
       throw new LLMProviderError('Ollama response did not contain message.content')
     }
-    return { rawText, elapsedMs: performance.now() - startedAt }
+    const elapsedMs = performance.now() - startedAt
+    const nsToMs = (ns: number | undefined): number | null => (typeof ns === 'number' ? ns / 1_000_000 : null)
+    const promptTokens = typeof data.prompt_eval_count === 'number' ? data.prompt_eval_count : null
+    const outputTokens = typeof data.eval_count === 'number' ? data.eval_count : null
+    const totalDurationMs = nsToMs(data.total_duration)
+    const loadDurationMs = nsToMs(data.load_duration)
+    const promptEvalDurationMs = nsToMs(data.prompt_eval_duration)
+    const evalDurationMs = nsToMs(data.eval_duration)
+
+    recordOllamaCall({
+      label: request.callLabel ?? 'unlabeled',
+      model: request.model,
+      wallMs: elapsedMs,
+      promptTokens,
+      outputTokens,
+      totalDurationMs,
+      loadDurationMs,
+      promptEvalDurationMs,
+      evalDurationMs,
+    })
+
+    return {
+      rawText,
+      elapsedMs,
+      promptTokens,
+      outputTokens,
+      totalDurationMs,
+      loadDurationMs,
+      promptEvalDurationMs,
+      evalDurationMs,
+    }
   }
 }
 

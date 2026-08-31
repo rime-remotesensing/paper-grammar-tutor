@@ -51,6 +51,7 @@ export async function analyzePredicateStructure(
     userPrompt: prompt.user,
     jsonSchema: PREDICATE_STRUCTURE_JSON_SCHEMA,
     temperature,
+    callLabel: 'predicate-structure.initial',
   })
 
   let attempt = validate(generation.rawText, sentence)
@@ -63,6 +64,7 @@ export async function analyzePredicateStructure(
       userPrompt: repairPrompt.user,
       jsonSchema: PREDICATE_STRUCTURE_JSON_SCHEMA,
       temperature,
+      callLabel: `predicate-structure.repair.${repairCount + 1}`,
     })
     attempt = validate(generation.rawText, sentence)
   }

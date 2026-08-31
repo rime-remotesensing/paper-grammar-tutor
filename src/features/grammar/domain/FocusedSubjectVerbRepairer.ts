@@ -53,6 +53,7 @@ export async function repairFocusedSubjectVerb(
     userPrompt: prompt.user,
     jsonSchema: FOCUSED_SUBJECT_VERB_REPAIR_JSON_SCHEMA,
     temperature,
+    callLabel: 'focused-subject-verb-repair.initial',
   })
 
   let attempt = validate(generation.rawText, sentence)
@@ -65,6 +66,7 @@ export async function repairFocusedSubjectVerb(
       userPrompt: repairPrompt.user,
       jsonSchema: FOCUSED_SUBJECT_VERB_REPAIR_JSON_SCHEMA,
       temperature,
+      callLabel: `focused-subject-verb-repair.repair.${repairCount + 1}`,
     })
     attempt = validate(generation.rawText, sentence)
   }

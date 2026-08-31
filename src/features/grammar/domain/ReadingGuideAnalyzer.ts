@@ -46,6 +46,7 @@ export async function analyzeReadingGuide(
     userPrompt: prompt.user,
     jsonSchema: READING_GUIDE_JSON_SCHEMA,
     temperature,
+    callLabel: 'reading-guide.initial',
   })
 
   let attempt = validate(generation.rawText, sentence, targets)
@@ -58,6 +59,7 @@ export async function analyzeReadingGuide(
       userPrompt: repairPrompt.user,
       jsonSchema: READING_GUIDE_JSON_SCHEMA,
       temperature,
+      callLabel: `reading-guide.repair.${repairCount + 1}`,
     })
     attempt = validate(generation.rawText, sentence, targets)
   }
