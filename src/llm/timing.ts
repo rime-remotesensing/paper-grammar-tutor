@@ -16,12 +16,17 @@
 /**
  * True only in Vite's dev server (or a dev-mode test run); statically false in a production
  * build (Vite always defines `import.meta.env.DEV`), so the `if` guards below become dead
- * code a minifier can drop. `typeof import.meta.env !== 'undefined'` guards the case where
- * this module runs completely outside Vite (a plain `node script.ts` investigation/benchmark
- * script, as used throughout this session) -- there `import.meta.env` is simply absent, not
- * an error, and instrumentation recording still works; only the console logging is skipped.
+ * code a minifier can drop. Deliberately typed via a local, all-optional shape instead of
+ * relying on Vite's ambient `ImportMeta.env` declaration (from the `vite/client` types) --
+ * this file is also reachable from plain Node/TypeScript projects that never load those
+ * ambient types (e.g. a `benchmark/**` script importing OllamaProvider.ts, which imports this
+ * module, under a tsconfig scoped to `types: ["node"]` only). Because every property in the
+ * cast target is optional, the cast type-checks under both configurations regardless of
+ * whether the real `ImportMeta.env` is present; at runtime, `import.meta.env` is simply
+ * absent (not an error) outside Vite, so `?.` safely evaluates to `undefined` and the
+ * comparison is `false` -- only the console logging is skipped there, never the recording.
  */
-const isDevInstrumentation = typeof import.meta.env !== 'undefined' && import.meta.env.DEV === true
+const isDevInstrumentation = (import.meta as { env?: { DEV?: boolean } }).env?.DEV === true
 
 export interface StageTiming {
   label: string
