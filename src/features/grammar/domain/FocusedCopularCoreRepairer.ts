@@ -54,6 +54,7 @@ export async function repairFocusedCopularCore(options: RepairFocusedCopularCore
     userPrompt: prompt.user,
     jsonSchema: FOCUSED_COPULAR_CORE_REPAIR_JSON_SCHEMA,
     temperature,
+    callLabel: 'focused-copular-core-repair.initial',
   })
 
   let attempt = validate(generation.rawText, sentence)
@@ -66,6 +67,7 @@ export async function repairFocusedCopularCore(options: RepairFocusedCopularCore
       userPrompt: repairPrompt.user,
       jsonSchema: FOCUSED_COPULAR_CORE_REPAIR_JSON_SCHEMA,
       temperature,
+      callLabel: `focused-copular-core-repair.repair.${repairCount + 1}`,
     })
     attempt = validate(generation.rawText, sentence)
   }

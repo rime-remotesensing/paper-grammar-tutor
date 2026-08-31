@@ -65,6 +65,7 @@ export async function recoverSentenceCore(
     userPrompt: prompt.user,
     jsonSchema: FORCED_CORE_JSON_SCHEMA,
     temperature: options.temperature,
+    callLabel: 'forced-core-recovery.initial',
   })
 
   const parsed = tryParseJson(generation.rawText)

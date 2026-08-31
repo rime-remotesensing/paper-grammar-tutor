@@ -61,6 +61,7 @@ export async function analyzeSentence(
     userPrompt: prompt.user,
     jsonSchema: GRAMMAR_ANALYSIS_JSON_SCHEMA,
     temperature,
+    callLabel: 'grammar-analysis.initial',
   })
   totalElapsedMs += generation.elapsedMs
 
@@ -75,6 +76,7 @@ export async function analyzeSentence(
       userPrompt: repairPrompt.user,
       jsonSchema: GRAMMAR_ANALYSIS_JSON_SCHEMA,
       temperature,
+      callLabel: `grammar-analysis.repair.${repairCount + 1}`,
     })
     totalElapsedMs += generation.elapsedMs
     attempt = validate(generation.rawText, normalizedText)

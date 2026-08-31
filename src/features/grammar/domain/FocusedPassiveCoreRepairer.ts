@@ -46,6 +46,7 @@ export async function repairFocusedPassiveCore(options: RepairFocusedPassiveCore
     userPrompt: prompt.user,
     jsonSchema: FOCUSED_PASSIVE_CORE_REPAIR_JSON_SCHEMA,
     temperature,
+    callLabel: 'focused-passive-core-repair.initial',
   })
 
   let attempt = validate(generation.rawText, sentence)
@@ -58,6 +59,7 @@ export async function repairFocusedPassiveCore(options: RepairFocusedPassiveCore
       userPrompt: repairPrompt.user,
       jsonSchema: FOCUSED_PASSIVE_CORE_REPAIR_JSON_SCHEMA,
       temperature,
+      callLabel: `focused-passive-core-repair.repair.${repairCount + 1}`,
     })
     attempt = validate(generation.rawText, sentence)
   }
