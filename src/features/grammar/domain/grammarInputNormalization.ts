@@ -75,3 +75,26 @@ export function normalizeSentenceForReadingGuide(sourceText: string): string {
   const equationsNamed = normalizeEquationPlaceholdersForAnalysis(citationsRemoved)
   return shieldDisplayEquationsForAnalysis(equationsNamed)
 }
+
+/**
+ * Text mode / manual typing introduces incidental leading/trailing whitespace (a stray
+ * newline left in the textarea, a trailing space from pasting) that a PDF selection rarely
+ * does. Trimmed once, here, before the sentence becomes `analysisInput`, the ReadingGuide
+ * input, or `sourceTextAtAnalysisTime` -- never touches internal whitespace, only the
+ * sentence's own edges. Input-source-agnostic on purpose: applying it unconditionally (not
+ * just for typed/Text-mode input) keeps there being exactly one preparation step regardless
+ * of where the sentence came from.
+ */
+export function trimSentenceForAnalysis(sourceText: string): string {
+  return sourceText.trim()
+}
+
+/**
+ * Whether "解析する" should actually run: a model must be selected and the sentence must
+ * have non-whitespace content. Purely client-side gate -- the goal is that an empty or
+ * whitespace-only sentence never reaches Stanza or the LLM at all, not just that the UI
+ * disables a button (this same check also guards `handleAnalyze`'s own early return).
+ */
+export function canStartAnalysis(sentence: string, selectedModel: string | null): boolean {
+  return Boolean(selectedModel) && sentence.trim().length > 0
+}

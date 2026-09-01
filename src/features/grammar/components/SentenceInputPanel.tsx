@@ -19,6 +19,13 @@ interface SentenceInputPanelProps {
    * user-facing label; the distinct phase values exist only for internal state clarity. */
   phase: AnalyzePhase
   canAnalyze: boolean
+  /** Overrides the textarea placeholder (e.g. Text mode's own guidance copy). Defaults to
+   * the PDF-mode example sentence. */
+  placeholder?: string
+  /** Overrides only the 'idle'-phase button label (e.g. Text mode's "解析する" vs. PDF
+   * mode's "骨格を見る") -- every other phase label stays shared, since those describe the
+   * same underlying pipeline step regardless of input source. */
+  idleLabel?: string
 }
 
 const SAMPLE_SENTENCES = sampleDataset.sentences as Array<{ id: string; text: string }>
@@ -38,7 +45,10 @@ export function SentenceInputPanel({
   onClear,
   phase,
   canAnalyze,
+  placeholder = '例: The results obtained in the previous experiment indicate that the proposed method is effective.',
+  idleLabel = PHASE_LABEL.idle,
 }: SentenceInputPanelProps) {
+  const buttonLabel = phase === 'idle' ? idleLabel : PHASE_LABEL[phase]
   return (
     <div className="sentence-input-panel">
       <label htmlFor="sentence-input">英文を入力</label>
@@ -47,7 +57,7 @@ export function SentenceInputPanel({
         rows={5}
         value={sentence}
         onChange={(e) => onChange(e.target.value)}
-        placeholder="例: The results obtained in the previous experiment indicate that the proposed method is effective."
+        placeholder={placeholder}
       />
       <div className="sentence-input-controls">
         <select
@@ -66,7 +76,7 @@ export function SentenceInputPanel({
           ))}
         </select>
         <button type="button" onClick={onAnalyze} disabled={!canAnalyze || phase !== 'idle'}>
-          {PHASE_LABEL[phase]}
+          {buttonLabel}
         </button>
         <button type="button" onClick={onClear} disabled={phase !== 'idle'}>
           クリア

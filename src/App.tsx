@@ -15,7 +15,12 @@ import { useFloatingAnalysis } from './features/grammar/hooks/useFloatingAnalysi
 import type { VerifiedSentenceAnalysisWithSyntaxAuthority } from './features/grammar/domain/analyzeSentenceWithSyntaxAuthority'
 import { analyzeSentenceWithSyntaxAuthority } from './features/grammar/domain/analyzeSentenceWithSyntaxAuthority'
 import { restoreEquationPlaceholdersInFreeText } from './features/grammar/domain/equationPlaceholder'
-import { normalizeSentenceForReadingGuide, projectSentenceForGrammarAnalysis } from './features/grammar/domain/grammarInputNormalization'
+import {
+  canStartAnalysis,
+  normalizeSentenceForReadingGuide,
+  projectSentenceForGrammarAnalysis,
+  trimSentenceForAnalysis,
+} from './features/grammar/domain/grammarInputNormalization'
 import { getModelSizeAdvisory } from './features/grammar/domain/modelSizeAdvisory'
 import { projectionFromSource, type Projection } from './features/grammar/domain/textProjection'
 import { OcrFallbackPanel, type OcrStatus, type PaddleStatus, type HighResStatus } from './features/ocr/components/OcrFallbackPanel'
@@ -31,6 +36,7 @@ import { PdfViewer, type PdfViewerHandle } from './features/pdf/components/PdfVi
 import type { PdfSelectionResult } from './features/pdf/domain/pdfViewerState'
 import { combineFragments, type SelectionFragment } from './features/pdf/domain/crossPageSelection'
 import { LayoutModeSelector } from './features/layout/components/LayoutModeSelector'
+import { DEFAULT_INPUT_MODE, InputModeSelector, type InputMode } from './features/layout/components/InputModeSelector'
 import { useWorkspaceLayout } from './features/layout/domain/useWorkspaceLayout.ts'
 import { OllamaProvider } from './llm/providers/ollama/OllamaProvider'
 import type { HealthStatus, ModelInfo } from './llm/types'
@@ -51,6 +57,18 @@ export default function App() {
   const [selectedModel, setSelectedModel] = useState<string | null>(null)
 
   const [sentence, setSentence] = useState('')
+  // Text mode's own draft, deliberately a SEPARATE state from `sentence` (which stays the
+  // PDF-selection box) -- so switching PDF -> Text -> PDF (selecting a different sentence
+  // along the way) -> Text again never loses what was typed. Never read by handleAnalyze
+  // directly; Text mode's "解析する" passes it in as handleAnalyze's `sentenceOverride`
+  // (see handleAnalyze's own doc comment), and it is never copied into `sentence`.
+  const [textDraft, setTextDraft] = useState('')
+  // Which input surface is visible -- PdfViewer or a plain textarea. Both ultimately reach
+  // the exact same handleAnalyze()/analysis pipeline below; this never gates or branches
+  // analysis logic itself, only which input UI (and which of `sentence`/`textDraft`) is
+  // shown. Always starts on 'pdf' (never persisted) so a fresh load keeps today's default
+  // behavior.
+  const [inputMode, setInputMode] = useState<InputMode>(DEFAULT_INPUT_MODE)
   const [selectionPageNumber, setSelectionPageNumber] = useState<number | null>(null)
   const [analyzePhase, setAnalyzePhase] = useState<AnalyzePhase>('idle')
   const [result, setResult] = useState<VerifiedSentenceAnalysisWithSyntaxAuthority | null>(null)
@@ -59,6 +77,15 @@ export default function App() {
   // distinct from `result.analysis.originalText`, which is the internal Stanza-facing
   // projection (citation-stripped, equation-shielded). The "英文" panel must show THIS, never
   // the projection (see sourceSentenceHighlight.ts's own doc comment).
+  //
+  // Text mode: this is derived inside handleAnalyze from `inputSentence` (the
+  // `sentenceOverride` parameter when called from Text mode, i.e. `textDraft` at the moment
+  // "解析する" was pressed) -- never from the `sentence` state directly. This is what keeps
+  // it correct even if the user later switches back to PDF mode and selects a different
+  // sentence: only handleAnalyze's own success branch ever writes a non-null value here;
+  // every other call site (a new PDF selection, "クリア", a new document) only ever clears
+  // it to null, never to a stale/mismatched string, so `result` and this can never drift
+  // apart -- they always change together, exactly once, in handleAnalyze's success branch.
   const [analyzedSourceText, setAnalyzedSourceText] = useState<string | null>(null)
   // Prototype 2.6G2.8E: the exact source->analysis character mapping captured at the same
   // moment as `analyzedSourceText`, so the "英文" panel can project an active Tree span back
@@ -166,11 +193,26 @@ export default function App() {
     setActiveBaseUrl(baseUrlInput.trim() || DEFAULT_OLLAMA_BASE_URL)
   }
 
-  const handleAnalyze = async () => {
-    if (!selectedModel || sentence.trim().length === 0) return
+  // `sentenceOverride`: Text mode passes `textDraft` directly here rather than calling
+  // `setTextDraft`/`setSentence` and then `handleAnalyze()` back-to-back -- React state
+  // updates aren't visible until the next render, so a `setSentence(x); handleAnalyze()`
+  // sequence would read the STALE pre-update `sentence` inside this closure. Passing the
+  // value straight through as a parameter sidesteps that entirely; PDF mode's call site
+  // omits the argument and keeps reading `sentence` state exactly as before.
+  const handleAnalyze = async (sentenceOverride?: string) => {
+    const inputSentence = sentenceOverride ?? sentence
+    // `canStartAnalysis` expresses the same rule (used for the button's `canAnalyze` prop
+    // below); written inline here too so TypeScript narrows `selectedModel` to `string` for
+    // the rest of this function.
+    if (!selectedModel || !canStartAnalysis(inputSentence, selectedModel)) return
     const requestId = analyzeRequestGuardRef.current.next()
     setAnalyzeError(null)
     try {
+      // Text mode/manual typing can leave incidental leading/trailing whitespace (a stray
+      // textarea newline, a pasted trailing space) that a PDF selection rarely does --
+      // trimmed once here, before it becomes analysisInput/sourceTextAtAnalysisTime/the
+      // ReadingGuide input, regardless of which input mode produced the sentence.
+      const trimmedSentence = trimSentenceForAnalysis(inputSentence)
       // Prototype 2.5G item 9/10/49 + 2.5H item 5: the textarea's source/display text
       // (equation placeholders as "[式 (N)]", citation markers like "[9]" fully visible)
       // is converted to analysis form ONLY at this one grammar-input boundary -- citations
@@ -178,12 +220,12 @@ export default function App() {
       // normalized to "[EQUATION_N]" -- so the whole analysis pipeline (including span
       // offset resolution) operates on one consistent representation. The textarea itself
       // is never touched.
-      const projection = projectSentenceForGrammarAnalysis(sentence)
+      const projection = projectSentenceForGrammarAnalysis(trimmedSentence)
       const analysisInput = projection.text
-      const sourceTextAtAnalysisTime = sentence
+      const sourceTextAtAnalysisTime = trimmedSentence
       // Prototype 2.6G2.8M2.2c: computed alongside, never derived FROM analysisInput -- see
       // normalizeSentenceForReadingGuide's own doc comment.
-      const readingGuideInput = normalizeSentenceForReadingGuide(sentence)
+      const readingGuideInput = normalizeSentenceForReadingGuide(trimmedSentence)
       const outcome = await analyzeSentenceWithSyntaxAuthority({
         provider,
         model: selectedModel,
@@ -282,6 +324,18 @@ export default function App() {
     setSelectionFailedMessage(null)
     clearOcrState()
     ocrRequestGuardRef.current.next()
+    analyzeRequestGuardRef.current.next()
+  }
+
+  // Text mode's own "クリア" -- only ever touches `textDraft` and the shared
+  // result/error/phase state, never `sentence`/selection/OCR provenance (all PDF-only and
+  // irrelevant to a typed draft).
+  const handleClearTextDraft = () => {
+    setTextDraft('')
+    setResult(null)
+    setAnalyzedSourceText(null)
+    setAnalyzeError(null)
+    setAnalyzePhase('idle')
     analyzeRequestGuardRef.current.next()
   }
 
@@ -487,7 +541,7 @@ export default function App() {
   const analysisWorkspace = (
     <section className="side-pane">
       <div className="input-pane">
-        {selectionPageNumber !== null && (
+        {inputMode === 'pdf' && selectionPageNumber !== null && (
           <p className="pdf-source-note">
             PDFの p.{selectionPageNumber} から取得
             {crossPageFragments.length > 1 &&
@@ -496,22 +550,30 @@ export default function App() {
         )}
 
         <SentenceInputPanel
-          sentence={sentence}
-          onChange={setSentence}
-          onAnalyze={() => void handleAnalyze()}
-          onClear={handleClear}
+          sentence={inputMode === 'text' ? textDraft : sentence}
+          onChange={inputMode === 'text' ? setTextDraft : setSentence}
+          onAnalyze={() => void handleAnalyze(inputMode === 'text' ? textDraft : undefined)}
+          onClear={inputMode === 'text' ? handleClearTextDraft : handleClear}
           phase={analyzePhase}
-          canAnalyze={Boolean(selectedModel) && sentence.trim().length > 0}
+          canAnalyze={canStartAnalysis(inputMode === 'text' ? textDraft : sentence, selectedModel)}
+          placeholder={inputMode === 'text' ? '解析したい英語の1文を入力または貼り付けてください' : undefined}
+          idleLabel={inputMode === 'text' ? '解析する' : undefined}
         />
 
-        {crossPageFragments.length > 1 && (
+        {inputMode === 'text' && (
+          <p className="empty-note">
+            現在は1文の解析に対応しています。複数文を貼り付けた場合も、自動分割はせず1つの入力としてまとめて解析します。
+          </p>
+        )}
+
+        {inputMode === 'pdf' && crossPageFragments.length > 1 && (
           <p className="empty-note">
             複数ページの読み直しは次の対応で追加予定です。
           </p>
         )}
 
         <OcrFallbackPanel
-          visible={selectionMetadata !== null && crossPageFragments.length <= 1}
+          visible={inputMode === 'pdf' && selectionMetadata !== null && crossPageFragments.length <= 1}
           paddleStatus={paddleStatus}
           paddleCandidateText={paddleCandidate}
           paddleUnavailableReason={paddleUnavailableReason}
@@ -600,6 +662,8 @@ export default function App() {
       </header>
 
       <div className="workspace-controls">
+        <InputModeSelector mode={inputMode} onChange={setInputMode} />
+
         <LayoutModeSelector mode={workspaceLayout.mode} onChange={workspaceLayout.setMode} />
 
         <button
@@ -614,9 +678,14 @@ export default function App() {
       <main
         className={`app-main-pdf layout-${workspaceLayout.effective}${
           floatingAnalysis.isFloating ? ' floating-mode' : ''
-        }`}
+        }${inputMode === 'text' ? ' text-only-mode' : ''}`}
       >
-        <section className="pdf-pane">
+        {/* Prototype text-mode item 9: hidden via the `hidden` attribute, never conditionally
+            unmounted -- PdfViewer owns its own doc/page/zoom state internally (see its own
+            file), so switching to Text mode and back must not lose the loaded PDF or its
+            scroll position. `hidden` only toggles `display: none`; the component instance,
+            and everything it holds, stays alive underneath. */}
+        <section className="pdf-pane" hidden={inputMode !== 'pdf'}>
           <PdfViewer
             ref={pdfViewerRef}
             onSelection={handlePdfSelection}
