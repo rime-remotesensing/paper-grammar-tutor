@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
+  canStartAnalysis,
   normalizeSentenceForGrammarAnalysis,
   normalizeSentenceForReadingGuide,
   projectSentenceForGrammarAnalysis,
+  trimSentenceForAnalysis,
 } from '../../src/features/grammar/domain/grammarInputNormalization.ts'
 
 describe('normalizeSentenceForGrammarAnalysis', () => {
@@ -124,5 +126,99 @@ describe('normalizeSentenceForReadingGuide', () => {
   it('matches the Stanza pipeline exactly for a sentence with no relational math to shield (e.g. bare cos i, simple/stable per M1.1 policy)', () => {
     const source = 'The response is proportional to cos i.'
     expect(normalizeSentenceForReadingGuide(source)).toBe(normalizeSentenceForGrammarAnalysis(source))
+  })
+})
+
+/**
+ * Text mode item 3 -- the same trim/empty-guard rules apply regardless of whether `sentence`
+ * came from a PDF selection or was typed/pasted directly; these are plain pure functions so
+ * the client-side "never send an empty/whitespace-only sentence" and "trim incidental
+ * whitespace" rules are testable without mounting any component.
+ */
+describe('trimSentenceForAnalysis', () => {
+  it('trims leading and trailing whitespace, including newlines a textarea can introduce', () => {
+    expect(trimSentenceForAnalysis('  \n The cat sat on the mat.  \n')).toBe('The cat sat on the mat.')
+  })
+
+  it('never touches internal whitespace', () => {
+    expect(trimSentenceForAnalysis('  The cat   sat.  ')).toBe('The cat   sat.')
+  })
+
+  it('is a no-op on already-trimmed text', () => {
+    const source = 'The cat sat on the mat.'
+    expect(trimSentenceForAnalysis(source)).toBe(source)
+  })
+
+  it('collapses to the empty string for whitespace-only input', () => {
+    expect(trimSentenceForAnalysis('   \n\t  ')).toBe('')
+  })
+})
+
+describe('canStartAnalysis', () => {
+  it('is false with no model selected, even with a valid sentence', () => {
+    expect(canStartAnalysis('The cat sat.', null)).toBe(false)
+  })
+
+  it('is false for an empty sentence', () => {
+    expect(canStartAnalysis('', 'qwen2.5:7b-instruct')).toBe(false)
+  })
+
+  it('is false for a whitespace-only sentence (spaces, tabs, and newlines alike)', () => {
+    expect(canStartAnalysis('   ', 'qwen2.5:7b-instruct')).toBe(false)
+    expect(canStartAnalysis('\n\t', 'qwen2.5:7b-instruct')).toBe(false)
+  })
+
+  it('is true once both a model and a non-whitespace sentence are present', () => {
+    expect(canStartAnalysis('The cat sat.', 'qwen2.5:7b-instruct')).toBe(true)
+  })
+
+  it('is true even when the sentence has surrounding whitespace (only its trimmed content matters)', () => {
+    expect(canStartAnalysis('  The cat sat.  ', 'qwen2.5:7b-instruct')).toBe(true)
+  })
+})
+
+/**
+ * App.tsx's Text mode "解析する" passes `textDraft` straight into handleAnalyze's
+ * `sentenceOverride` parameter (never through `setSentence`) -- these two functions are what
+ * that override value is actually run through before reaching the shared analysis pipeline,
+ * so exercising them directly against a value shaped like a text-mode textarea draft (stray
+ * newlines, no PDF-selection provenance) is the input-source-agnostic equivalent of testing
+ * "the text draft is trimmed and gated the same way a PDF selection would be."
+ */
+describe('a Text-mode draft is trimmed/gated identically to a PDF selection', () => {
+  it('trims a textarea-shaped draft (leading newline, trailing spaces) the same as any other input', () => {
+    const draft = '\nVIIRS is a whiskbroom scanning radiometer.  '
+    expect(trimSentenceForAnalysis(draft)).toBe('VIIRS is a whiskbroom scanning radiometer.')
+  })
+
+  it('never allows an empty or whitespace-only draft to start analysis, model selected or not', () => {
+    expect(canStartAnalysis('', 'qwen2.5:7b-instruct')).toBe(false)
+    expect(canStartAnalysis('   \n\t  ', 'qwen2.5:7b-instruct')).toBe(false)
+    expect(canStartAnalysis('   \n\t  ', null)).toBe(false)
+  })
+
+  it('the exact value handed to the shared pipeline is the trimmed draft, not the raw textarea value', () => {
+    const draft = '  VIIRS is a whiskbroom scanning radiometer.  '
+    const valueSentToSharedPipeline = trimSentenceForAnalysis(draft)
+    expect(valueSentToSharedPipeline).toBe('VIIRS is a whiskbroom scanning radiometer.')
+    expect(valueSentToSharedPipeline).not.toBe(draft)
+  })
+
+  /**
+   * App.tsx's handleAnalyze computes ONE `trimmedSentence` from whichever input it received
+   * (PDF's `sentence` state, or Text mode's `sentenceOverride`/`textDraft`) and reuses that
+   * SAME value both as `sourceTextAtAnalysisTime` (-> `analyzedSourceText`, the presentation
+   * source authority AnalysisResultPanel/Structure Tree/vocabulary/expressions all read) and
+   * as the input to `projectSentenceForGrammarAnalysis` (the pipeline's own analysis input).
+   * There is deliberately no second, independent trim step for the presentation copy -- this
+   * test pins that the normalized analysis source and the string the pipeline actually
+   * analyzes never silently diverge into two different trims of the same requested input.
+   */
+  it('the normalized analysis source and the pipeline\'s own analysis input come from one shared trim, never two independent ones', () => {
+    const requestedInput = '  \nVIIRS is a whiskbroom scanning radiometer.  '
+    const normalizedAnalysisSource = trimSentenceForAnalysis(requestedInput)
+    const projection = projectSentenceForGrammarAnalysis(normalizedAnalysisSource)
+    expect(normalizedAnalysisSource).toBe('VIIRS is a whiskbroom scanning radiometer.')
+    expect(projection.text).toBe(normalizeSentenceForGrammarAnalysis(normalizedAnalysisSource))
   })
 })

@@ -724,6 +724,29 @@
   font-weight: 600;
 }
 
+.input-mode-selector {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  font-size: var(--fs-control);
+}
+
+.input-mode-button {
+  padding: 0.3rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.input-mode-button.is-selected {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg);
+  font-weight: 600;
+}
+
 /* Prototype 2.6G2.7A item 8/9/16 -- `.app-main-pdf` always carries exactly one of
    `.layout-side-by-side` / `.layout-stacked` (set from JS-resolved viewport geometry, see
    useWorkspaceLayout.ts), never a plain CSS media-query breakpoint -- this is what lets a
@@ -748,6 +771,12 @@
 }
 
 .app-main-pdf.floating-mode {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+/* Text mode's PDF pane is present but `hidden` (never unmounted, see App.tsx), so it must
+   not keep reserving grid track space meant for the PDF/analysis split above. */
+.app-main-pdf.text-only-mode {
   grid-template-columns: minmax(0, 1fr);
 }
 
