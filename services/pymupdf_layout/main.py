@@ -104,6 +104,7 @@ one tight logical unit at the point of recovery (`_assemble_lines_with_gap_recov
 ordinary word-boundary recovery ("of"/"k"/"can" -> "of k can") is completely unaffected.
 """
 
+import math
 import os
 import re
 import unicodedata
@@ -1277,6 +1278,20 @@ MICRO_GAP_MAX_WIDTH_EM = 1.5  # generous upper bound for a SINGLE missing glyph'
 WRAP_TRAILING_PROBE_WIDTHS_EM = (0.35, 0.5, 0.75, 1.0, MICRO_GAP_MAX_WIDTH_EM)
 
 
+def _has_resolvable_interior_pixel_column(x0_pt: float, x1_pt: float, scale: float = VISUAL_INK_RENDER_SCALE) -> bool:
+    """Whether the page-space interval [x0_pt, x1_pt] fully contains at least one device pixel
+    column at the ink probe's own render `scale` (device x = page x * scale; column k covers
+    device [k, k+1)). `_render_gap_ink_ratio` rasterizes its clip rounded OUTWARD to whole
+    pixels, so an interval narrower than that -- e.g. the float-level 0.000015pt seam between
+    a word span and the space span it touches ("recent" | " ") -- still yields a 1px column,
+    and that column is made entirely of the NEIGHBORING glyphs' own edge pixels (live-traced:
+    the "t" of "recent" read as visualInkRatio 3/32 = 0.09375). No pixel can belong only to
+    such a gap, so it carries no ink evidence of its own and must never be probed. Any
+    interval at least 2/scale pt wide (0.5pt at scale 4) always qualifies, whatever its
+    alignment -- far below any real glyph's width."""
+    return math.floor(x1_pt * scale) - math.ceil(x0_pt * scale) >= 1
+
+
 def _probe_micro_gap_ink(
     doc: "pymupdf.Document", page_number: int, page_blocks: PageBlocks, left_bbox: tuple[float, float, float, float], right_bbox: tuple[float, float, float, float], ref_size: float
 ) -> Optional[SuspiciousGap]:
@@ -1303,16 +1318,27 @@ def _probe_micro_gap_ink(
     NO ink in its own interval (section 17's own required negative) -- this is what keeps the
     mechanism from firing on ordinary prose: the geometry alone never decides, only rendered
     ink does."""
-    gx0, gx1 = min(left_bbox[2], right_bbox[0]), max(left_bbox[2], right_bbox[0])
-    if gx1 <= gx0:
-        return None
     gy0, gy1 = max(left_bbox[1], right_bbox[1]), min(left_bbox[3], right_bbox[3])
     if gy1 <= gy0:
         return None  # no real Y overlap -- not the same visual row
+    # The gap is only the interval NEITHER anchor covers. Anchors that overlap in X (live-traced:
+    # a justified line's space span reaching 1.75pt into the next word "techniques") have no
+    # such interval -- min/max of the two edges would instead probe the overlap itself, i.e.
+    # the right anchor's own first glyph, and read it as ink.
+    gx0, gx1 = left_bbox[2], right_bbox[0]
+    if gx1 <= gx0:
+        if gx1 < gx0:
+            _trace("MICRO_GAP_PROBE", gapBbox=(gx1, gy0, gx0, gy1), overlapPt=(gx0 - gx1) * page_blocks.width, refSize=ref_size, outcome="anchors_overlap")
+        return None
     width_pt = (gx1 - gx0) * page_blocks.width
     if width_pt > MICRO_GAP_MAX_WIDTH_EM * max(ref_size, 1.0):
         return None  # too wide to be a single missing glyph
     candidate_bbox = (gx0, gy0, gx1, gy1)
+    if not _has_resolvable_interior_pixel_column(gx0 * page_blocks.width, gx1 * page_blocks.width):
+        # A float-level seam between touching anchors, not a gap: any rendered column would be
+        # pure neighbor-glyph edge (see `_has_resolvable_interior_pixel_column`).
+        _trace("MICRO_GAP_PROBE", gapBbox=candidate_bbox, widthPt=width_pt, refSize=ref_size, outcome="too_narrow_to_probe")
+        return None
     ink_ratio = _render_gap_ink_ratio(doc, page_number, candidate_bbox, page_blocks.width, page_blocks.height)
     _trace("MICRO_GAP_PROBE", gapBbox=candidate_bbox, widthPt=width_pt, refSize=ref_size, visualInkRatio=ink_ratio, outcome="ink_positive" if ink_ratio > VISUAL_INK_CENTRAL_RATIO_THRESHOLD else "no_ink")
     if ink_ratio <= VISUAL_INK_CENTRAL_RATIO_THRESHOLD:
