@@ -750,8 +750,13 @@ export function convertPredicateFrame(
       // xcomp -> complement only when the open complement's own head is a predicative
       // adjective/noun (lexical linking verb / object-complement small clause). A VERB-headed
       // xcomp ("began to run") is a different, non-5-pattern construction and is left unmapped.
+      // A nominal complement can also be headed by a numeral or pronoun ("has become ONE of the
+      // most prominent techniques", "became SOMETHING unexpected") -- UD tags those heads NUM/
+      // PRON, not NOUN, and they were silently dropped (C=null, pattern SV). They qualify on the
+      // same structural terms: only when the head is not itself predicate-like.
       const xUpos = frame.xcompToken.upos
-      if (xUpos === 'ADJ' || xUpos === 'NOUN' || xUpos === 'PROPN') {
+      const isNominalNumOrPron = (xUpos === 'NUM' || xUpos === 'PRON') && !isPredicateLikeToken(frame.xcompToken, byHead)
+      if (xUpos === 'ADJ' || xUpos === 'NOUN' || xUpos === 'PROPN' || isNominalNumOrPron) {
         const grounded = groundConstituentSpan(frame.xcompToken, byHead, tokens, boundaryIds, text)
         complement = grounded?.span ?? null
         complementPresentationText = grounded?.presentationText ?? null
