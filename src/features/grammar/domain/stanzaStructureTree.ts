@@ -2636,6 +2636,19 @@ function attachInternalSubordinateClausesInTree(
     if (!clause) continue
     const built = buildClauseSubtree(clause, clauses, text, tokens, byHead, byId, visited, nodesByClauseId)
     if (!built) continue
+    // A SUBJECTLESS marked clause ("by combining multiple models", "while maintaining
+    // accuracy") comes back as a marker-only wrapper ([clause] "by" -> [predicate]
+    // "combining" -> ...). Inside a postmodifier that wrapper is redundant: the postmodifier
+    // already IS this clause. Fold the marker into the postmodifier's own presentation
+    // ("by combining") and keep the predicate's structure (object, modifiers) as its children.
+    // A clause with its own subject ("because the data were limited") keeps the wrapper --
+    // there the marker introduces a full proposition, not just a verb phrase.
+    const unwrapped = unwrapSubjectlessMarkerClause(built, text)
+    if (unwrapped) {
+      node.presentationSpan = unwrapped.presentationSpan
+      node.children = unwrapped.children
+      continue
+    }
     // B4 discipline: the postmodifier's own authority text/span (the full raw span) stays
     // completely unchanged; only presentationSpan (emptied, since `built` now represents the
     // content) and children (the single newly-built real clause node) are added -- matching
@@ -2643,6 +2656,37 @@ function attachInternalSubordinateClausesInTree(
     node.presentationSpan = { text: '', start: node.start, end: node.start }
     node.children = [built]
   }
+}
+
+/** A marker wrapper (`wrapWithMarker`) whose only child is a bare predicate -- i.e. the clause
+ * has no subject of its own -- and whose marker directly precedes that predicate's verb span
+ * (only whitespace between them, so the merged presentation never swallows a word that is
+ * also shown as a child). Returns the merged marker+verb presentation span and the predicate's
+ * own children, or null for any other shape (left exactly as built). */
+function unwrapSubjectlessMarkerClause(built: StructureTreeNode, text: string): { presentationSpan: Span; children: StructureTreeNode[] } | null {
+  if (built.role !== 'clause' || !built.marker || built.children.length !== 1) return null
+  const predicate = built.children[0]!
+  if (predicate.role !== 'predicate' || predicate.text === '') return null
+  if (text.slice(built.marker.end, predicate.start).trim() !== '') return null
+  return {
+    presentationSpan: { text: text.slice(built.marker.start, predicate.end), start: built.marker.start, end: predicate.end },
+    children: predicate.children,
+  }
+}
+
+/** Every span an already-built node visibly owns, excluding predicate/clause anchors (their
+ * own span is only the verb or marker token, never the content beneath them). */
+function collectOwnedContentSpans(nodes: readonly StructureTreeNode[]): Span[] {
+  const spans: Span[] = []
+  const stack = [...nodes]
+  while (stack.length > 0) {
+    const current = stack.pop()!
+    if (current.role !== 'predicate' && current.role !== 'coordinatedPredicate' && current.role !== 'clause') {
+      spans.push({ text: current.text, start: current.start, end: current.end })
+    }
+    stack.push(...current.children)
+  }
+  return spans
 }
 
 export function buildStanzaHierarchicalTree(text: string, rawTokens: StanzaToken[]): StructureTreeNode[] {
@@ -2794,12 +2838,25 @@ export function buildStanzaHierarchicalTree(text: string, rawTokens: StanzaToken
   // otherwise -- naturally skips it and only builds a genuine independent top-level sibling for
   // every subordinate clause that ISN'T a dependent modifier of the main clause's own predicate.
   attachSubjectlessSubordinateModifiers(mainClause, mainNode, clauses, tokens, byHead, byId, text, visited, isOwnedByExistingEnumeration)
+  // Single ownership for clauses materialized by the pass just above: a modifier it builds
+  // (e.g. "offering improved accuracy by combining multiple models") can itself contain a
+  // further subordinate clause rendered as a leaf postmodifier ("by combining ...") whose own
+  // ClauseFrame was never claimed. The earlier attach pass ran before that leaf existed, so run
+  // it again now -- it claims (`visited`) and structures each such leaf in place.
+  attachInternalSubordinateClausesInTree(mainLevelNodes, clauses, tokens, byHead, byId, text, visited, nodesByClauseId)
+  // Defense for every remaining materialization path: a subordinate clause whose head already
+  // sits inside a built node's visible content is owned there, and is never rebuilt elsewhere.
+  const isMaterializedInExistingNode = (clause: ClauseFrame): boolean => {
+    const headToken = byId.get(clause.headTokenId)
+    if (!headToken) return false
+    return isWithinAny({ text: headToken.text, start: headToken.start, end: headToken.end }, collectOwnedContentSpans([...mainLevelNodes, ...topLevelCandidates]))
+  }
   for (const clause of clauses) {
     if (clause.relation !== 'subordinate') continue
     if (clause.parentClauseId !== mainClause.clauseId) continue
     if (visited.has(clause.clauseId)) continue
-    if (isOwnedByExistingEnumeration(clause)) {
-      visited.add(clause.clauseId) // single-owner: already shown inside its enumeration item
+    if (isOwnedByExistingEnumeration(clause) || isMaterializedInExistingNode(clause)) {
+      visited.add(clause.clauseId) // single-owner: already shown inside an existing node
       continue
     }
     const subNode = buildClauseSubtree(clause, clauses, text, tokens, byHead, byId, visited, nodesByClauseId)
@@ -2834,8 +2891,8 @@ export function buildStanzaHierarchicalTree(text: string, rawTokens: StanzaToken
     for (const clause of clauses) {
       if (clause.relation !== 'subordinate') continue
       if (visited.has(clause.clauseId)) continue
-      if (isOwnedByExistingEnumeration(clause)) {
-        visited.add(clause.clauseId) // single-owner: already shown inside its enumeration item
+      if (isOwnedByExistingEnumeration(clause) || isMaterializedInExistingNode(clause)) {
+        visited.add(clause.clauseId) // single-owner: already shown inside an existing node
         progress = true
         continue
       }
